@@ -74,6 +74,34 @@ SELECT
     ProfileEvents['UserTimeMicroseconds'] + ProfileEvents['SystemTimeMicroseconds']
   ) AS cpu_time_us,
   trim(extract(query, 'Username:\\s*([^,]+)')) AS redash_user,
+  extract(query, 'query_id:\\s*(\\d+)')        AS redash_query_id,
+  total_rows_approx,
+  written_rows,
+  peak_memory_usage,
+  toUInt64OrZero(Settings['max_memory_usage']) AS query_max_memory_usage,
+  query_kind
+FROM system.processes
+WHERE is_initial_query = 1
+  AND query NOT LIKE '%FROM system.processes%'
+  AND query NOT LIKE 'KILL QUERY%'
+ORDER BY elapsed DESC
+"#;
+
+/// §6.1's statement exactly as the design wrote it, for a server that refuses one of the
+/// columns above. Progress, peak memory and per-query limits are then unknown, nothing else.
+const PROCESSES_SQL_BASIC: &str = r#"
+SELECT
+  query_id,
+  initial_user AS user,
+  query,
+  elapsed AS elapsed_s,
+  memory_usage,
+  read_rows, read_bytes,
+  greatest(
+    ProfileEvents['OSCPUVirtualTimeMicroseconds'],
+    ProfileEvents['UserTimeMicroseconds'] + ProfileEvents['SystemTimeMicroseconds']
+  ) AS cpu_time_us,
+  trim(extract(query, 'Username:\\s*([^,]+)')) AS redash_user,
   extract(query, 'query_id:\\s*(\\d+)')        AS redash_query_id
 FROM system.processes
 WHERE is_initial_query = 1
@@ -129,6 +157,21 @@ fn de_opt_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::
     }))
 }
 
+/// `memory_usage` and `peak_memory_usage` are Int64, and memory tracking can dip below zero for
+/// a moment. A strict unsigned parse would drop the whole row — the query would vanish from
+/// the screen — so a negative reading is taken as 0 instead.
+fn de_mem<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value
+        .and_then(|v| match v {
+            serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_u64().map(|u| u as i64)),
+            serde_json::Value::String(text) => text.trim().parse::<i64>().ok(),
+            _ => None,
+        })
+        .map(|v| v.max(0) as u64)
+        .unwrap_or(0))
+}
+
 /// Same problem for a float: the §6.1 statement ends its core count in `toUInt64(ceil(...))`,
 /// so `server_cpu_cores` comes back as the string "2".
 fn de_opt_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
@@ -174,7 +217,7 @@ struct ProcessRow {
     user: String,
     query: String,
     elapsed_s: f64,
-    #[serde(default, deserialize_with = "de_u64")]
+    #[serde(default, deserialize_with = "de_mem")]
     memory_usage: u64,
     #[serde(default, deserialize_with = "de_u64")]
     read_rows: u64,
@@ -186,6 +229,16 @@ struct ProcessRow {
     redash_user: Option<String>,
     #[serde(default, deserialize_with = "de_opt_u64")]
     redash_query_id: Option<u64>,
+    #[serde(default, deserialize_with = "de_opt_u64")]
+    total_rows_approx: Option<u64>,
+    #[serde(default, deserialize_with = "de_opt_u64")]
+    written_rows: Option<u64>,
+    #[serde(default, deserialize_with = "de_mem")]
+    peak_memory_usage: u64,
+    #[serde(default, deserialize_with = "de_opt_u64")]
+    query_max_memory_usage: Option<u64>,
+    #[serde(default)]
+    query_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +264,9 @@ pub struct ClickHouseSource {
     /// Cleared the first time a server refuses the query settings: a read-only user cannot
     /// set `max_execution_time`, so this is the normal path in production, not an edge case.
     settings_ok: AtomicBool,
+    /// Cleared the first time a server refuses the extended `system.processes` columns; from
+    /// then on §6.1's own statement is used.
+    extended_processes: AtomicBool,
 }
 
 impl ClickHouseSource {
@@ -243,9 +299,20 @@ impl ClickHouseSource {
             })
             .collect();
 
-        // Two seeds on the same host are one node.
+        // The same URL twice is one node. Two ports on one host are two servers (the local
+        // rig is exactly that), so they keep the port in their name to stay apart.
+        targets.sort_by(|a, b| a.url.cmp(&b.url));
+        targets.dedup_by(|a, b| a.url == b.url);
+        let mut per_host: HashMap<String, usize> = HashMap::new();
+        for target in &targets {
+            *per_host.entry(target.host.clone()).or_default() += 1;
+        }
+        for target in &mut targets {
+            if per_host.get(&target.host).copied().unwrap_or(0) > 1 {
+                target.name = format!("{}:{}", target.host, target.port);
+            }
+        }
         targets.sort_by(|a, b| a.name.cmp(&b.name));
-        targets.dedup_by(|a, b| a.name == b.name);
 
         Ok(Self {
             client,
@@ -256,6 +323,7 @@ impl ClickHouseSource {
             http_port: config.http_port,
             targets,
             settings_ok: AtomicBool::new(true),
+            extended_processes: AtomicBool::new(true),
         })
     }
 
@@ -287,23 +355,7 @@ impl ClickHouseSource {
             }
         }
 
-        for (name, target) in found {
-            match self.targets.iter_mut().find(|t| t.name == name) {
-                // A seed we already poll gains the cluster metadata instead of becoming a
-                // second row for the same machine.
-                Some(existing) => {
-                    existing.host = target.host;
-                    existing.port = target.port;
-                    existing.shard = target.shard;
-                    existing.replica = target.replica;
-                    if existing.url == existing.host {
-                        existing.url = target.url;
-                    }
-                }
-                None => self.targets.push(target),
-            }
-        }
-        self.targets.sort_by(|a, b| a.name.cmp(&b.name));
+        merge_discovered(&mut self.targets, found.into_values().collect());
         errors
     }
 
@@ -329,10 +381,11 @@ impl ClickHouseSource {
     }
 
     async fn poll_node(&self, target: &NodeTarget) -> Result<NodeSnapshot, String> {
+        let started = std::time::Instant::now();
         let capacity = self.post(&target.url, CAPACITY_SQL).await?;
         let row: CapacityRow = parse_one_row(&capacity)?;
-        let processes = self.post(&target.url, PROCESSES_SQL).await.unwrap_or_default();
-        let queries: Vec<QueryRow> = parse_processes(&processes);
+        let queries: Vec<QueryRow> = parse_processes(&self.processes(&target.url).await);
+        let poll_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
 
         // §6.1: the denominator is the fallback chain's answer, and 0 means "we do not know",
         // which must never become a percentage (§2.1).
@@ -363,7 +416,28 @@ impl ClickHouseSource {
             server_cpu_time_us: row.server_cpu_time_us,
             max_memory_usage: positive_or_none(row.max_memory_usage.unwrap_or(0)),
             unreachable_reason: None,
+            poll_ms: Some(poll_ms),
         })
+    }
+
+    /// The running queries, with the extended columns while the server accepts them.
+    async fn processes(&self, url: &str) -> String {
+        if self.extended_processes.load(Ordering::Relaxed) {
+            match self.post(url, PROCESSES_SQL).await {
+                Ok(body) => return body,
+                // An unknown column is a property of the server, not of this poll: §6.1's
+                // statement for the rest of the session. Any other error only costs this poll
+                // its extras — the basic statement still gets the rows.
+                Err(e) if e.starts_with("HTTP ") => {
+                    if refuses_columns(&e) {
+                        self.extended_processes.store(false, Ordering::Relaxed);
+                    }
+                }
+                // A timeout or a refused connection: the basic statement would fail the same way.
+                Err(_) => return String::new(),
+            }
+        }
+        self.post(url, PROCESSES_SQL_BASIC).await.unwrap_or_default()
     }
 
     /// POST the SQL as the body (§12: the HTTP interface truncates long GET query strings).
@@ -429,6 +503,19 @@ impl ClickHouseSource {
     }
 }
 
+/// ClickHouse's ways of saying a column does not exist on this version.
+fn refuses_columns(error: &str) -> bool {
+    [
+        "UNKNOWN_IDENTIFIER",
+        "Missing columns",
+        "Unknown expression identifier",
+        "NO_SUCH_COLUMN",
+        "There is no column",
+    ]
+    .iter()
+    .any(|marker| error.contains(marker))
+}
+
 fn positive_or_none(value: u64) -> Option<u64> {
     (value > 0).then_some(value)
 }
@@ -471,9 +558,43 @@ pub fn parse_processes(body: &str) -> Vec<QueryRow> {
                 read_bytes: row.read_bytes,
                 sql: row.query,
                 cpu_time_us: row.cpu_time_us,
+                total_rows_approx: row.total_rows_approx.unwrap_or(0),
+                written_rows: row.written_rows.unwrap_or(0),
+                peak_memory_bytes: row.peak_memory_usage,
+                memory_limit: row.query_max_memory_usage.filter(|v| *v > 0),
+                kind: row.query_kind.filter(|k| !k.is_empty()),
             }
         })
         .collect()
+}
+
+/// Fold what `system.clusters` said into the targets (§6.2).
+///
+/// A discovered host is the same machine as a target when the names agree, or when it was
+/// reached through that target's seed URL (`parse_clusters` hands the seed's URL to a host it
+/// recognises by name or address). The target then takes the cluster's name — `ch-a` reads
+/// better than `172.18.0.3` — and its shard and replica, instead of the same server being
+/// polled twice under two names.
+pub fn merge_discovered(targets: &mut Vec<NodeTarget>, found: Vec<NodeTarget>) {
+    for target in found {
+        let existing = targets
+            .iter()
+            .position(|t| t.name == target.name)
+            .or_else(|| targets.iter().position(|t| t.url == target.url));
+        match existing {
+            Some(i) => {
+                let existing = &mut targets[i];
+                existing.name = target.name;
+                existing.host = target.host;
+                existing.port = target.port;
+                existing.shard = target.shard;
+                existing.replica = target.replica;
+            }
+            None => targets.push(target),
+        }
+    }
+    targets.sort_by(|a, b| a.name.cmp(&b.name));
+    targets.dedup_by(|a, b| a.url == b.url && a.name == b.name);
 }
 
 /// Union the cluster rows by host name and turn them into poll targets (§6.2).
@@ -529,15 +650,30 @@ fn seed_contains(seed: &str, host: &str) -> bool {
         .unwrap_or(authority == host)
 }
 
-/// `futures::join_all` without the dependency: these futures only borrow, so they run
-/// concurrently on one task rather than being spawned.
+/// `futures::join_all` without the dependency: every future is polled on each wake-up, so
+/// the requests are in flight together and the poll takes as long as the slowest node, not
+/// the sum of them all (§6: a slow node must not delay the others).
 async fn join_all<F: std::future::Future>(futures: impl IntoIterator<Item = F>) -> Vec<F::Output> {
-    let mut pinned: Vec<_> = futures.into_iter().map(Box::pin).collect();
-    let mut out = Vec::with_capacity(pinned.len());
-    for future in pinned.iter_mut() {
-        out.push(future.await);
-    }
-    out
+    use std::task::Poll;
+    let mut pending: Vec<std::pin::Pin<Box<F>>> = futures.into_iter().map(Box::pin).collect();
+    let mut done: Vec<Option<F::Output>> = (0..pending.len()).map(|_| None).collect();
+    std::future::poll_fn(|cx| {
+        let mut all = true;
+        for (future, slot) in pending.iter_mut().zip(done.iter_mut()) {
+            if slot.is_some() {
+                continue;
+            }
+            match future.as_mut().poll(cx) {
+                Poll::Ready(value) => *slot = Some(value),
+                Poll::Pending => all = false,
+            }
+        }
+        if all { Poll::Ready(()) } else { Poll::Pending }
+    })
+    .await;
+    done.into_iter()
+        .map(|slot| slot.expect("every future has finished"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -647,6 +783,47 @@ mod tests {
     }
 
     #[test]
+    fn two_ports_on_one_host_are_two_nodes() {
+        let config = ClickHouseConfig {
+            seeds: vec![
+                "http://127.0.0.1:8123".into(),
+                "http://127.0.0.1:8124".into(),
+                "http://127.0.0.1:8124".into(),
+            ],
+            cluster: "ch_paysera".into(),
+            user: "monitor".into(),
+            password: "p".into(),
+            http_port: 8123,
+        };
+        let source = ClickHouseSource::new(&config).unwrap();
+        let names: Vec<&str> = source.targets().iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["127.0.0.1:8123", "127.0.0.1:8124"], "the same URL twice is one");
+    }
+
+    #[test]
+    fn a_seed_found_again_by_discovery_is_one_node_under_its_cluster_name() {
+        let seeds = vec!["http://172.18.0.3:8123".to_string()];
+        let mut targets = vec![NodeTarget {
+            name: "172.18.0.3".into(),
+            url: "http://172.18.0.3:8123".into(),
+            host: "172.18.0.3".into(),
+            port: 8123,
+            shard: 0,
+            replica: 0,
+        }];
+        let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000}
+{"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000}
+"#;
+        let found = parse_clusters(body, &seeds, 8123).unwrap();
+        merge_discovered(&mut targets, found);
+        let names: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["ch-a", "ch-b"], "not 172.18.0.3 and ch-a for one server");
+        assert_eq!(targets[0].url, "http://172.18.0.3:8123", "still reached through its seed");
+        assert_eq!((targets[0].shard, targets[0].replica), (1, 1));
+        assert_eq!(targets[1].url, "http://ch-b:8123", "a host no seed covers gets CH_HTTP_PORT");
+    }
+
+    #[test]
     fn errors_never_contain_the_password() {
         let config = ClickHouseConfig {
             seeds: vec!["http://127.0.0.1:1".into()],
@@ -680,10 +857,41 @@ mod tests {
     }
 
     #[test]
+    fn only_a_missing_column_switches_to_the_basic_statement() {
+        assert!(refuses_columns(
+            "HTTP 404: Code: 47. DB::Exception: Missing columns: 'query_kind' while processing query"
+        ));
+        assert!(refuses_columns("HTTP 400: Code: 47. DB::Exception: Unknown expression identifier `query_kind`"));
+        assert!(!refuses_columns("HTTP 503: Code: 202. DB::Exception: Too many simultaneous queries"));
+        assert!(!refuses_columns("HTTP 500: Code: 241. DB::Exception: Memory limit (total) exceeded"));
+    }
+
+    #[test]
+    fn extended_process_rows_carry_progress_and_limits() {
+        let row = r#"{"query_id":"q","user":"r_redash","query":"SELECT 1","elapsed_s":4.0,"memory_usage":"-1024","read_rows":"4437281151","read_bytes":"0","cpu_time_us":"1","redash_user":"","redash_query_id":"","total_rows_approx":"20000000000","written_rows":"0","peak_memory_usage":"2048","query_max_memory_usage":"9000000000","query_kind":"Select"}
+"#;
+        let queries = parse_processes(row);
+        assert_eq!(queries.len(), 1, "a negative memory reading does not drop the row");
+        let q = &queries[0];
+        assert_eq!(q.memory_bytes, 0);
+        assert_eq!(q.total_rows_approx, 20_000_000_000);
+        assert_eq!(q.memory_limit, Some(9_000_000_000));
+        assert_eq!(q.peak_memory_bytes, 2048);
+        assert_eq!(q.kind.as_deref(), Some("Select"));
+        // A basic row (§6.1's statement) still parses, with the extras unknown.
+        let basic = parse_processes(PROCESSES_FIXTURE);
+        assert_eq!(basic[0].total_rows_approx, 0);
+        assert_eq!(basic[0].memory_limit, None);
+    }
+
+    #[test]
     fn the_sql_is_the_one_in_the_design() {
         // §6.1 is a contract with the fleet: is_initial_query is the dedup that keeps a
         // distributed query from being counted once per node.
         assert!(PROCESSES_SQL.contains("is_initial_query = 1"));
+        assert!(PROCESSES_SQL_BASIC.contains("is_initial_query = 1"));
+        assert!(PROCESSES_SQL.contains("total_rows_approx"));
+        assert!(PROCESSES_SQL.contains("Settings['max_memory_usage']"));
         assert!(PROCESSES_SQL.contains("FROM system.processes"));
         assert!(CAPACITY_SQL.contains("CGroupMemoryTotal"));
         assert!(CAPACITY_SQL.contains("OSCPUVirtualTimeMicroseconds"));

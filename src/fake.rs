@@ -10,6 +10,27 @@ use std::time::{Duration, SystemTime};
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+/// The node's memory and CPU percentage at `t` seconds into the session: its template's
+/// value, moving. Smooth waves for most nodes; clickhouse3 climbs steadily and drops back when
+/// its caches are "evicted", every three minutes — the shape a real hot node has, and what
+/// the forecasts and the tape are for. At the first poll every node is within a point or two
+/// of its template, which is what the tests of the §1 screen rely on.
+fn load(template: &NodeTemplate, t: f64) -> (f64, f64) {
+    let phase = template.name.bytes().map(f64::from).sum::<f64>();
+    let wave = |amplitude: f64, period: f64| amplitude * ((t / period) * std::f64::consts::TAU + phase).sin();
+    let healthy = template.user_pct < 35.0;
+    let (mem_amp, cpu_amp) = if healthy { (1.5, 2.0) } else { (2.5, 5.0) };
+    let mem = if template.name == "clickhouse3" {
+        // +2.4 points a minute for three minutes, then back down.
+        let cycle = t % 180.0;
+        (template.user_pct + cycle * 0.04).min(98.5)
+    } else {
+        template.user_pct + wave(mem_amp, 97.0)
+    };
+    let cpu = template.cpu_pct + wave(cpu_amp, 41.0);
+    (mem.clamp(1.0, 99.0), cpu.clamp(1.0, 99.0))
+}
+
 /// A tiny LCG. Deterministic: the same tick always produces the same fleet, which makes the
 /// UI reproducible while developing.
 struct Rng(u64);
@@ -43,6 +64,9 @@ struct QueryTemplate {
     cores: f64,
     /// Grows during the query's life; `None` means flat.
     mem_growth: f64,
+    /// The query's own `max_memory_usage` as its profile sets it (GiB); `None` leaves the
+    /// node's limit to apply.
+    limit_gib: Option<f64>,
 }
 
 impl QueryTemplate {
@@ -94,6 +118,7 @@ const CLICKHOUSE3: &[QueryTemplate] = &[
         mem_share: 0.253,
         cores: 3.1,
         mem_growth: 0.0002,
+        limit_gib: Some(24.0),
     },
     QueryTemplate {
         initial_age_s: 164.0,
@@ -105,6 +130,7 @@ const CLICKHOUSE3: &[QueryTemplate] = &[
         mem_share: 0.128,
         cores: 0.7,
         mem_growth: 0.0001,
+        limit_gib: Some(24.0),
     },
     QueryTemplate {
         initial_age_s: 22.0,
@@ -116,6 +142,7 @@ const CLICKHOUSE3: &[QueryTemplate] = &[
         mem_share: 0.055,
         cores: 5.0,
         mem_growth: 0.0004,
+        limit_gib: Some(16.0),
     },
     QueryTemplate {
         initial_age_s: 12.0,
@@ -127,6 +154,7 @@ const CLICKHOUSE3: &[QueryTemplate] = &[
         mem_share: 0.019,
         cores: 0.3,
         mem_growth: 0.0,
+        limit_gib: None,
     },
 ];
 
@@ -141,6 +169,7 @@ const CLICKHOUSE_BI: &[QueryTemplate] = &[
         mem_share: 0.33,
         cores: 1.9,
         mem_growth: 0.0002,
+        limit_gib: Some(24.0),
     },
     QueryTemplate {
         initial_age_s: 18.0,
@@ -152,17 +181,21 @@ const CLICKHOUSE_BI: &[QueryTemplate] = &[
         mem_share: 0.2,
         cores: 3.2,
         mem_growth: 0.0005,
+        limit_gib: Some(20.0),
     },
+    // The one that climbs: 6.4 GiB growing ~43 MiB/s against a 9 GiB limit, so the insights
+    // can forecast its end — and at 60 s, at 99% of its limit, it "is killed" and starts over.
     QueryTemplate {
         initial_age_s: 21.0,
         user: "r_redash",
         person: Some("m.kairys"),
         redash_id: Some(7711),
         sql: FX,
-        lifetime_s: 28.0,
-        mem_share: 0.115,
+        lifetime_s: 60.0,
+        mem_share: 0.10,
         cores: 1.1,
-        mem_growth: 0.0001,
+        mem_growth: 0.042,
+        limit_gib: Some(9.0),
     },
 ];
 
@@ -177,6 +210,7 @@ const CLICKHOUSE7: &[QueryTemplate] = &[
         mem_share: 0.4,
         cores: 2.2,
         mem_growth: 0.0003,
+        limit_gib: Some(64.0),
     },
     QueryTemplate {
         initial_age_s: 12.0,
@@ -188,6 +222,7 @@ const CLICKHOUSE7: &[QueryTemplate] = &[
         mem_share: 0.18,
         cores: 1.4,
         mem_growth: 0.0003,
+        limit_gib: Some(32.0),
     },
 ];
 
@@ -202,6 +237,7 @@ const CLICKHOUSE2: &[QueryTemplate] = &[
         mem_share: 0.24,
         cores: 1.2,
         mem_growth: 0.0002,
+        limit_gib: Some(24.0),
     },
     QueryTemplate {
         initial_age_s: 9.0,
@@ -213,6 +249,7 @@ const CLICKHOUSE2: &[QueryTemplate] = &[
         mem_share: 0.1,
         cores: 0.8,
         mem_growth: 0.0001,
+        limit_gib: Some(16.0),
     },
 ];
 
@@ -227,6 +264,7 @@ const CLICKHOUSE5: &[QueryTemplate] = &[QueryTemplate {
     mem_share: 0.22,
     cores: 1.1,
     mem_growth: 0.0002,
+    limit_gib: Some(24.0),
 }];
 
 /// The quiet query the healthy nodes run. Its lifetime stays under the 30 s runaway mark on
@@ -242,6 +280,7 @@ const CLUSTER_HISTORY_QUERY: &[QueryTemplate] = &[QueryTemplate {
     mem_share: 0.03,
     cores: 0.5,
     mem_growth: 0.0,
+    limit_gib: None,
 }];
 
 const NODES: &[NodeTemplate] = &[
@@ -484,26 +523,41 @@ impl FakeSource {
 
         let sql = template.sql_with_comment();
         let (person, redash_id) = if template.user == crate::attrib::REDASH_USER {
-            (
-                template.person.map(|p| format!("{p}@paysera.net")).map(|a| {
-                    
-                    a.split('@').next().unwrap_or_default().to_string()
-                }),
-                template.redash_id,
-            )
+            (template.person.map(str::to_string), template.redash_id)
         } else {
             (None, None)
         };
+
+        // Reads are a steady scan through an input ClickHouse knows the size of, so progress
+        // is the share of the template's lifetime gone by and the ETA is what is left of it.
+        let rows_per_s = 4.0e6 * template.cores.max(0.2);
+        let total_rows = rows_per_s * template.lifetime_s;
+        let read_rows = (rows_per_s * elapsed).min(total_rows);
+        let summary = crate::sqltext::summary(template.sql);
 
         let mut row = QueryRow::new(&live.id, template.user);
         row.person = person;
         row.redash_query_id = redash_id;
         row.elapsed_s = elapsed;
         row.memory_bytes = mem_bytes;
-        row.read_rows = self.rng.range(1.0e8, 2.0e9) as u64;
-        row.read_bytes = self.rng.range(4.0e10, 4.2e10) as u64;
+        row.peak_memory_bytes = mem_bytes;
+        row.read_rows = read_rows as u64;
+        row.read_bytes = (read_rows * 22.0) as u64;
+        row.total_rows_approx = total_rows as u64;
         row.sql = sql;
         row.cpu_time_us = cpu_time_us;
+        row.memory_limit = template.limit_gib.map(|g| (g * GIB) as u64);
+        row.kind = Some(
+            match summary.verb {
+                "INSERT" => "Insert",
+                "EXPLAIN" => "Explain",
+                _ => "Select",
+            }
+            .to_string(),
+        );
+        if summary.verb == "INSERT" {
+            row.written_rows = (read_rows * 0.9) as u64;
+        }
         row
     }
 
@@ -536,17 +590,29 @@ impl FakeSource {
                 .map(|q| crate::model::query_cores(q, None, Some(template.cores)))
                 .sum();
 
+            // One node misses polls for half a minute, two minutes in, so the tape and the
+            // insights have an outage to report and the screen shows a gap, not zeros.
+            let t = self.tick.as_secs_f64();
+            if template.name == "ch6" && (120.0..150.0).contains(&t) {
+                nodes.push(NodeSnapshot::unreachable(template.name, "connection timed out after 1.5 s"));
+                continue;
+            }
+
             // The node's own usage is its users plus whatever the server needs, chosen so the
             // node lands on the target percentage: Σ user + closing row == the node (§5.3).
             // The floor keeps at least 1% for the server when the users alone would fill it.
+            let (mem_pct, cpu_pct) = load(template, t);
             let mem_total = (template.mem_gib * GIB) as u64;
-            let mem_target = template.user_pct / 100.0 * mem_total as f64;
+            let mem_target = mem_pct / 100.0 * mem_total as f64;
             let server_mem = (mem_target - user_mem).max(mem_total as f64 * 0.01);
             let mem_used = (user_mem + server_mem) as u64;
 
-            let cpu_target = template.cpu_pct / 100.0 * template.cores;
+            let cpu_target = cpu_pct / 100.0 * template.cores;
             let busy_cores =
                 (cpu_target.max(user_cores + template.cores * 0.01)).min(template.cores);
+            // A believable answer time: tens of milliseconds, and one node that is slow.
+            let base_ms = if template.name == "clickhouse7" { 820.0 } else { 25.0 + 10.0 * template.cores / 16.0 };
+            let poll_ms = (base_ms + self.rng.range(0.0, base_ms * 0.4)) as u32;
             nodes.push(NodeSnapshot {
                 name: template.name.to_string(),
                 host: template.host.to_string(),
@@ -567,6 +633,7 @@ impl FakeSource {
                 server_cpu_time_us: Some(self.tick.as_micros() as u64 * 800_000),
                 max_memory_usage: Some((9.0 * GIB) as u64),
                 unreachable_reason: None,
+                poll_ms: Some(poll_ms),
             });
         }
 
@@ -655,10 +722,13 @@ impl FakeSource {
             });
         }
 
+        // The queue breathes: a dashboard refresh lands, the workers chew through it.
+        let t = self.queue_tick.as_secs_f64();
+        let waiting = (12.0 + 4.0 * (t / 50.0 * std::f64::consts::TAU).sin()).round().max(0.0) as u32;
         let queues = vec![
             QueueRow {
                 name: "queries".to_string(),
-                waiting: 12,
+                waiting,
                 oldest_wait_s: Some(oldest_wait),
                 workers_busy: 6,
                 workers_total: 6,

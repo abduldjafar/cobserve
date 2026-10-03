@@ -1,36 +1,36 @@
-│REDASH QUEUE  unreachable (not polled yet)          56   8                           [1]NODES [2]QUEUE     ⏎ open [2] │
-│──────────────12 waiting · oldest 1m49s ⚠ ·─workers─6/6 busy · 2 failed/5m────────────────────────────────────────────│
-│waiting for the first snapshot…                                                                                       │
-│ redash.paysera.net                                                                                                   │
-│queries                12 waiting   oldest   1m49s   workers     6/6 busy   failed/5m 2                               │
-│scheduled_queries       3 waiting   oldest     22s   workers     2/2 busy   failed/5m 0                               │
-│periodic                0 waiting   oldest       —   workers     0/1 idle   failed/5m 0                               │
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 16:40:34 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+│ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
+│ REDASH  13 waiting    ▇████ · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues  [2] queue │
+│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│  redash.paysera.net   WAITING   OLDEST    WORKERS                   FAILED/5m   DEPTH · last 4 min                   │
+│  queries                   13   3m43s ✖   ●●●●●● 6/6 busy                   2          ▇█▇▆██▅██                     │
+│  scheduled_queries          3   22s       ●● 2/2 busy                       0          ▃▃▃▃▃▃▃▃▃                     │
+│  periodic                   0   —         ○ 0/1 idle                        0          ▁▁▁▁▁▁▁▁▁                     │
 │                                                                                                                      │
-│WAITING                                                                                                               │
-│    #      WAIT  USER → PERSON             DATA SOURCE     QUERY                                                      │
-�  nothing waiting
+│ ─ WAITING · 16 in the queues · 7 named ───────────────────────────────────────────────────────────────────────────── │
+│    #  WAIT              USER → PERSON             QUEUE       DATA SOURCE   QUERY                                    │
+│    1   3m43s ✖ ████████ r_redash → r.simonyte     queries     clickhouse-bi #8091 July close pack · by product       │
+│ ▌  2   3m25s ✖ ████████ r_redash → j.petrova      queries     clickhouse3   #8113 AML dashboard · by country         │
+│    3   3m07s ✖ ████████ r_redash → m.kairys       queries     clickhouse-bi #7711 FX exposure · intraday             │
+│    4   2m49s ▲ ███████▌ r_redash → grigol.gankava queries     clickhouse3   #8092 Gateway transfers · hourly         │
+│    5   2m31s ▲ ██████▊  r_redash → d.zaleckas     queries     clickhouse-bi #8120 Chargebacks · weekly               │
+│    6   1m01s ▲ ██▊      r_redash → d.zaleckas     scheduled_q…clickhouse-bi Nightly settlement                       │
+│    7     52s ▲ ██▎      r_redash → a.vaitkus      scheduled_q…clickhouse-bi Refresh merchant risk                    │
 │                                                                                                                      │
-│RUNNING · on a worker                                                                                                 │
-│    #   RUNNING  USER → PERSON             DATA SOURCE     QUERY                 → CLICKHOUSE                         │
-│    6     4m44s ✕  r_redash → grigol.gankava clickhouse3     #7438 Gateway transfe…→ clickhouse3 · c3e51……            │
-│    7     3m44s ✕  r_redash → j.petrova      clickhouse-bi   #8585 AML dashboard   → clickhouse-bi · 8a1c4……          │
-│    8     2m44s ✕  r_redash → m.kairys       clickhouse2     #7711 FX exposure     → clickhouse2 · 1f9d7……            │
-│    1     1m49s ✕  r_redash → r.simonyte     clickhouse-bi   #8091 July close pack…→ not in ClickHouse yet            │
-│    2     1m31s ✕  r_redash → j.petrova      clickhouse3     #8113 AML dashboard ·…→ not in ClickHouse yet            │
-│    3     1m13s ✕  r_redash → m.kairys       clickhouse-bi   #7711 FX exposure · i…→ not in ClickHouse yet            │
-│    4       55s ✕  r_redash → grigol.gankava clickhouse3     #8092 Gateway transfe…→ not in ClickHouse yet            │
-│   10       40s ✕  r_redash → d.zaleckas     clickhouse-bi   Nightly settlement    → not in ClickHouse yet            │
-│    5       37s ✕  r_redash → d.zaleckas     clickhouse-bi   #8120 Chargebacks · w…→ not in ClickHouse yet            │
-│    9       31s ✕  r_redash → a.vaitkus      clickhouse-bi   Refresh merchant risk → not in ClickHouse yet            │
-│                                                                                                                      │
-│                                                                                                                      │
+│ ─ RUNNING · on a worker · 3 ──────────────────────────────────────────────────────────────────────────────────────── │
+│    #  RUNNING   USER → PERSON             DATA SOURCE   QUERY                       → CLICKHOUSE · mem · cores · do… │
+│    1    6m38s ✕ r_redash → grigol.gankava clickhouse3   #7438 Gateway transfers     → clickhouse3 16.3G 3.1c 57%     │
+│    2    5m38s ✕ r_redash → j.petrova      clickhouse-bi #8585 AML dashboard         → clickhouse-bi 21.2G 1.9c 95%   │
+│    3    4m38s   r_redash → m.kairys       clickhouse2   #7711 FX exposure           → clickhouse2 15.4G 1.2c 64%     │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│─ no snapshot yet ────────────────────────────────────────────────────────────────────────────────────────────────────│
-│waqueue · queries · r_redash → grigol.gankava                                                                         │
-│8/9 workers busy · none of them is stuck in ClickHouse                                                                │
-│running 4m44s · job run-1 → clickhouse3 · c3e51cb5 · ⏎ jumps to the query on view 1                                   │
-└���────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-─┘
+│                                                                                                                      │
+│                                                                                                                      │
+│ ─ queue · queries · r_redash → j.petrova ─────────────────────────────────────────────────────────────────────────── │
+│ 8/9 workers busy · 2 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi) → why it is full           │
+│ waiting 3m25s · 1 job ahead of it · nothing to kill: it has not reached ClickHouse                                   │
+│ data source clickhouse3 · Redash #8113 AML dashboard · by country                                                    │
+│  ↑↓  move   ⏎  jump to ClickHouse   1  nodes   p  pause   ?  help   q  quit                                          │
+╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

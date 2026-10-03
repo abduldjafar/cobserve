@@ -15,6 +15,9 @@ reqwest = { version = "0.12", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
+# Already in the tree through ratatui; used directly so padding agrees with what the
+# terminal draws when a person, a node or a piece of SQL has wide characters in it.
+unicode-width = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

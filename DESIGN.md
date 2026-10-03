@@ -624,3 +624,65 @@ number cannot be traced to a formula here, it is a bug.
 - Terminal restore on panic: install the color-eyre hook **before** entering raw mode, and
   make the hook leave raw mode / the alternate screen, or a crash leaves the user's shell
   unusable.
+
+---
+
+## 13. After v1: what this version adds, and where it departs from the text above
+
+Nothing here changes a §5 number. Every addition is derived from what §5 already computes,
+or from a slope over the last minutes of it.
+
+### Added
+
+- **Insights** (`src/insight.rs`), under the tree on view 1: hot nodes and whether a person or
+  the server holds them, memory forecasts, queries near their own limit with the time left,
+  the same Redash query running twice, a full queue explained by the workers stuck on runaway
+  queries, lag, unreachable and slow nodes, the heaviest user. `tab` focuses them, `⏎` jumps
+  to the row an insight is about. CPU is judged over 10 s, not one poll.
+- **History** (`src/history.rs`): four minutes of every node, user row, query and queue.
+  Sparklines (each cell the worst moment of its slice, gaps left as gaps), trend arrows from a
+  least-squares slope over 60 s, forecasts only once 30 s of history exist.
+- **TAPE**, view 4 (`src/tape.rs`): what changed. Severity changes need two polls in a row and
+  a margin below the line before they are called over (3 points for memory, 6 for CPU), so a
+  node at 75% does not write a line a poll. A query's end is listed only when it was a runaway
+  or near its limit; vanishing at ≥ 95% of its limit reads *probably killed*.
+- **MAP**, view 3: the fleet as severity-framed tiles. It takes the slot §0 named FLOW; FLOW
+  remains free for a Redash → ClickHouse flow view if one is wanted.
+- **Progress and ETA** from `system.processes.total_rows_approx`, plus `written_rows`,
+  `peak_memory_usage`, `query_kind` and the query's own `Settings['max_memory_usage']`. All of
+  them exist on 24.10 (checked on the local rig); a server that refuses them gets §6.1's
+  statement for the rest of the session.
+- **Poll latency** per node, in the drawer and the insights.
+- **Theme** (`src/theme.rs`): 24-bit, 256- and 16-colour renderings of one palette, `THEME=light`,
+  `THEME=mono` and `NO_COLOR`.
+
+### Departures
+
+- **§5.4 runaway by memory** uses the query's own `max_memory_usage` from its `Settings`.
+  `system.settings` answers for the monitoring session — 6 GB on the rig, the monitor's own
+  cap — not for the person running the query; it is now only the fallback before 9 GiB.
+- **§7 marks** are `▲` (amber) and `✖` (red) instead of `⚠`, which several terminals draw as a
+  two-cell emoji and so shift the row. Colour also marks structure (node names, persons, keys)
+  — still never to tell two users apart, and red and amber still mean only severity.
+- **§1 layout**: a fleet summary line above the queue strip, one column header above the tree
+  instead of one under every open node, bars on node rows on the same scale as the user rows
+  under them, insights between the tree and the drawer. The drawer and the §7 degradation order
+  are as specified.
+- **§6.2 seeds** are de-duplicated by URL, not by host: two ports on one machine are two
+  servers. A host `system.clusters` reports that was reached through a seed's URL takes that
+  target over under its cluster name, instead of the same server being polled twice.
+- **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
+  awaited them one after another.
+
+### Fixed on the way
+
+- View 2 listed every waiting job younger than the oldest running one under RUNNING.
+- The stitch ran only on ClickHouse polls; it now also runs on each queue poll, prefers the
+  node the job's data source names, and never hands one ClickHouse query to two jobs.
+- The pivot keyed rows by account alone, so every person behind `r_redash` opened and closed
+  together and the cursor could not reach the second one.
+- The queue explanation counted visible tree rows instead of runaway queries.
+- A momentarily negative `memory_usage` (it is Int64) dropped the query from the screen.
+- The tree never scrolled to follow the cursor.
+- `dev/local-rig.sh` on Linux: the umask for the password file leaked onto the rendered
+  configs, and Keeper's raft port needed `enable_ipv6=false` on a host without IPv6.

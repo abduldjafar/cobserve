@@ -9,8 +9,15 @@ mod app;
 mod attrib;
 mod config;
 mod fake;
+mod fmt;
+mod history;
+mod insight;
 mod model;
+mod severity;
 mod sources;
+mod sqltext;
+mod tape;
+mod theme;
 mod tree;
 mod ui;
 
@@ -63,6 +70,7 @@ fn install_panic_hook() {
 async fn run(terminal: &mut DefaultTerminal, config: Config) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
+    app.poll_interval = config.poll;
 
     spawn_sources(&config, tx.clone());
     // Anything a source could not even start with belongs on screen, not in a log file.
@@ -175,7 +183,11 @@ fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
         polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
+            // Biased so that, at start, discovery runs before the first poll: otherwise the
+            // first snapshot can carry a seed's raw address and every node discovery then
+            // names would be flagged NEW.
             tokio::select! {
+                biased;
                 _ = discovery.tick() => {
                     for error in source.discover().await {
                         let _ = tx.send(Event::Notice(format!("discovery: {error}")));
@@ -199,9 +211,9 @@ fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
         }
         // Redash is optional (§9): the strip says so instead of the app refusing to start.
         None => {
-            let _ = queue_tx.send(Event::Notice(
-                "no REDASH_URL / REDASH_ADMIN_API_KEY — the queue strip stays empty".to_string(),
-            ));
+            let _ = queue_tx.send(Event::Queue(Box::new(model::QueueStatus::unreachable(
+                model::QUEUE_NOT_CONFIGURED,
+            ))));
         }
     }
 }

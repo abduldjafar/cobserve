@@ -29,9 +29,11 @@ pub enum RowId {
     },
     Closing(String),
     Folded,
-    /// Pivot level 0: one user across the fleet.
+    /// Pivot level 0: one user — one *person* behind it, when §6.4 found one — across the
+    /// fleet. The key is `TreeState::fleet_user_key`: keyed by the account alone, every person
+    /// behind `r_redash` would be the same row, open and close together, and trap the cursor.
     FleetUser(String),
-    /// Pivot level 1: that user on one node.
+    /// Pivot level 1: that user on one node. `user` is the same key as `FleetUser`'s.
     PivotNode {
         user: String,
         node: String,
@@ -154,6 +156,14 @@ impl TreeState {
         match &slice.person {
             Some(person) => format!("{}\u{1}{person}", slice.user),
             None => slice.user.clone(),
+        }
+    }
+
+    /// A pivot row's identity: the account and the person, like a user row's inside a node.
+    pub fn fleet_user_key(user: &FleetUser<'_>) -> String {
+        match &user.person {
+            Some(person) => format!("{}\u{1}{person}", user.user),
+            None => user.user.clone(),
         }
     }
 
@@ -302,14 +312,15 @@ fn build_pivot<'a>(view: &'a FleetView<'a>, state: &TreeState) -> Vec<Row<'a>> {
             && !fleet_user_matches(fleet_user, needle) {
                 continue;
             }
+        let key = TreeState::fleet_user_key(fleet_user);
         rows.push(Row {
-            id: RowId::FleetUser(fleet_user.user.clone()),
+            id: RowId::FleetUser(key.clone()),
             depth: 0,
             kind: Kind::FleetUser,
             payload: Payload::FleetUser(fleet_user),
         });
 
-        if !state.node_expanded(&fleet_user.user) {
+        if !state.node_expanded(&key) {
             continue;
         }
 
@@ -320,7 +331,7 @@ fn build_pivot<'a>(view: &'a FleetView<'a>, state: &TreeState) -> Vec<Row<'a>> {
                 }
             rows.push(Row {
                 id: RowId::PivotNode {
-                    user: fleet_user.user.clone(),
+                    user: key.clone(),
                     node: user_node.node.name.clone(),
                 },
                 depth: 1,
@@ -331,7 +342,7 @@ fn build_pivot<'a>(view: &'a FleetView<'a>, state: &TreeState) -> Vec<Row<'a>> {
                 },
             });
 
-            if !state.user_expanded(&fleet_user.user, &user_node.node.name) {
+            if !state.user_expanded(&key, &user_node.node.name) {
                 continue;
             }
             for stat in &user_node.queries {
@@ -594,6 +605,7 @@ mod tests {
             read_bytes: 1024,
             sql: "/* Username: grigol.gankava@paysera.net, */ SELECT 2".into(),
             cpu_time_us: 1_800_000,
+            ..crate::model::QueryRow::new("cafe0001", "r_redash")
         };
         snap.nodes
             .iter_mut()
@@ -694,7 +706,7 @@ mod tests {
         assert_eq!(pivot_rows[0].kind, Kind::FleetUser);
         assert!(pivot_rows
             .iter()
-            .any(|r| matches!(r.id, RowId::FleetUser(ref u) if u == "r_redash")));
+            .any(|r| matches!(r.id, RowId::FleetUser(ref u) if u.starts_with("r_redash"))));
 
         state.pivot = false;
         let view = crate::model::fleet_view(&snap, None);
@@ -705,28 +717,51 @@ mod tests {
     #[test]
     fn the_pivot_puts_the_heaviest_user_first_and_shows_each_node() {
         let snap = fake_snapshot();
+        let view = crate::model::fleet_view(&snap, None);
         let mut state = TreeState {
             pivot: true,
             ..TreeState::default()
         };
-        state.toggle_node("r_redash");
-        let view = crate::model::fleet_view(&snap, None);
+        // j.petrova runs on two nodes; opening her row shows both, and only hers.
+        let petrova = view
+            .users
+            .iter()
+            .find(|u| u.person.as_deref() == Some("j.petrova"))
+            .expect("j.petrova is in the fake fleet");
+        let key = TreeState::fleet_user_key(petrova);
+        state.toggle_node(&key);
         let rows = build(&view, &state);
 
-        assert_eq!(rows[0].id, RowId::FleetUser("r_redash".into()));
-        let nodes: Vec<&RowId> = rows
+        assert!(matches!(rows[0].id, RowId::FleetUser(_)));
+        assert_eq!(rows[0].kind, Kind::FleetUser);
+        let nodes: Vec<&RowId> = rows.iter().filter(|r| r.depth == 1).map(|r| &r.id).collect();
+        assert_eq!(nodes.len(), 2, "{nodes:?}");
+        assert!(nodes.iter().all(|id| matches!(id, RowId::PivotNode { user, .. } if *user == key)));
+        assert!(nodes.iter().any(|id| matches!(id, RowId::PivotNode { node, .. } if node == "clickhouse3")));
+        assert!(nodes.iter().any(|id| matches!(id, RowId::PivotNode { node, .. } if node == "clickhouse-bi")));
+    }
+
+    #[test]
+    fn two_people_behind_one_account_are_two_rows() {
+        let snap = fake_snapshot();
+        let view = crate::model::fleet_view(&snap, None);
+        let state = TreeState {
+            pivot: true,
+            ..TreeState::default()
+        };
+        let rows = build(&view, &state);
+        let redash: Vec<&RowId> = rows
             .iter()
-            .filter(|r| r.depth == 1)
+            .filter(|r| matches!(&r.id, RowId::FleetUser(k) if k.starts_with("r_redash")))
             .map(|r| &r.id)
             .collect();
-        assert!(nodes.iter().any(|id| matches!(
-            id,
-            RowId::PivotNode { node, .. } if node == "clickhouse3"
-        )));
-        assert!(nodes.iter().any(|id| matches!(
-            id,
-            RowId::PivotNode { node, .. } if node == "clickhouse-bi"
-        )));
+        assert!(redash.len() >= 3, "{redash:?}");
+        let unique: std::collections::HashSet<&RowId> = redash.iter().copied().collect();
+        assert_eq!(unique.len(), redash.len(), "every person is a row of their own");
+        // …so the cursor can land on each of them.
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(selection_index(&rows, Some(&row.id)), Some(i));
+        }
     }
 
     #[test]

@@ -23,6 +23,9 @@
     <keeper_server>
         <tcp_port>9181</tcp_port>
         <server_id>1</server_id>
+        <!-- The raft listener has its own address family switch; on a host without IPv6 it
+             otherwise fails with "Address family not supported by protocol" on 9234. -->
+        <enable_ipv6>false</enable_ipv6>
         <log_storage_path>/var/lib/clickhouse-keeper/log</log_storage_path>
         <snapshot_storage_path>/var/lib/clickhouse-keeper/snapshots</snapshot_storage_path>
         <coordination_settings>

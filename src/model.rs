@@ -60,6 +60,9 @@ pub struct NodeSnapshot {
     pub max_memory_usage: Option<u64>,
     /// Why the last poll failed, for the `↯ unreachable` note (§2.6).
     pub unreachable_reason: Option<String>,
+    /// How long this node took to answer the poll. A node that is slow to answer
+    /// `system.processes` is usually a node in trouble, so the drawer and the insights say so.
+    pub poll_ms: Option<u32>,
 }
 
 impl NodeSnapshot {
@@ -86,6 +89,7 @@ impl NodeSnapshot {
             server_cpu_time_us: None,
             max_memory_usage: None,
             unreachable_reason: Some(reason.into()),
+            poll_ms: None,
         }
     }
 }
@@ -109,6 +113,21 @@ pub struct QueryRow {
     pub sql: String,
     /// Cumulative counter, kept so the next poll can difference it.
     pub cpu_time_us: u64,
+
+    // What `system.processes` says beyond §6.1's columns. All of them exist on every server
+    // this fleet runs (checked against 24.10 on the local rig), and all of them default to
+    // "unknown" so a row parsed from an older answer still works.
+    /// ClickHouse's own estimate of the rows the query will read; the progress bar is
+    /// `read_rows / total_rows_approx`. 0 = no estimate (a `system.*` read, an INSERT VALUES).
+    pub total_rows_approx: u64,
+    pub written_rows: u64,
+    pub peak_memory_bytes: u64,
+    /// The query's own `max_memory_usage`, from its `Settings` map. This is the limit the
+    /// server will actually kill it at — `system.settings` answers for the monitoring
+    /// session instead, which carries the monitor's own (smaller) cap.
+    pub memory_limit: Option<u64>,
+    /// `Select`, `Insert`, … as ClickHouse classifies it.
+    pub kind: Option<String>,
 }
 
 impl QueryRow {
@@ -124,6 +143,11 @@ impl QueryRow {
             read_bytes: 0,
             sql: String::new(),
             cpu_time_us: 0,
+            total_rows_approx: 0,
+            written_rows: 0,
+            peak_memory_bytes: 0,
+            memory_limit: None,
+            kind: None,
         }
     }
 }
@@ -135,6 +159,22 @@ pub struct QueryStat<'a> {
     pub query: &'a QueryRow,
     pub cores: f64,
     pub runaway: bool,
+    /// The memory limit this query is held to (its own, else the node's, else 9 GiB).
+    pub limit: u64,
+    /// `read_rows / total_rows_approx`, when the server has an estimate.
+    pub progress: Option<f64>,
+    /// Time left at the average pace so far, when there is progress to extrapolate from.
+    pub eta_s: Option<f64>,
+}
+
+impl QueryStat<'_> {
+    /// Memory as a fraction of the limit the server enforces on this query.
+    pub fn limit_fraction(&self) -> f64 {
+        if self.limit == 0 {
+            return 0.0;
+        }
+        self.query.memory_bytes as f64 / self.limit as f64
+    }
 }
 
 /// §2.2: one row per initial user on one node — or per person when §6.4 resolves one, which
@@ -284,10 +324,46 @@ pub fn mem_limit(node: &NodeSnapshot) -> u64 {
         .unwrap_or(FALLBACK_MAX_MEMORY_USAGE)
 }
 
+/// The limit a query is held to: its own `max_memory_usage` when the server reported one,
+/// otherwise the node's. The node's answer comes from the monitoring session's
+/// `system.settings`, which is the monitor's cap rather than the user's, so it is only ever
+/// the fallback.
+pub fn query_mem_limit(query: &QueryRow, node: &NodeSnapshot) -> u64 {
+    query
+        .memory_limit
+        .filter(|v| *v > 0)
+        .unwrap_or_else(|| mem_limit(node))
+}
+
 /// Runaway = `elapsed_s >= 30` or `memory_bytes >= 0.8 × limit`.
 pub fn is_runaway(query: &QueryRow, limit: u64) -> bool {
     query.elapsed_s >= RUNAWAY_ELAPSED_S
         || query.memory_bytes as f64 >= RUNAWAY_MEMORY_FRACTION * limit as f64
+}
+
+// ---------------------------------------------------------------------------
+// Progress: how far through its input a query is, and how long it has left
+// ---------------------------------------------------------------------------
+
+/// `read_rows / total_rows_approx`, clamped to [0, 1]. `None` without an estimate.
+pub fn query_progress(query: &QueryRow) -> Option<f64> {
+    if query.total_rows_approx == 0 {
+        return None;
+    }
+    Some((query.read_rows as f64 / query.total_rows_approx as f64).clamp(0.0, 1.0))
+}
+
+/// Time left at the average pace so far: `elapsed × (1 − p) / p`.
+///
+/// Only once there is something to extrapolate from (1% read and a second of wall time), and
+/// never for a query that is already at 100% — ClickHouse's estimate is a floor, so a query
+/// "at 100%" is finishing, not late.
+pub fn query_eta_s(query: &QueryRow, progress: Option<f64>) -> Option<f64> {
+    let p = progress?;
+    if !(0.01..0.999).contains(&p) || query.elapsed_s < 1.0 {
+        return None;
+    }
+    Some(query.elapsed_s * (1.0 - p) / p)
 }
 
 // ---------------------------------------------------------------------------
@@ -302,16 +378,20 @@ pub fn user_slices<'a>(
     node: &'a NodeSnapshot,
     prev: Option<&'a NodeSnapshot>,
 ) -> Vec<UserSlice<'a>> {
-    let limit = mem_limit(node);
     let mut by_user: HashMap<(&str, Option<&str>), Vec<QueryStat<'a>>> = HashMap::new();
 
     for query in &node.queries {
         let prev_query = prev.and_then(|p| p.queries.iter().find(|q| q.query_id == query.query_id));
         let key = (query.user.as_str(), query.person.as_deref());
+        let limit = query_mem_limit(query, node);
+        let progress = query_progress(query);
         by_user.entry(key).or_default().push(QueryStat {
             query,
             cores: query_cores(query, prev_query, node.cores),
             runaway: is_runaway(query, limit),
+            limit,
+            progress,
+            eta_s: query_eta_s(query, progress),
         });
     }
 
@@ -559,6 +639,69 @@ pub struct FleetView<'a> {
     pub users: Vec<FleetUser<'a>>,
 }
 
+/// The whole fleet in one line: what the band at the top of view 1 shows.
+///
+/// Sums only over the nodes whose denominator is known, numerator and denominator alike — a
+/// node that cannot say how much memory it has is left out of both, never counted as 0 of
+/// something (§2.1).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FleetTotals {
+    pub nodes: usize,
+    pub reachable: usize,
+    pub mem_used: u64,
+    pub mem_total: u64,
+    pub busy_cores: f64,
+    pub cores: f64,
+    pub queries: usize,
+    /// Runaway *queries* (not users), across the fleet.
+    pub runaways: usize,
+    /// Nodes at amber or worse on memory or CPU (§7).
+    pub hot: usize,
+}
+
+impl FleetTotals {
+    pub fn mem_pct(&self) -> Option<f64> {
+        (self.mem_total > 0).then(|| self.mem_used as f64 / self.mem_total as f64 * 100.0)
+    }
+
+    pub fn cpu_pct(&self) -> Option<f64> {
+        (self.cores > 0.0).then(|| (self.busy_cores / self.cores * 100.0).clamp(0.0, 100.0))
+    }
+}
+
+pub fn fleet_totals(view: &FleetView<'_>) -> FleetTotals {
+    let mut totals = FleetTotals {
+        nodes: view.nodes.len(),
+        ..FleetTotals::default()
+    };
+    for node in &view.nodes {
+        if !node.node.reachable {
+            continue;
+        }
+        totals.reachable += 1;
+        if let Some(total) = node.node.mem_total.filter(|t| *t > 0) {
+            totals.mem_total += total;
+            totals.mem_used += node.node.mem_used;
+        }
+        if let (Some(cores), Some(busy)) = (node.node.cores.filter(|c| *c > 0.0), node.busy_cores) {
+            totals.cores += cores;
+            totals.busy_cores += busy;
+        }
+        totals.queries += node.users.iter().map(|u| u.queries.len()).sum::<usize>();
+        totals.runaways += node
+            .users
+            .iter()
+            .flat_map(|u| u.queries.iter())
+            .filter(|q| q.runaway)
+            .count();
+        let worst = crate::severity::node(node.mem_pct).max(crate::severity::node(node.cpu_pct));
+        if worst.is_problem() {
+            totals.hot += 1;
+        }
+    }
+    totals
+}
+
 pub fn fleet_view<'a>(
     snapshot: &'a FleetSnapshot,
     prev: Option<&'a FleetSnapshot>,
@@ -667,6 +810,11 @@ pub fn attribution_from_sql(
 // §4 / §6.3 the Redash queue
 // ---------------------------------------------------------------------------
 
+/// The queue's error before the first Redash poll has come back.
+pub const QUEUE_NOT_POLLED: &str = "not polled yet";
+/// The queue's error when Redash is not configured at all (§9: it is optional).
+pub const QUEUE_NOT_CONFIGURED: &str = "not configured";
+
 #[derive(Debug, Clone)]
 pub struct QueueStatus {
     /// false → the strip prints "unreachable"; the app keeps running (§6.3).
@@ -694,6 +842,12 @@ impl QueueStatus {
             host: None,
             taken_at: SystemTime::now(),
         }
+    }
+
+    /// Not an outage: Redash is not configured, or has not answered its first poll yet.
+    pub fn is_placeholder(&self) -> bool {
+        !self.reachable
+            && matches!(self.error.as_deref(), Some(QUEUE_NOT_POLLED) | Some(QUEUE_NOT_CONFIGURED))
     }
 
     /// The queue Redash uses for ordinary ad-hoc and dashboard queries.
@@ -866,6 +1020,7 @@ mod tests {
             server_cpu_time_us: Some(500_000_000_000),
             max_memory_usage: Some(9 * GIB),
             unreachable_reason: None,
+            poll_ms: Some(40),
         }
     }
 
@@ -1247,5 +1402,95 @@ mod tests {
         assert_eq!(view.nodes.len(), 1);
         assert_eq!(view.users.len(), 4, "two r_redash people plus airflow and haris");
         assert!(shares_add_up(&view.nodes[0]));
+    }
+
+    // -- per-query limits and progress ------------------------------------
+
+    #[test]
+    fn a_query_is_held_to_its_own_limit_before_the_nodes() {
+        let node = node_with_three_users();
+        let mut q = query("q", "r_redash", 1.0, 7 * GIB, 0);
+        // The node says 9 GiB (the monitor's session), the query's own profile says 8 GiB:
+        // 7 GiB is 87.5% of the real limit, so it is runaway by memory.
+        q.memory_limit = Some(8 * GIB);
+        assert_eq!(query_mem_limit(&q, &node), 8 * GIB);
+        assert!(is_runaway(&q, query_mem_limit(&q, &node)));
+        // Without its own limit it falls back to the node's and is fine.
+        q.memory_limit = None;
+        assert_eq!(query_mem_limit(&q, &node), 9 * GIB);
+        assert!(!is_runaway(&q, query_mem_limit(&q, &node)));
+        // 0 is "unlimited/auto", which is not a limit to measure against.
+        q.memory_limit = Some(0);
+        assert_eq!(query_mem_limit(&q, &node), 9 * GIB);
+    }
+
+    #[test]
+    fn progress_and_eta_extrapolate_the_pace_so_far() {
+        let mut q = query("q", "u", 60.0, 1, 0);
+        assert_eq!(query_progress(&q), None, "no estimate, no progress");
+        q.total_rows_approx = 1_000;
+        q.read_rows = 250;
+        let p = query_progress(&q).unwrap();
+        assert!((p - 0.25).abs() < 1e-9);
+        // A quarter in 60 s → three quarters left at the same pace → 180 s.
+        assert!((query_eta_s(&q, Some(p)).unwrap() - 180.0).abs() < 1e-6);
+
+        // Reading past the estimate is a finishing query, not one at 120%.
+        q.read_rows = 1_500;
+        assert_eq!(query_progress(&q), Some(1.0));
+        assert_eq!(query_eta_s(&q, Some(1.0)), None);
+
+        // Too early to extrapolate.
+        q.read_rows = 5;
+        assert_eq!(query_eta_s(&q, query_progress(&q)), None);
+    }
+
+    #[test]
+    fn query_stats_carry_limit_progress_and_eta() {
+        let mut node = node_with_three_users();
+        node.queries[0].total_rows_approx = 2_000;
+        node.queries[0].read_rows = 1_000;
+        let view = node_view(&node, None);
+        let q1 = &view.users[0].queries[0];
+        assert_eq!(q1.limit, 9 * GIB);
+        assert_eq!(q1.progress, Some(0.5));
+        assert!((q1.eta_s.unwrap() - 275.0).abs() < 1e-6, "half way after 275 s");
+        assert!((q1.limit_fraction() - mem_of(25.3) as f64 / (9 * GIB) as f64).abs() < 1e-9);
+    }
+
+    // -- fleet totals --------------------------------------------------------
+
+    #[test]
+    fn fleet_totals_skip_what_cannot_be_measured() {
+        let a = node_with_three_users();
+        let mut b = healthy(node_with_three_users(), 16 * GIB, Some(4.0));
+        b.name = "b".into();
+        let mut unknown = node_with_three_users();
+        unknown.name = "unknown".into();
+        unknown.mem_total = None;
+        unknown.cores = None;
+        let dead = NodeSnapshot::unreachable("dead", "connection refused");
+
+        let snap = snapshot(vec![a, b, unknown, dead]);
+        let view = fleet_view(&snap, None);
+        let totals = fleet_totals(&view);
+
+        assert_eq!(totals.nodes, 4);
+        assert_eq!(totals.reachable, 3);
+        // a and b only: the unknown node is in neither the numerator nor the denominator.
+        assert_eq!(totals.mem_total, 128 * GIB);
+        assert_eq!(totals.mem_used, mem_of(90.9) + 16 * GIB);
+        assert!((totals.cores - 32.0).abs() < 1e-9);
+        assert!((totals.busy_cores - 19.1).abs() < 1e-9);
+        assert!((totals.cpu_pct().unwrap() - 19.1 / 32.0 * 100.0).abs() < 1e-9);
+        // 4 queries on a, 4 on unknown, none on b.
+        assert_eq!(totals.queries, 8);
+        // q1 and q2 run past 30 s, so do q3 (37 s) — on a and on unknown.
+        assert_eq!(totals.runaways, 6);
+        assert_eq!(totals.hot, 1, "a is hot; b is quiet and unknown cannot be measured");
+
+        let empty = fleet_totals(&FleetView { nodes: vec![], users: vec![] });
+        assert_eq!(empty.mem_pct(), None, "no denominator, no percentage");
+        assert_eq!(empty.cpu_pct(), None);
     }
 }
