@@ -110,8 +110,13 @@ WHERE is_initial_query = 1
 ORDER BY elapsed DESC
 "#;
 
+/// §6.2, plus the two columns that say which row is the server answering: `is_local`, and
+/// the server's own `hostName()` for when `is_local` cannot tell (a NAT, a container). Without
+/// them a seed reached as `clickhouse1.paysera.net` and listed by its cluster as
+/// `pay-ch-node-1.paysera.lan` is two nodes, one of them unreachable.
 const CLUSTERS_SQL: &str = r#"
-SELECT cluster, shard_num, replica_num, host_name, host_address, port
+SELECT cluster, shard_num, replica_num, host_name, host_address, port, is_local,
+       hostName() AS self_host
 FROM system.clusters
 WHERE cluster = {cluster:String}
 ORDER BY shard_num, replica_num
@@ -120,12 +125,38 @@ ORDER BY shard_num, replica_num
 /// One node to poll, and where to reach it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeTarget {
+    /// What the screen calls it: the seed as it was typed, or the cluster's name for a host
+    /// only discovery knows (and for a seed given as a bare IP address).
     pub name: String,
     pub url: String,
+    /// The host as the cluster knows it (`system.clusters.host_name`), for the drawer.
     pub host: String,
     pub port: u16,
     pub shard: u32,
     pub replica: u32,
+    /// Came from `CH_SEED_URLS` rather than from discovery.
+    pub seed: bool,
+}
+
+/// One row of `system.clusters`, as one seed saw it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterHost {
+    pub host_name: String,
+    pub host_address: String,
+    /// The native port the cluster lists; the HTTP port is `CH_HTTP_PORT` or the seed's.
+    pub port: u16,
+    pub shard: u32,
+    pub replica: u32,
+    /// This row is the server that answered (`is_local`, or its own `hostName()`).
+    pub is_self: bool,
+}
+
+/// What one seed answered to `CLUSTERS_SQL`.
+#[derive(Debug, Clone)]
+pub struct SeedAnswer {
+    /// The seed target's URL (`scheme://authority`).
+    pub url: String,
+    pub hosts: Vec<ClusterHost>,
 }
 
 /// ClickHouse's JSONEachRow quotes 64-bit integers, so `u64` fields arrive as JSON strings.
@@ -250,13 +281,16 @@ struct ClusterRow {
     host_address: String,
     #[serde(default, deserialize_with = "de_u64")]
     port: u64,
+    #[serde(default, deserialize_with = "de_u64")]
+    is_local: u64,
+    #[serde(default)]
+    self_host: String,
 }
 
 pub struct ClickHouseSource {
     client: reqwest::Client,
     user: String,
     password: String,
-    seeds: Vec<String>,
     cluster: String,
     http_port: u16,
     /// Targets keyed by node name; the fleet is seeds ∪ discovered (§6.2).
@@ -295,6 +329,7 @@ impl ClickHouseSource {
                     port,
                     shard: 0,
                     replica: 0,
+                    seed: true,
                 })
             })
             .collect();
@@ -318,7 +353,6 @@ impl ClickHouseSource {
             client,
             user: config.user.clone(),
             password: config.password.clone(),
-            seeds: config.seeds.clone(),
             cluster: config.cluster.clone(),
             http_port: config.http_port,
             targets,
@@ -328,6 +362,7 @@ impl ClickHouseSource {
     }
 
     /// The fleet as it stands: seeds plus whatever discovery has found, keyed by name.
+    #[cfg(test)]
     pub fn targets(&self) -> &[NodeTarget] {
         &self.targets
     }
@@ -339,23 +374,71 @@ impl ClickHouseSource {
     pub async fn discover(&mut self) -> Vec<String> {
         let sql = CLUSTERS_SQL.replace("{cluster:String}", &quote(&self.cluster));
         let mut errors = Vec::new();
-        let mut found: HashMap<String, NodeTarget> = HashMap::new();
+        let mut answers: Vec<SeedAnswer> = Vec::new();
 
-        for seed in &self.seeds {
-            match self.post(seed, &sql).await {
-                Ok(body) => match parse_clusters(&body, &self.seeds, self.http_port) {
-                    Ok(rows) => {
-                        for row in rows {
-                            found.entry(row.name.clone()).or_insert(row);
-                        }
-                    }
-                    Err(e) => errors.push(format!("{seed}: {e}")),
+        let seed_urls: Vec<String> = self
+            .targets
+            .iter()
+            .filter(|t| t.seed)
+            .map(|t| t.url.clone())
+            .collect();
+        for url in seed_urls {
+            match self.post(&url, &sql).await {
+                Ok(body) => match parse_clusters(&body) {
+                    Ok(hosts) => answers.push(SeedAnswer { url, hosts }),
+                    Err(e) => errors.push(format!("{url}: {e}")),
                 },
-                Err(e) => errors.push(format!("{seed}: {e}")),
+                Err(e) => errors.push(format!("{url}: {e}")),
             }
         }
 
-        merge_discovered(&mut self.targets, found.into_values().collect());
+        // A host only discovery knows is reached by its name when this machine can resolve
+        // it, and by the address the cluster lists when it cannot — cluster-internal names
+        // (`*.lan`) rarely resolve on a laptop, their addresses often do.
+        let unknown: Vec<String> = answers
+            .iter()
+            .flat_map(|a| a.hosts.iter())
+            .filter(|h| !self.targets.iter().any(|t| t.name == h.host_name))
+            .map(|h| h.host_name.clone())
+            .collect();
+        let port = self.http_port;
+        let checks = join_all(unknown.iter().map(|name| addresses(name.clone(), port))).await;
+        let resolvable: std::collections::HashSet<String> = unknown
+            .into_iter()
+            .zip(checks)
+            .filter_map(|(name, found)| (!found.is_empty()).then_some(name))
+            .collect();
+
+        // And what each seed's own name resolves to: a seed that is down cannot say which row
+        // of the cluster it is, but its address can.
+        let seeds: Vec<(String, String, u16)> = self
+            .targets
+            .iter()
+            .filter(|t| t.seed)
+            .filter_map(|t| {
+                let rest = t.url.split("://").nth(1)?;
+                let authority = rest.split('/').next()?;
+                let (host, port) = match authority.rsplit_once(':') {
+                    Some((h, p)) => (h.to_string(), p.parse().unwrap_or(port)),
+                    None => (authority.to_string(), port),
+                };
+                Some((t.url.clone(), host, port))
+            })
+            .collect();
+        let resolved = join_all(seeds.iter().map(|(_, host, port)| addresses(host.clone(), *port))).await;
+        let seed_addresses: HashMap<String, Vec<String>> = seeds
+            .into_iter()
+            .zip(resolved)
+            .map(|((url, _, _), found)| (url, found))
+            .collect();
+
+        merge_discovered(
+            &mut self.targets,
+            &answers,
+            self.http_port,
+            &|name| resolvable.contains(name),
+            &seed_addresses,
+        );
         errors
     }
 
@@ -457,10 +540,10 @@ impl ClickHouseSource {
             .body(sql.to_string())
             .send()
             .await
-            .map_err(|e| clean_error(&e.to_string()))?;
+            .map_err(describe)?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|e| clean_error(&e.to_string()))?;
+        let body = response.text().await.map_err(describe)?;
 
         if status.is_success() {
             return Ok(body);
@@ -488,7 +571,7 @@ impl ClickHouseSource {
             .body(sql.to_string())
             .send()
             .await
-            .map_err(|e| clean_error(&e.to_string()))?;
+            .map_err(describe)?;
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if status.is_success() {
@@ -530,6 +613,47 @@ fn clean_error(message: &str) -> String {
     message.chars().take(200).collect()
 }
 
+/// Why a request did not get an answer, in the words the drawer and the insights use.
+/// reqwest's own text is `error sending request for url (…)` for every one of these; the cause
+/// is further down its source chain.
+fn describe(error: reqwest::Error) -> String {
+    let timeout = error.is_timeout();
+    let connect = error.is_connect();
+    let mut chain = String::new();
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        chain.push_str(&cause.to_string());
+        chain.push(' ');
+        source = cause.source();
+    }
+    reason(&chain, timeout, connect).unwrap_or_else(|| clean_error(&error.without_url().to_string()))
+}
+
+/// The cause behind a transport error, from the text of its source chain.
+fn reason(chain: &str, timeout: bool, connect: bool) -> Option<String> {
+    let text = chain.to_ascii_lowercase();
+    if timeout {
+        return Some(format!("no answer within {:.1} s", REQUEST_TIMEOUT.as_secs_f64()));
+    }
+    let said = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
+    if said(&["dns error", "failed to lookup address", "name or service not known", "nodename nor servname", "no such host"]) {
+        return Some("name does not resolve from here (DNS)".to_string());
+    }
+    if said(&["connection refused"]) {
+        return Some("connection refused — nothing listening on that port".to_string());
+    }
+    if said(&["no route to host", "network is unreachable", "host is unreachable"]) {
+        return Some("no route to host".to_string());
+    }
+    if said(&["connection reset"]) {
+        return Some("connection reset".to_string());
+    }
+    if said(&["certificate", "tls", "ssl"]) {
+        return Some("TLS handshake failed".to_string());
+    }
+    connect.then(|| "cannot connect".to_string())
+}
+
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "\\'"))
 }
@@ -568,77 +692,201 @@ pub fn parse_processes(body: &str) -> Vec<QueryRow> {
         .collect()
 }
 
-/// Fold what `system.clusters` said into the targets (§6.2).
+/// What a host name resolves to here, within a second (empty when it does not). Blocking DNS
+/// runs on the blocking pool so a slow resolver cannot stall the poller.
+async fn addresses(name: String, port: u16) -> Vec<String> {
+    use std::net::ToSocketAddrs;
+    let lookup = tokio::task::spawn_blocking(move || {
+        (name.as_str(), port)
+            .to_socket_addrs()
+            .map(|found| found.map(|a| a.ip().to_string()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    });
+    match tokio::time::timeout(Duration::from_secs(1), lookup).await {
+        Ok(Ok(found)) => found,
+        _ => Vec::new(),
+    }
+}
+
+fn is_ip_literal(host: &str) -> bool {
+    host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Two names for one host: equal ignoring case, or the same first label
+/// (`pay-ch-node-1` and `pay-ch-node-1.paysera.lan`). Addresses only ever match exactly.
+fn same_host(a: &str, b: &str) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    if is_ip_literal(a) || is_ip_literal(b) {
+        return false;
+    }
+    let first = |s: &str| s.split('.').next().unwrap_or(s).to_ascii_lowercase();
+    first(a) == first(b)
+}
+
+/// Fold what the seeds said about their cluster into the targets (§6.2).
 ///
-/// A discovered host is the same machine as a target when the names agree, or when it was
-/// reached through that target's seed URL (`parse_clusters` hands the seed's URL to a host it
-/// recognises by name or address). The target then takes the cluster's name — `ch-a` reads
-/// better than `172.18.0.3` — and its shard and replica, instead of the same server being
-/// polled twice under two names.
-pub fn merge_discovered(targets: &mut Vec<NodeTarget>, found: Vec<NodeTarget>) {
-    for target in found {
-        let existing = targets
-            .iter()
-            .position(|t| t.name == target.name)
-            .or_else(|| targets.iter().position(|t| t.url == target.url));
-        match existing {
-            Some(i) => {
-                let existing = &mut targets[i];
-                existing.name = target.name;
-                existing.host = target.host;
-                existing.port = target.port;
-                existing.shard = target.shard;
-                existing.replica = target.replica;
+/// Every seed is matched to the row of `system.clusters` that is the seed itself — by
+/// `is_local` first, then by its own host name, then (for an answer without either) by the
+/// seed's host or address appearing in the row. A matched row only adds its shard, replica
+/// and cluster name to the seed's target, so one server is never polled twice under two
+/// names. A seed typed as a bare address takes the cluster's name, which reads better; one
+/// typed as a name keeps it. Rows that match no seed are the rest of the cluster and become
+/// targets of their own, reached by name when `resolvable` says it resolves here and by the
+/// listed address otherwise.
+pub fn merge_discovered(
+    targets: &mut Vec<NodeTarget>,
+    answers: &[SeedAnswer],
+    http_port: u16,
+    resolvable: &dyn Fn(&str) -> bool,
+    seed_addresses: &HashMap<String, Vec<String>>,
+) {
+    // Which seed each cluster host is, most certain first: the seed said so (`is_local`); an
+    // earlier round bound it (the target already carries the cluster's name as its host);
+    // the seed's URL names the host or its address; the seed's name resolves to its address.
+    let mut bound: HashMap<String, String> = HashMap::new();
+    for answer in answers {
+        for host in answer.hosts.iter().filter(|h| h.is_self) {
+            bound.entry(host.host_name.clone()).or_insert_with(|| answer.url.clone());
+        }
+    }
+    let seeds: Vec<(String, String)> = targets
+        .iter()
+        .filter(|t| t.seed)
+        .map(|t| (t.url.clone(), t.host.clone()))
+        .collect();
+    for host in answers.iter().flat_map(|a| a.hosts.iter()) {
+        if bound.contains_key(&host.host_name) {
+            continue;
+        }
+        let taken = |url: &String| bound.values().any(|u| u == url);
+        let by_memory = seeds.iter().find(|(url, known)| known == &host.host_name && !taken(url));
+        let by_url = || {
+            seeds.iter().find(|(url, _)| {
+                !taken(url)
+                    && (seed_contains(url, &host.host_name)
+                        || (!host.host_address.is_empty() && seed_contains(url, &host.host_address)))
+            })
+        };
+        let by_address = || {
+            seeds.iter().find(|(url, _)| {
+                !taken(url)
+                    && !host.host_address.is_empty()
+                    && seed_addresses
+                        .get(url)
+                        .is_some_and(|found| found.iter().any(|a| a == &host.host_address))
+            })
+        };
+        if let Some((url, _)) = by_memory.or_else(by_url).or_else(by_address) {
+            bound.insert(host.host_name.clone(), url.clone());
+        }
+    }
+
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for host in answers.iter().flat_map(|a| a.hosts.iter()) {
+        if !seen.insert(host.host_name.clone()) {
+            continue;
+        }
+        match bound.get(&host.host_name) {
+            Some(url) => {
+                // A target an earlier round created for this host under its cluster name is
+                // the same server as the seed: it goes.
+                targets.retain(|t| t.seed || t.name != host.host_name || &t.url == url);
+                if let Some(target) = targets.iter_mut().find(|t| &t.url == url) {
+                    if is_ip_literal(&target.name) || target.name == host.host_name {
+                        target.name = host.host_name.clone();
+                    }
+                    target.host = host.host_name.clone();
+                    target.port = host.port;
+                    target.shard = host.shard;
+                    target.replica = host.replica;
+                }
             }
-            None => targets.push(target),
+            None => match targets.iter_mut().find(|t| t.name == host.host_name) {
+                Some(target) => {
+                    target.shard = host.shard;
+                    target.replica = host.replica;
+                }
+                None => {
+                    let reach = if resolvable(&host.host_name) || host.host_address.is_empty() {
+                        host.host_name.clone()
+                    } else if host.host_address.contains(':') {
+                        format!("[{}]", host.host_address)
+                    } else {
+                        host.host_address.clone()
+                    };
+                    targets.push(NodeTarget {
+                        name: host.host_name.clone(),
+                        url: format!("http://{reach}:{http_port}"),
+                        host: host.host_name.clone(),
+                        port: host.port,
+                        shard: host.shard,
+                        replica: host.replica,
+                        seed: false,
+                    });
+                }
+            },
         }
     }
     targets.sort_by(|a, b| a.name.cmp(&b.name));
-    targets.dedup_by(|a, b| a.url == b.url && a.name == b.name);
+    // Belt and braces: one URL is one server, and a seed's entry is the one to keep.
+    let mut urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut order: Vec<usize> = (0..targets.len()).collect();
+    order.sort_by_key(|i| !targets[*i].seed);
+    let mut keep = vec![false; targets.len()];
+    for i in order {
+        if urls.insert(targets[i].url.clone()) {
+            keep[i] = true;
+        }
+    }
+    let mut i = 0;
+    targets.retain(|_| {
+        let k = keep[i];
+        i += 1;
+        k
+    });
 }
 
-/// Union the cluster rows by host name and turn them into poll targets (§6.2).
-///
-/// The HTTP URL of a discovered host is `http://{host}:{CH_HTTP_PORT}`, unless one of the
-/// seeds already points at that host or address — then the seed's URL wins.
-pub fn parse_clusters(body: &str, seeds: &[String], http_port: u16) -> Result<Vec<NodeTarget>, String> {
-    let mut by_name: HashMap<String, NodeTarget> = HashMap::new();
+/// The rows of one seed's `system.clusters`, de-duplicated by host name, with the row that is
+/// the answering server marked (`is_local`, or its own `hostName()`).
+pub fn parse_clusters(body: &str) -> Result<Vec<ClusterHost>, String> {
+    let mut hosts: Vec<ClusterHost> = Vec::new();
     for line in body.lines().filter(|l| !l.trim().is_empty()) {
         let row: ClusterRow = serde_json::from_str(line).map_err(|e| format!("cluster row: {e}"))?;
-        let port = u16::try_from(row.port).unwrap_or(9000);
-        if by_name.contains_key(&row.host_name) {
+        let is_self = row.is_local == 1 || same_host(&row.host_name, &row.self_host);
+        if let Some(existing) = hosts.iter_mut().find(|h| h.host_name == row.host_name) {
+            existing.is_self |= is_self;
             continue;
         }
-        let seed_url = seed_for(&row.host_name, &row.host_address, seeds);
-        let url = seed_url.unwrap_or_else(|| format!("http://{}:{}", row.host_name, http_port));
-        by_name.insert(
-            row.host_name.clone(),
-            NodeTarget {
-                name: row.host_name.clone(),
-                url,
-                host: if row.host_address.is_empty() {
-                    row.host_name.clone()
-                } else {
-                    row.host_address.clone()
-                },
-                port,
-                shard: row.shard_num,
-                replica: row.replica_num,
-            },
-        );
+        hosts.push(ClusterHost {
+            port: u16::try_from(row.port).unwrap_or(9000),
+            shard: row.shard_num,
+            replica: row.replica_num,
+            is_self,
+            host_address: row.host_address,
+            host_name: row.host_name,
+        });
     }
-    let mut out: Vec<NodeTarget> = by_name.into_values().collect();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
-}
-
-fn seed_for(host_name: &str, host_address: &str, seeds: &[String]) -> Option<String> {
-    seeds
-        .iter()
-        .find(|seed| {
-            seed_contains(seed, host_name) || (!host_address.is_empty() && seed_contains(seed, host_address))
-        })
-        .cloned()
+    // Only one row can be the server answering; if the server's short name matched several
+    // rows, `is_local` decides, and without it none of them is trusted.
+    if hosts.iter().filter(|h| h.is_self).count() > 1 {
+        for host in &mut hosts {
+            host.is_self = false;
+        }
+        for line in body.lines().filter(|l| !l.trim().is_empty()) {
+            if let Ok(row) = serde_json::from_str::<ClusterRow>(line)
+                && row.is_local == 1
+                && let Some(host) = hosts.iter_mut().find(|h| h.host_name == row.host_name)
+            {
+                host.is_self = true;
+            }
+        }
+    }
+    Ok(hosts)
 }
 
 fn seed_contains(seed: &str, host: &str) -> bool {
@@ -738,30 +986,201 @@ mod tests {
         assert_eq!(queries[0].person.as_deref(), Some("m.kairys"));
     }
 
+    fn seed(url: &str) -> NodeTarget {
+        let host = url.split("://").nth(1).unwrap().split(':').next().unwrap().to_string();
+        NodeTarget {
+            name: host.clone(),
+            url: url.to_string(),
+            host,
+            port: 8123,
+            shard: 0,
+            replica: 0,
+            seed: true,
+        }
+    }
+
+    fn names(targets: &[NodeTarget]) -> Vec<&str> {
+        targets.iter().map(|t| t.name.as_str()).collect()
+    }
+
     #[test]
     fn clusters_become_targets_with_the_configured_http_port() {
-        let targets = parse_clusters(CLUSTERS_FIXTURE, &[], 8123).unwrap();
-        assert_eq!(targets.len(), 2);
-        assert_eq!(targets[0].name, "pay-ch-node-1");
+        let hosts = parse_clusters(CLUSTERS_FIXTURE).unwrap();
+        assert_eq!(hosts.len(), 2);
+        let mut targets = Vec::new();
+        let answers = [SeedAnswer { url: "http://seed:8123".into(), hosts }];
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &HashMap::new());
+        assert_eq!(names(&targets), vec!["pay-ch-node-1", "pay-ch-node-2"]);
         assert_eq!(targets[0].url, "http://pay-ch-node-1:8123");
         assert_eq!(targets[0].port, 9000, "the native port is what system.clusters reports");
         assert_eq!((targets[0].shard, targets[0].replica), (1, 1));
+        assert!(!targets[0].seed);
     }
 
     #[test]
     fn a_seed_wins_over_the_assumed_port() {
-        let seeds = vec!["http://127.0.0.1:8124".to_string()];
+        let mut targets = vec![seed("http://127.0.0.1:8124")];
         let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"127.0.0.1","host_address":"127.0.0.1","port":9000}
 "#;
-        let targets = parse_clusters(body, &seeds, 8123).unwrap();
+        let answers = [SeedAnswer { url: "http://127.0.0.1:8124".into(), hosts: parse_clusters(body).unwrap() }];
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &HashMap::new());
+        assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].url, "http://127.0.0.1:8124");
     }
 
     #[test]
     fn duplicate_cluster_rows_collapse_by_host_name() {
         let body = format!("{CLUSTERS_FIXTURE}{CLUSTERS_FIXTURE}");
-        let targets = parse_clusters(&body, &[], 8123).unwrap();
-        assert_eq!(targets.len(), 2, "union by host_name (§6.2)");
+        assert_eq!(parse_clusters(&body).unwrap().len(), 2, "union by host_name (§6.2)");
+    }
+
+    /// What on call saw: two seeds by their public names, a cluster that calls the same two
+    /// servers by internal names this laptop cannot resolve. Two nodes, not four.
+    #[test]
+    fn seeds_with_other_names_than_their_cluster_are_still_one_node_each() {
+        let mut targets = vec![
+            seed("http://clickhouse1.paysera.net:8123"),
+            seed("http://clickhouse2.paysera.net:8123"),
+        ];
+        let rows = |local: u8| {
+            format!(
+                r#"{{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":{}}}
+{{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":{}}}
+"#,
+                u8::from(local == 1),
+                u8::from(local == 2)
+            )
+        };
+        let answers = [
+            SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&rows(1)).unwrap() },
+            SeedAnswer { url: "http://clickhouse2.paysera.net:8123".into(), hosts: parse_clusters(&rows(2)).unwrap() },
+        ];
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+
+        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
+        assert_eq!(targets[0].host, "pay-ch-node-1.paysera.lan", "the cluster's name, for the drawer");
+        assert_eq!((targets[0].shard, targets[0].replica), (1, 1));
+        assert_eq!((targets[1].shard, targets[1].replica), (1, 2));
+        assert!(targets.iter().all(|t| t.seed));
+    }
+
+    #[test]
+    fn without_is_local_the_servers_own_name_says_which_row_it_is() {
+        let mut targets = vec![seed("http://clickhouse1.paysera.net:8123")];
+        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":0,"self_host":"pay-ch-node-1"}
+{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":0,"self_host":"pay-ch-node-1"}
+"#;
+        let hosts = parse_clusters(body).unwrap();
+        assert!(hosts[0].is_self && !hosts[1].is_self);
+        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts }];
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "pay-ch-node-2.paysera.lan"]);
+        // The other node's name does not resolve here, so it is reached by its address.
+        assert_eq!(targets[1].url, "http://10.0.0.12:8123");
+    }
+
+    #[test]
+    fn a_phantom_from_an_earlier_round_is_folded_back_into_its_seed() {
+        let mut targets = vec![
+            seed("http://clickhouse1.paysera.net:8123"),
+            NodeTarget {
+                name: "pay-ch-node-1.paysera.lan".into(),
+                url: "http://pay-ch-node-1.paysera.lan:8123".into(),
+                host: "pay-ch-node-1.paysera.lan".into(),
+                port: 9000,
+                shard: 1,
+                replica: 1,
+                seed: false,
+            },
+        ];
+        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
+"#;
+        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net"]);
+    }
+
+    #[test]
+    fn a_seed_given_as_an_address_takes_its_cluster_name() {
+        let mut targets = vec![seed("http://172.18.0.3:8123")];
+        let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000,"is_local":1}
+{"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000,"is_local":0}
+"#;
+        let answers = [SeedAnswer { url: "http://172.18.0.3:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        merge_discovered(&mut targets, &answers, 8123, &|name| name == "ch-b", &HashMap::new());
+        assert_eq!(names(&targets), vec!["ch-a", "ch-b"], "not 172.18.0.3 and ch-a for one server");
+        assert_eq!(targets[0].url, "http://172.18.0.3:8123", "still reached through its seed");
+        assert_eq!((targets[0].shard, targets[0].replica), (1, 1));
+        assert_eq!(targets[1].url, "http://ch-b:8123", "a host that resolves is reached by name");
+    }
+
+    /// clickhouse2 is down when the app starts, so only clickhouse1 answers discovery — and it
+    /// lists pay-ch-node-2 as "not me". Its address is what clickhouse2's name resolves to.
+    #[test]
+    fn a_seed_that_is_down_is_recognised_by_its_address() {
+        let mut targets = vec![
+            seed("http://clickhouse1.paysera.net:8123"),
+            seed("http://clickhouse2.paysera.net:8123"),
+        ];
+        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
+{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":0}
+"#;
+        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        let addresses: HashMap<String, Vec<String>> = [
+            ("http://clickhouse1.paysera.net:8123".to_string(), vec!["10.0.0.11".to_string()]),
+            ("http://clickhouse2.paysera.net:8123".to_string(), vec!["10.0.0.12".to_string()]),
+        ]
+        .into();
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &addresses);
+        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
+        assert_eq!(targets[1].host, "pay-ch-node-2.paysera.lan");
+    }
+
+    #[test]
+    fn a_seed_bound_once_stays_bound_while_it_is_down() {
+        let mut targets = vec![
+            seed("http://clickhouse1.paysera.net:8123"),
+            seed("http://clickhouse2.paysera.net:8123"),
+        ];
+        let both = |local: u8| {
+            format!(
+                r#"{{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":{}}}
+{{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":{}}}
+"#,
+                u8::from(local == 1),
+                u8::from(local == 2)
+            )
+        };
+        // Round one: both answer.
+        let answers = [
+            SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() },
+            SeedAnswer { url: "http://clickhouse2.paysera.net:8123".into(), hosts: parse_clusters(&both(2)).unwrap() },
+        ];
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        // Round two: clickhouse2 is down and DNS says nothing useful.
+        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() }];
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
+    }
+
+    #[test]
+    fn two_rows_claiming_to_be_the_server_trust_is_local_alone() {
+        let body = r#"{"cluster":"c","shard_num":1,"replica_num":1,"host_name":"ch1.dc1","host_address":"10.0.0.1","port":9000,"is_local":0,"self_host":"ch1"}
+{"cluster":"c","shard_num":2,"replica_num":1,"host_name":"ch1.dc2","host_address":"10.0.1.1","port":9000,"is_local":1,"self_host":"ch1"}
+"#;
+        let hosts = parse_clusters(body).unwrap();
+        assert_eq!(hosts.iter().filter(|h| h.is_self).count(), 1);
+        assert!(hosts[1].is_self);
+    }
+
+    #[test]
+    fn host_names_match_on_their_first_label_and_addresses_exactly() {
+        assert!(same_host("pay-ch-node-1.paysera.lan", "pay-ch-node-1"));
+        assert!(same_host("CH-A", "ch-a"));
+        assert!(!same_host("pay-ch-node-1.paysera.lan", "pay-ch-node-2"));
+        assert!(!same_host("10.0.0.1", "10.0.0.12"));
+        assert!(!same_host("", "ch-a"));
+        assert!(is_ip_literal("172.18.0.3") && is_ip_literal("[::1]") && !is_ip_literal("ch-a"));
     }
 
     #[test]
@@ -801,26 +1220,15 @@ mod tests {
     }
 
     #[test]
-    fn a_seed_found_again_by_discovery_is_one_node_under_its_cluster_name() {
-        let seeds = vec!["http://172.18.0.3:8123".to_string()];
-        let mut targets = vec![NodeTarget {
-            name: "172.18.0.3".into(),
-            url: "http://172.18.0.3:8123".into(),
-            host: "172.18.0.3".into(),
-            port: 8123,
-            shard: 0,
-            replica: 0,
-        }];
-        let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000}
-{"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000}
-"#;
-        let found = parse_clusters(body, &seeds, 8123).unwrap();
-        merge_discovered(&mut targets, found);
-        let names: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, vec!["ch-a", "ch-b"], "not 172.18.0.3 and ch-a for one server");
-        assert_eq!(targets[0].url, "http://172.18.0.3:8123", "still reached through its seed");
-        assert_eq!((targets[0].shard, targets[0].replica), (1, 1));
-        assert_eq!(targets[1].url, "http://ch-b:8123", "a host no seed covers gets CH_HTTP_PORT");
+    fn transport_errors_are_said_plainly() {
+        let dns = "client error (Connect) dns error failed to lookup address information: Name or service not known";
+        assert_eq!(reason(dns, false, true).as_deref(), Some("name does not resolve from here (DNS)"));
+        assert!(reason("tcp connect error Connection refused (os error 111)", false, true)
+            .unwrap()
+            .starts_with("connection refused"));
+        assert_eq!(reason("", true, false).as_deref(), Some("no answer within 1.5 s"));
+        assert_eq!(reason("something else", false, true).as_deref(), Some("cannot connect"));
+        assert_eq!(reason("something else", false, false), None, "then reqwest's own words");
     }
 
     #[test]

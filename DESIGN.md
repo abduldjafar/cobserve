@@ -669,8 +669,19 @@ or from a slope over the last minutes of it.
   under them, insights between the tree and the drawer. The drawer and the §7 degradation order
   are as specified.
 - **§6.2 seeds** are de-duplicated by URL, not by host: two ports on one machine are two
-  servers. A host `system.clusters` reports that was reached through a seed's URL takes that
-  target over under its cluster name, instead of the same server being polled twice.
+  servers.
+- **§6.2 discovery matches each seed to its own row** of `system.clusters` before adding
+  anyone: by `is_local` (the row that is the server answering), else by the server's own
+  `hostName()`, else by the seed's URL naming the host or its address, else by the seed's
+  name resolving to the row's address — and a binding, once made, is kept. Matching by name
+  alone made a seed reached as `clickhouse1.paysera.net` and listed by its cluster as
+  `pay-ch-node-1.paysera.lan` two nodes, the second one unreachable from a laptop that cannot
+  resolve `.lan`. A seed keeps the name it was typed with (a bare IP takes the cluster's);
+  the cluster's name is in the drawer. A host no seed is — a real other node — is reached by
+  name when that resolves here, by its listed address when it does not.
+- **Unreachable reasons** are said plainly (*name does not resolve from here (DNS)*,
+  *connection refused*, *no answer within 1.5 s*) instead of reqwest's
+  `error sending request for url (…)`.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
 
@@ -684,5 +695,7 @@ or from a slope over the last minutes of it.
 - The queue explanation counted visible tree rows instead of runaway queries.
 - A momentarily negative `memory_usage` (it is Int64) dropped the query from the screen.
 - The tree never scrolled to follow the cursor.
+- A line printed to stderr at startup was drawn over the screen and stayed in the cells the
+  next frame did not change.
 - `dev/local-rig.sh` on Linux: the umask for the password file leaked onto the rendered
   configs, and Keeper's raft port needed `enable_ipv6=false` on a host without IPv6.

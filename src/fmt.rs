@@ -32,16 +32,21 @@ pub fn gib(bytes: u64) -> f64 {
     bytes as f64 / GIB
 }
 
+/// `-0.0` is what an empty `f64` sum is; on screen it is just 0.
+pub fn unsigned_zero(value: f64) -> f64 {
+    if value == 0.0 { 0.0 } else { value }
+}
+
 pub fn pct(value: Option<f64>) -> String {
     match value {
-        Some(v) => format!("{v:.1}%"),
+        Some(v) => format!("{:.1}%", unsigned_zero(v)),
         None => "—".to_string(),
     }
 }
 
 /// A percentage with no decimals, for places that only need the size of it.
 pub fn pct0(value: f64) -> String {
-    format!("{value:.0}%")
+    format!("{:.0}%", unsigned_zero(value))
 }
 
 pub fn dur(seconds: f64) -> String {
@@ -162,6 +167,9 @@ mod tests {
         assert_eq!(bytes(8 * 1024 * 1024 * 1024), "8.0 GiB");
         assert_eq!(pct(Some(25.34)), "25.3%");
         assert_eq!(pct(None), "—", "never a fake 0%");
+        let empty: f64 = Vec::<f64>::new().into_iter().sum();
+        assert_eq!(pct(Some(empty)), "0.0%", "an empty sum is -0.0, which is not news");
+        assert_eq!(pct0(-0.0), "0%");
         assert_eq!(dur(12.0), "12s");
         assert_eq!(dur(275.0), "4m35s");
         assert_eq!(dur(3720.0), "1h02m");
