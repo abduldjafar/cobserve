@@ -116,26 +116,6 @@ fn startup_problem(config: &Config) -> Option<String> {
     None
 }
 
-/// What the app is about to poll, for the log line at startup. No credential is ever in it.
-fn fleet_summary(config: &Config, source: &sources::clickhouse::ClickHouseSource) -> String {
-    let names: Vec<&str> = source
-        .targets()
-        .iter()
-        .map(|target| target.name.as_str())
-        .collect();
-    format!(
-        "polling {} node(s): {} · cluster {} · every {} ms",
-        names.len(),
-        names.join(" "),
-        if config.clickhouse.cluster.is_empty() {
-            "—"
-        } else {
-            &config.clickhouse.cluster
-        },
-        config.poll.as_millis()
-    )
-}
-
 /// Keys on a dedicated OS thread: `crossterm::event::read` blocks, and the loop must not.
 fn spawn_key_reader(tx: mpsc::UnboundedSender<Event>) {
     std::thread::spawn(move || loop {
@@ -165,7 +145,6 @@ fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
     let poll = config.poll;
     let discover_every = config.discover_every;
     let queue_tx = tx.clone();
-    let summary_config = config.clone();
     tokio::spawn(async move {
         let mut source = match sources::clickhouse::ClickHouseSource::new(&clickhouse) {
             Ok(source) => source,
@@ -174,7 +153,9 @@ fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
                 return;
             }
         };
-        eprintln!("{}", fleet_summary(&summary_config, &source));
+        // Nothing is printed here: stderr is the terminal ratatui draws on, and a line written
+        // there stays on screen in whatever cells the next frame does not change. The bottom
+        // border already says how many nodes are polled.
 
         // §6.2: discovery at start, then every 60 s.
         let mut discovery = tokio::time::interval(discover_every);

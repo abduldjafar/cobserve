@@ -190,6 +190,7 @@ fn gib_short(bytes: u64) -> String {
 }
 
 fn cores_short(cores: f64) -> String {
+    let cores = fmt::unsigned_zero(cores);
     if cores >= 10.0 {
         format!("{cores:.1}")
     } else {

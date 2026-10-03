@@ -193,6 +193,11 @@ fn unreachable(node: &NodeView<'_>, history: &History, now: f64, out: &mut Vec<I
     }
     if let Some(reason) = &node.node.unreachable_reason {
         text = text.muted(format!(" — {reason}"));
+        if reason.contains("DNS") {
+            // The usual case is a cluster-internal name: the cluster knows the node, this
+            // machine does not.
+            text = text.muted(" · add it to CH_SEED_URLS under a name or address that resolves here");
+        }
     }
     out.push(Insight {
         level: Severity::Crit,
