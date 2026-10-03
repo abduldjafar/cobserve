@@ -1,4 +1,4 @@
-# cobserve · `pay_monitoring`
+# cobserve
 
 A terminal monitor for on call: the ClickHouse fleet and the Redash queue on one screen,
 **who** is using each node, and — new in this version — **what it means**: ranked insights,
