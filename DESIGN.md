@@ -1,0 +1,626 @@
+# pay_monitoring — View 1 · NODES × USERS
+
+**Design + implementation guide.** Written for an implementer with no prior context.
+Read all of it before writing code; §5 (the math) and §10 (tests) are the contract.
+
+---
+
+## 0. What this is
+
+A terminal UI (Rust, ratatui) for on-call at Paysera that answers, on one screen, for a
+ClickHouse fleet whose node count keeps growing:
+
+1. **What is every node's resource state right now** — memory and CPU against that node's
+   own capacity.
+2. **Who is consuming it** — per node, per user, as a **percentage of that node's memory
+   and CPU**, with the shared Redash account (`r_redash`) resolved to the real person.
+3. **What the Redash queue looks like** — waiting jobs, oldest wait, worker saturation —
+   because a "slow dashboard" is usually a full queue, not a slow database.
+
+It is a sibling of FleetLens (the web app in `~/Documents/work/paysera/code/fleetlens`); it
+reads ClickHouse **directly** so it keeps working when the web app is down. Views 1 and 2 are
+in scope for this pass (§2.8 for view 2). Views 3–4 (FLOW, TAPE) are named in the header so
+the navigation is stable, but they render a one-line "not built yet" placeholder.
+
+A browser simulation of both views, with the exact keymap and the §5 math running in JS,
+is the executable reference: https://claude.ai/code/artifact/9f6896b6-8377-42fc-95f3-5268ddf1c560
+
+**Already decided, do not revisit:** Rust 2024, `ratatui = "0.30"`, `crossterm = "0.29"`,
+`color-eyre` (all in `Cargo.toml`). Add: `tokio` (rt-multi-thread, macros, sync, time),
+`reqwest` (json, rustls-tls; no default-features), `serde` + `serde_json`, `regex`.
+
+---
+
+## 1. The screen
+
+Target 120×36. Minimum 100×30 (see §7 for what degrades below that).
+
+```
+┌ FLEETLENS ──────────────── ● LIVE 2s  12:41:07 · 9 nodes · sort pressure ▼ · [1]NODES [2]QUEUE [3]FLOW [4]TAPE ┐
+│ REDASH QUEUE   12 waiting · oldest 1m40s ⚠ · workers 6/6 busy ⚠ · 2 failed/5m                        ⏎ open [2] │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ▾ clickhouse3       mem 58.2 / 64 GB  91% ⚠      cpu 15.1 / 16 cores  94% ⚠      6 running · lag 0s · parts 1.2k│
+│      USER → PERSON                MEM %                          CPU %                        QUERIES  LONGEST │
+│    ▸ r_redash → grigol.gankava    25.3%  ▇▇▇▇▇░░░░░░░░░░░░░░░   19.4%  ▇▇▇▇░░░░░░░░░░░░░░░░    2      4m35s ✕ │
+│    ▸ r_redash → j.petrova         12.8%  ▇▇▇░░░░░░░░░░░░░░░░░    4.4%  ▇░░░░░░░░░░░░░░░░░░░    1      2m44s ✕ │
+│    ▸ airflow                       5.5%  ▇░░░░░░░░░░░░░░░░░░░   31.2%  ▇▇▇▇▇▇░░░░░░░░░░░░░░    1        37s   │
+│    ▸ haris                         1.9%  ░░░░░░░░░░░░░░░░░░░░    1.8%  ░░░░░░░░░░░░░░░░░░░░    2        12s   │
+│      server · caches · merges     45.5%  ▇▇▇▇▇▇▇▇▇░░░░░░░░░░░   37.2%  ▇▇▇▇▇▇▇░░░░░░░░░░░░░    —          —   │
+│ ▾ clickhouse-bi     mem 43.5 / 64 GB  68%        cpu 12.0 / 16 cores  75%        9 running · lag 0s · parts 640│
+│    ▸ r_redash → j.petrova         12.8%  ▇▇▇░░░░░░░░░░░░░░░░░    4.4%  ▇░░░░░░░░░░░░░░░░░░░    1      2m44s ✕ │
+│      server · caches · merges     53.3%  ▇▇▇▇▇▇▇▇▇▇▇░░░░░░░░░   68.8%  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇░░░░░░    —          —   │
+│ ▸ clickhouse7       mem 62%   cpu 40%   4 running · lag 12s ⚠                                                    │
+│ ▸ clickhouse2       mem 41%   cpu 25%   3 running                                                                │
+│ ▸ clickhouse5 NEW   mem 38%   cpu  8%   1 running                                                                │
+│ ▸ 4 healthy nodes folded — ch4 ch6 ch8 ch9 (< 35%)                                                  space unfold │
+├─ c3e51cb5 · grigol.gankava @ clickhouse3 ──────────────────────────────────────────────────────────────────────┤
+│ Redash #7438 · started 12:36:32 on clickhouse3 · running 4m35s · 8.3 GiB · 2.1 cores · read 41.2 GB / 1.9 B rows │
+│ WITH BankRecord AS ( SELECT BillOpId, Bank, multiIf( ( AccNr = 'LT48729…' AND Curr…                              │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑↓ move   ⏎ expand   u pivot by user   / filter   s sort   p pause   1-4 view   q quit                           │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Regions (top → bottom, fixed unless noted)
+
+| Region | Height | Content |
+|---|---|---|
+| Header | 1 | app name · live dot + poll interval · UTC clock · node count · current sort · view tabs |
+| Queue strip | 1 | Redash queue summary (§6.3). Reads `queue unreachable` when the API fails — never blank. |
+| Tree | `Min(8)` | node blocks (§2). Scrolls. |
+| Detail drawer | 3 | the selected row's detail (§2.4). Empty drawer keeps its height — the tree must not jump. |
+| Footer | 1 | key legend, contextual (changes when a filter or confirm prompt is active) |
+
+Borders: single-line box drawing, one outer frame, hairline separators between regions.
+No inner boxes around every widget — the tree is one continuous list.
+
+---
+
+## 2. The tree
+
+The body is a **tree table** with three levels: **node → user → query**.
+
+### 2.1 Node row (level 0)
+
+```
+▾ clickhouse3       mem 58.2 / 64 GB  91% ⚠      cpu 15.1 / 16 cores  94% ⚠      6 running · lag 0s · parts 1.2k
+```
+
+- `▾` expanded / `▸` collapsed. Name padded to the widest node name in the fleet.
+- Memory and CPU **always print the denominator** (`58.2 / 64 GB`, `15.1 / 16 cores`). A
+  percentage without its denominator is not allowed anywhere in this UI.
+- If a denominator is unknown (see §6.1 fallback chain returns 0), print `mem 58.2 GB / —`
+  and no percentage — never a fake `0%`.
+- `NEW` badge: a node not present in the first snapshot of this session (§2.6).
+- Severity tint on the whole row: worst of mem%/cpu% (thresholds §7).
+
+### 2.2 User rows (level 1) — the point of the screen
+
+Under an expanded node, one row per **initial user**, sorted by mem% desc:
+
+```
+▸ r_redash → grigol.gankava    25.3%  ▇▇▇▇▇░░░░░░░░░░░░░░░   19.4%  ▇▇▇▇░░░░░░░░░░░░░░░░    2      4m35s ✕
+```
+
+- `USER → PERSON`: the ClickHouse user, and — when the attribution regex (§6.4) finds a
+  Redash `Username:` — an arrow to the real person. Plain users show just the user.
+- `MEM %` and `CPU %` are **shares of THIS node's capacity** (§5). Bars are 20 cells.
+- `QUERIES`: count. `LONGEST`: elapsed of the longest, with `✕` if runaway (§7).
+- The **last row of every expanded node is the closing row**:
+
+```
+  server · caches · merges     45.5%  ▇▇▇▇▇▇▇▇▇░░░░░░░░░░░   37.2%  ▇▇▇▇▇▇▇░░░░░░░░░░░░░    —          —
+```
+
+  It is node usage minus the sum of the user rows (§5.3). **User rows + closing row = the
+  node's percentage.** If they do not, the numbers are wrong, not the row.
+
+### 2.3 Query rows (level 2)
+
+`⏎` on a user row expands their queries, one per line, indented one more level:
+
+```
+      c3e51cb5   4m35s ✕   8.3 GiB  2.1c   WITH BankRecord AS (SELECT BillOpId, Bank, mul…
+```
+
+SQL is collapsed to one line (all whitespace runs → single space) and truncated to fit.
+
+### 2.4 Detail drawer
+
+Shows the **selected row**:
+
+- Node selected → `name · host:port · shard/replica · version · uptime · 9 running · lag · parts`.
+- User selected → `person (user) · N queries · Σ mem · Σ cores · longest query_id`.
+- Query selected → line 1: `query_id · person · Redash #id (if any) · started HH:MM:SS on node
+  · running Xs · mem · cores · read bytes / rows`; line 2: the collapsed SQL.
+
+### 2.5 Default state, sorting, folding
+
+- Sort key for nodes = **pressure** = `max(mem_pct, cpu_pct)`, then runaway count desc,
+  then name. `s` cycles: pressure → mem → cpu → name.
+- On first snapshot: the top node is **expanded**, all others collapsed.
+- **Folding:** nodes with `mem_pct < 35 && cpu_pct < 35 && runaway == 0 && lag_s < 10`
+  collapse into one line `▸ N healthy nodes folded — names (< 35%)`. `space` toggles the
+  fold. This is what keeps 40 nodes on one screen; it must exist from the first version.
+- Expansion state is keyed by **node name**, so a re-sort does not lose what you opened.
+- Selection is keyed by row identity (node name / user / query_id), not by index, so a
+  refresh under the cursor keeps the cursor on the same thing. If the selected row
+  disappears (query finished), selection moves to its parent.
+
+### 2.6 Dynamic node count
+
+- The node list is **discovered**, not configured (§6.1). It may grow while running.
+- A node first seen after the session's first snapshot gets `NEW` for the rest of the
+  session.
+- A node missing from a poll (timeout / connection refused) stays in the list with its
+  numbers replaced by `?` and a `↯ unreachable 12s` note; it is dropped only after it has
+  been unreachable for 5 minutes AND it is absent from `system.clusters`.
+
+### 2.7 Pivot (`u`)
+
+`u` flips the tree to **user → node → query** using the same snapshot. Level-0 rows become
+users (across the fleet), level-1 rows become the nodes they run on, each with that node's
+mem%/cpu% for this user. Sort: Σ memory bytes desc. This answers "who is burning the fleet"
+without a second data path. `u` again flips back.
+
+### 2.8 View 2 — QUEUE: the people behind the counts
+
+The strip on view 1 is deliberately one line. `2` (or `⏎` on the strip) opens the people:
+
+```
+┌ FLEETLENS ──────────────── ● LIVE 3s  12:41:07 · redash.paysera.net · [1]NODES [2]QUEUE [3]FLOW [4]TAPE ┐
+│ queries              12 waiting   oldest 1m40s ▲   workers 6/6 busy ▲   failed/5m 2                       │
+│ scheduled_queries     3 waiting   oldest   22s     workers 2/2 busy     failed/5m 0                       │
+│ periodic              0 waiting   oldest    —      workers 0/1 idle     failed/5m 0                       │
+│ WAITING                       #   WAIT      USER → PERSON              DATA SOURCE     QUERY               │
+│    1   1m40s ▲  r_redash → r.simonyte      clickhouse-bi    #8091 July close pack · by product            │
+│    2   1m12s ▲  r_redash → j.petrova       clickhouse-bi    #8113 AML dashboard · by country              │
+│    3     58s    r_redash → m.kairys        clickhouse2      #7711 FX exposure · intraday                  │
+│ RUNNING · on a worker         WORKER  RUNNING   USER → PERSON     DATA SOURCE   QUERY          → CLICKHOUSE│
+│    1   4m35s ✕  r_redash → grigol.gankava  clickhouse3      #7438 Gateway transfers  → clickhouse3 · c3e5…│
+│    2   2m44s ✕  r_redash → j.petrova       clickhouse-bi    #8585 AML dashboard      → clickhouse-bi · 8a1…│
+├─ queue · queries ────────────────────────────────────────────────────────────────────────────────────────┤
+│ 6/6 workers busy · 3 of them hold runaway ClickHouse queries (clickhouse3, clickhouse-bi) → why it's full │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑↓ move   ⏎ jump to the ClickHouse query   / filter   p pause   1 back to nodes   ? help                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- Three queue rows first (counts, oldest wait, worker saturation, failures), then **WAITING**
+  — every queued job with its person, data source, Redash query number and name, sorted by
+  wait — then **RUNNING**, every job on a worker with the **ClickHouse node and `query_id` it
+  became**. That arrow is the stitch: a Redash job that has started IS a `system.processes`
+  row somewhere, and `⏎` jumps to it on view 1 (expanding its node and user).
+- A **waiting** job has not reached ClickHouse yet: there is nothing to kill, the wait *is*
+  the queue. The drawer says so, plus how many jobs are ahead of it.
+- The drawer on a queue row answers the question the DA actually has: *"workers are all
+  busy because N of them hold runaway ClickHouse queries on these nodes"* — or "workers are
+  keeping up" when they are.
+- Same severity rules as everywhere: wait ≥ 60 s amber, ≥ 180 s red; a running job inherits
+  the runaway state of its ClickHouse query.
+
+---
+
+## 3. Keys
+
+| Key | Action |
+|---|---|
+| `↑` `↓` / `j` `k` | move selection |
+| `⏎` | expand / collapse the selected node or user |
+| `←` `→` | collapse / expand (vim-style tree) |
+| `space` | toggle the healthy fold |
+| `u` | pivot node↔user |
+| `s` | cycle sort |
+| `/` | filter (substring over node, user, person, SQL); `Esc` clears |
+| `p` | pause polling (header dot goes hollow, clock freezes) |
+| `1` … `4` | view tabs (2–4 are placeholders this pass) |
+| `?` | help overlay |
+| `q` / `Ctrl-C` | quit |
+
+Not in this pass: `k` kill, `a` ask Klikas, mouse. Leave them **out of the footer** —
+a listed key that does nothing is a bug.
+
+---
+
+## 4. Data model (Rust)
+
+```rust
+pub struct FleetSnapshot {
+    pub taken_at: std::time::SystemTime,
+    pub nodes: Vec<NodeSnapshot>,      // discovered order; UI sorts
+}
+
+pub struct NodeSnapshot {
+    pub name: String,                  // host_name from system.clusters
+    pub host: String, pub port: u16,
+    pub shard: u32, pub replica: u32,
+    pub version: String,
+    pub reachable: bool,               // false → numbers below are stale/unknown
+    pub mem_total: Option<u64>,        // bytes; None when the fallback chain gave 0
+    pub mem_used: u64,                 // MemoryResident
+    pub cores: Option<f64>,            // None when unknown
+    pub cpu_busy_cores: Option<f64>,   // node-wide busy cores (see §5.2)
+    pub running: u32,
+    pub lag_s: u64,                    // max absolute_delay over system.replicas
+    pub parts: u64,                    // active parts
+    pub queries: Vec<QueryRow>,
+}
+
+pub struct QueryRow {
+    pub query_id: String,
+    pub user: String,                  // initial_user
+    pub person: Option<String>,        // from Username: in the SQL (§6.4)
+    pub redash_query_id: Option<u64>,
+    pub elapsed_s: f64,
+    pub memory_bytes: u64,
+    pub cores: f64,                    // §5.2
+    pub read_rows: u64, pub read_bytes: u64,
+    pub sql: String,                   // raw; collapse at render time
+    pub cpu_time_us: u64,              // cumulative counter, kept for the delta
+}
+
+/// Derived per node, never stored: §5.
+pub struct UserSlice {
+    pub user: String, pub person: Option<String>,
+    pub mem_pct: Option<f64>, pub cpu_pct: Option<f64>,
+    pub queries: Vec<QueryRow>,        // sorted elapsed desc
+    pub longest_s: f64, pub runaway: bool,
+}
+
+pub struct QueueStatus {
+    pub reachable: bool,
+    pub queues: Vec<QueueRow>,          // queries / scheduled_queries / periodic
+    pub jobs: Vec<Job>,                 // waiting + running, with people (§6.3)
+    pub names_available: bool,          // false → WAITING shows counts only
+}
+pub struct QueueRow { pub name: String, pub waiting: u32, pub oldest_wait_s: Option<u64>, pub workers_busy: u32, pub workers_total: u32, pub failed_5m: u32 }
+pub enum JobState { Queued, Started }
+pub struct Job {
+    pub id: String, pub state: JobState, pub queue: String,
+    pub person: Option<String>,         // resolved user email
+    pub redash_query_id: Option<u64>, pub query_name: Option<String>, pub data_source: Option<String>,
+    pub age_s: u64,                     // waiting time, or running time
+    pub ch_node: Option<String>, pub ch_query_id: Option<String>,   // the stitch, for Started
+}
+```
+
+`model.rs` holds these plus **all the math in §5 as pure functions** with unit tests.
+Nothing in `model.rs` does I/O.
+
+---
+
+## 5. The math — this is the contract
+
+### 5.1 Memory share
+
+```
+user.mem_pct   = Σ memory_usage(queries of user on node) / node.mem_total * 100
+```
+
+- Denominator = `node.mem_total` from the fallback chain in §6.1. If `None`, `mem_pct` is
+  `None` and renders as `—`; never divide by a guess.
+- Group by **`initial_user`**, and only rows with `is_initial_query = 1` (the SQL in §6.1
+  already filters). A distributed query fans out to sub-queries on other nodes that appear
+  in *their* `system.processes` under the same user — counting those would charge the user
+  twice. This is the single most likely way to get the percentages wrong.
+
+### 5.2 CPU share
+
+Per query, cores in use:
+
+```
+cores(q) = Δ cpu_time_us(q) / Δ wall_us               -- between two consecutive polls
+fallback  = cpu_time_us(q) / (elapsed_s * 1e6)         -- first sighting of a query
+```
+
+where `cpu_time_us = greatest(OSCPUVirtualTimeMicroseconds, UserTime+SystemTime)` from
+`ProfileEvents` (§6.1 SQL returns it). The delta form is "right now"; the fallback is the
+average since the query started (what FleetLens shows) — use it only until a second sample
+exists. Clamp to `[0, node.cores]`.
+
+```
+user.cpu_pct   = Σ cores(q) / node.cores * 100          -- None if node.cores is None
+node.cpu_pct   = node.cpu_busy_cores / node.cores * 100
+```
+
+`node.cpu_busy_cores` comes from the `*Normalized` async metrics (§6.1, `server_cpu_percent`)
+× `cores`; when a node reports neither family, difference `server_cpu_time_us` between
+polls instead (same delta trick, node-wide).
+
+### 5.3 The closing row
+
+```
+server.mem_pct = node.mem_used / node.mem_total * 100  −  Σ user.mem_pct
+server.cpu_pct = node.cpu_pct                           −  Σ user.cpu_pct
+```
+
+Clamp each to `≥ 0` (query memory can momentarily exceed `MemoryResident` accounting).
+**Invariant, unit-tested:** `Σ user.mem_pct + server.mem_pct == node mem%` (±0.1) and the
+same for CPU. If the invariant cannot hold because a denominator is `None`, the whole column
+renders `—` for that node — a partial column is a lie.
+
+### 5.4 Runaway
+
+A query is **runaway** when `elapsed_s ≥ 30` **or** `memory_bytes ≥ 0.8 × per-query limit`
+where the limit is `max_memory_usage` from `system.settings` on that node (fallback 9 GiB —
+Paysera's known ceiling — if unreadable). Runaway rows carry `✕` and the red tint.
+
+---
+
+## 6. Data sources
+
+All ClickHouse access over the **HTTP interface**, `POST` body = SQL, `default_format=JSONEachRow`,
+query settings `readonly=1&max_execution_time=2`, credentials via `X-ClickHouse-User` /
+`X-ClickHouse-Key` headers. Per-request timeout 1.5 s. Poll every node **concurrently**; a
+slow node must not delay the others. `POLL_MS` default 2000.
+
+### 6.1 Per node, every poll — two statements
+
+**Capacity + node-wide load** (lifted from FleetLens `fleetMetrics.ts`; keep the fallback
+chains — they exist because real nodes in this fleet lack some metrics):
+
+```sql
+SELECT
+  coalesce(
+    (SELECT value FROM system.asynchronous_metrics WHERE metric = 'OSMemoryTotal' LIMIT 1),
+    (SELECT value FROM system.asynchronous_metrics
+       WHERE metric = 'CGroupMemoryTotal' AND value > 0 AND value < pow(2, 50) LIMIT 1),
+    (SELECT toFloat64(toUInt64OrZero(value)) FROM system.server_settings
+       WHERE name = 'max_server_memory_usage'
+         AND toUInt64OrZero(value) > 0 AND toUInt64OrZero(value) < pow(2, 50) LIMIT 1),
+    0
+  ) AS server_memory_total_bytes,
+  (SELECT value FROM system.asynchronous_metrics WHERE metric = 'MemoryResident' LIMIT 1)
+    AS server_memory_used_bytes,
+  (SELECT if(cpu_busy IS NULL, NULL, round(100 * least(1.0, greatest(0.0, cpu_busy)), 2))
+   FROM (
+     SELECT coalesce(
+       if(countIf(metric IN ('OSUserTimeNormalized','OSSystemTimeNormalized','OSNiceTimeNormalized')) > 0,
+          sumIf(value, metric IN ('OSUserTimeNormalized','OSSystemTimeNormalized','OSNiceTimeNormalized')), NULL),
+       if(countIf(metric IN ('CGroupUserTimeNormalized','CGroupSystemTimeNormalized')) > 0,
+          sumIf(value, metric IN ('CGroupUserTimeNormalized','CGroupSystemTimeNormalized')), NULL)
+     ) AS cpu_busy FROM system.asynchronous_metrics
+   )) AS server_cpu_percent,
+  (SELECT coalesce(
+     nullIf(countIf(metric LIKE 'OSUserTimeCPU%'), 0),
+     nullIf(countIf(metric LIKE 'CGroupUserTimeCPU%'), 0),
+     nullIf(countIf(metric LIKE 'CPUFrequencyMHz\\_%'), 0),
+     nullIf(toUInt64(ceil(maxIf(value, metric = 'CGroupMaxCPU' AND value > 0 AND value < 4096))), 0)
+   ) FROM system.asynchronous_metrics) AS server_cpu_cores,
+  (SELECT greatest(
+     sumIf(value, event = 'OSCPUVirtualTimeMicroseconds'),
+     sumIf(value, event = 'UserTimeMicroseconds') + sumIf(value, event = 'SystemTimeMicroseconds')
+   ) FROM system.events) AS server_cpu_time_us,
+  (SELECT count() FROM system.processes) AS active_queries,
+  (SELECT max(absolute_delay) FROM system.replicas) AS replica_lag_s,
+  (SELECT count() FROM system.parts WHERE active) AS active_parts,
+  (SELECT toUInt64OrZero(value) FROM system.settings WHERE name = 'max_memory_usage') AS max_memory_usage,
+  version() AS version,
+  uptime() AS uptime_s
+```
+
+**Running queries** (lifted from FleetLens `liveQueriesFleet.ts` `PER_NODE_SQL`):
+
+```sql
+SELECT
+  query_id,
+  initial_user AS user,
+  query,
+  elapsed AS elapsed_s,
+  memory_usage,
+  read_rows, read_bytes,
+  greatest(
+    ProfileEvents['OSCPUVirtualTimeMicroseconds'],
+    ProfileEvents['UserTimeMicroseconds'] + ProfileEvents['SystemTimeMicroseconds']
+  ) AS cpu_time_us,
+  trim(extract(query, 'Username:\\s*([^,]+)')) AS redash_user,
+  extract(query, 'query_id:\\s*(\\d+)')        AS redash_query_id
+FROM system.processes
+WHERE is_initial_query = 1
+  AND query NOT LIKE '%FROM system.processes%'
+  AND query NOT LIKE 'KILL QUERY%'
+ORDER BY elapsed DESC
+```
+
+(`extract` runs server-side; keep the Rust regex in §6.4 too, for fake mode and tests.)
+
+### 6.2 Discovery — every 60 s and at start
+
+```sql
+SELECT cluster, shard_num, replica_num, host_name, host_address, port
+FROM system.clusters
+WHERE cluster = {cluster:String}
+ORDER BY shard_num, replica_num
+```
+
+Run against **every seed** in `CH_SEED_URLS`; union the results by `host_name`. Seeds that are
+not in any cluster are still polled (a standalone node is a node). The fleet is
+`seeds ∪ discovered`. The HTTP port from `system.clusters` is the native port; assume HTTP =
+`CH_HTTP_PORT` (default 8123) unless the seed URL for that host says otherwise.
+
+### 6.3 Redash queue — every 3 s
+
+`GET {REDASH_URL}/api/admin/queries/rq_status` with header `Authorization: Key {REDASH_ADMIN_API_KEY}`.
+
+Shape as known (Redash ≥ 10, RQ) — **verify against the live instance first thing, and
+capture one real response into `tests/fixtures/rq_status.json`**:
+
+```json
+{
+  "queues":  { "queries": { "name": "queries", "queued": 12, "started": [ { "id": "...",
+               "origin": "queries", "enqueued_at": "...", "started_at": "...",
+               "meta": { "query_id": 7438, "user_id": 42, "data_source_id": 3 } } ] },
+               "scheduled_queries": { ... }, "periodic": { ... } },
+  "workers": [ { "name": "...", "state": "busy", "current_job": "...", "queues": "queries" } ]
+}
+```
+
+Derive: `waiting = Σ queued`, `oldest_wait_s` = now − min(`enqueued_at`) over queued jobs if
+the API lists them (if it only gives counts, show `oldest —`), `workers_busy/total` from
+`workers[].state`, `failed_5m` from `/api/admin/queries/rq_status` if present else omit the
+segment. If Redash is **< 10** the queue is Celery and the endpoint is
+`/api/admin/queries/tasks` with a different shape — branch on `/api/config` → `version`.
+
+**Who is running — from the API.** `started[].meta` carries `query_id` and `user_id`;
+resolve names through `GET /api/users/{id}` and `GET /api/queries/{id}` (name, data_source_id
+→ `GET /api/data_sources`) with an in-memory cache keyed by id — these do not change
+mid-session. That is enough for the RUNNING half of view 2.
+
+**Who is waiting — probably NOT from the API.** `rq_status` reports `queued` as a *count*;
+job details for queued jobs live in Redis under RQ's keys (`rq:queue:<name>` → job ids,
+`rq:job:<id>` → hash with `data`/`meta`, where `meta` again has `query_id` and `user_id`).
+Verify on the live instance first: if `rq_status` does list queued jobs, use it; if it
+does not, read Redis directly with `REDIS_URL` (read-only commands `LRANGE` + `HGETALL`,
+crate `redis`). Without Redis access the WAITING list degrades to `12 waiting · names
+unavailable (no REDIS_URL)` — a count, never an invented name. `enqueued_at` in the job
+hash gives the real wait time; without it, show `—`.
+
+**Fail soft:** any error → `QueueStatus { reachable: false, .. }` and the strip prints
+`REDASH QUEUE  unreachable (HTTP 401)`. The app must never exit because Redash is down.
+
+### 6.4 Attribution
+
+Redash writes a comment into every query it runs. Two regexes (same as FleetLens):
+
+```
+person          : Username:\s*([^,]+)        → trim → "grigol.gankava@paysera.net"
+redash_query_id : query_id:\s*(\d+)
+```
+
+Display the person as the local part before `@` when the domain is `paysera.net`, full
+address otherwise. A user that is not `r_redash` and has no `Username:` shows only the user.
+
+---
+
+## 7. Rendering rules
+
+**Colour carries severity and nothing else.** Users are distinguished by rows, never by hue.
+
+| Signal | none | warn (amber) | crit (red) |
+|---|---|---|---|
+| node mem % / cpu % | < 75 | ≥ 75 | ≥ 90 |
+| query elapsed | < 5 s | ≥ 5 s | ≥ 30 s (runaway) |
+| user mem % of a node | < 20 | ≥ 20 | ≥ 40 |
+| replica lag | < 10 s | ≥ 10 s | ≥ 60 s |
+| queue waiting / oldest | < 60 s | ≥ 60 s or workers all busy | ≥ 180 s |
+
+- Bars: 20 cells, `▇` filled, `░` empty, filled = `round(pct / 5)`. Bar colour follows the
+  row's severity; otherwise the default foreground at reduced intensity.
+- Numbers: bytes → `1.2 GiB` (one decimal, binary units); percent → `25.3%`; durations →
+  `12s`, `4m35s`, `1h02m`. Right-align numeric columns.
+- Clock in the header is **UTC**, `HH:MM:SS`, refreshed every second even while paused.
+- Truncate with `…`, never wrap, never let a row exceed one line.
+- **Width < 100:** drop the CPU bar (keep the number), then `LONGEST`, then `QUERIES`.
+  **Height < 30:** detail drawer shrinks to 1 line, then disappears. Never panic on resize.
+
+---
+
+## 8. Architecture
+
+```
+src/
+  main.rs        tokio runtime, terminal setup/teardown (color-eyre panic hook restores it),
+                 the event loop: select over key events, ticks, and source channels
+  app.rs         App state + `update(&mut self, Event)`: pure state machine, no I/O
+  ui.rs          `draw(&App, &mut Frame)`: layout + widgets, reads App only
+  model.rs       types (§4) + math (§5) as pure functions — 100% unit-tested
+  tree.rs        flattening (node→user→query, and the `u` pivot) into rows; selection by id
+  attrib.rs      the two regexes + person display rule
+  sources/
+    clickhouse.rs  discovery + per-node polling (reqwest, concurrent, timeouts)
+    redash.rs      rq_status polling, fail-soft
+  fake.rs        `FAKE=1` → a generator that emits believable snapshots (9 nodes, ~30
+                 queries, one runaway, one NEW node appearing after 20 s, queue backed up)
+```
+
+Event flow: sources run as tokio tasks and send `Event::Snapshot(FleetSnapshot)` /
+`Event::Queue(QueueStatus)` on an `mpsc` channel; the loop applies them to `App` and redraws.
+Key events come from `crossterm::event::EventStream`. One redraw per event, plus a 1 s tick
+for the clock. **The UI never blocks on the network.**
+
+State in `App`: current snapshot, previous snapshot (for CPU deltas), queue status, first-seen
+set (for `NEW`), expansion set, selection id, sort, pivot, filter, paused, view.
+
+---
+
+## 9. Configuration — environment only, nothing on disk
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `CH_SEED_URLS` | comma-separated `http://host:8123` seeds | required |
+| `CH_CLUSTER` | cluster name for `system.clusters` discovery | required |
+| `CH_USER` / `CH_PASSWORD` | a **read-only** ClickHouse user | required |
+| `CH_HTTP_PORT` | HTTP port for discovered hosts | `8123` |
+| `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — strip says so if absent |
+| `REDIS_URL` | Redash's RQ Redis, read-only — names of **waiting** jobs (§6.3) | optional — WAITING shows counts only |
+| `POLL_MS` | ClickHouse poll interval | `2000` |
+| `FAKE` | `1` → no network, generated data | unset |
+
+Never print credentials, not even in error messages (redact the `X-ClickHouse-Key` header
+if you log requests).
+
+---
+
+## 10. Tests — what must exist before this is done
+
+`model.rs` (plain `#[test]`, no terminal):
+- percentages close: `Σ user + server == node` for mem and cpu, on a fixture with 3 users.
+- a node with `mem_total: None` yields `mem_pct: None` for every row, never `0`.
+- cores: delta form when two samples exist, average form on first sighting, clamp to `cores`.
+- runaway: elapsed ≥ 30 s; memory ≥ 0.8 × limit; fallback limit 9 GiB when unreadable.
+- fold rule: exactly the nodes below every threshold with no runaway are folded.
+- sort: pressure desc, runaway count desc, name asc — stable.
+- `NEW`: a node absent from the first snapshot and present later is flagged; one present
+  from the start never is.
+
+`tree.rs`:
+- selection survives a refresh that reorders nodes; a vanished query moves selection to
+  its user; the pivot round-trips (node→user→node yields the original rows).
+
+`attrib.rs`: the two regexes on real-shaped Redash comments, including a `Username:` with a
+trailing comma and one with no `query_id:`.
+
+`sources/redash.rs`: parse `tests/fixtures/rq_status.json` (captured from the real
+instance); a 401 and a connection refused both yield `reachable: false`.
+
+`ui.rs` with `ratatui::backend::TestBackend`: the fake snapshot renders at 120×36, 100×30 and
+80×24 without panicking; the header, queue strip, one node row, one user row and the closing
+row appear in the buffer.
+
+---
+
+## 11. Build order
+
+1. `FAKE=1 cargo run` shows the full screen from generated data — layout, tree, keys,
+   fold, pivot, drawer. **No network until this looks right.** Reuse the ASCII in §1 as the
+   acceptance target.
+2. `model.rs` math + tests (§5, §10). Do this before touching a real cluster.
+3. `sources/clickhouse.rs` against one seed, no discovery. Compare a user's mem% with the
+   FleetLens web page's Consumption view for the same moment — they must agree.
+4. Discovery via `system.clusters`; start the app with one seed and watch all nodes appear.
+5. `sources/redash.rs` — capture a real `rq_status` first, then parse it. Then view 2:
+   RUNNING from the API; WAITING from Redis if `REDIS_URL` is given, counts otherwise.
+6. Attribution end-to-end: a Redash query shows `r_redash → person`.
+7. Resize degradation, `?` help overlay, `p` pause, filter.
+
+**Definition of done:** steps 1–7, `cargo test` green, `cargo clippy -- -D warnings` clean,
+and a 30-second screen recording (or three screenshots: 120×36, 100×30, pivot view) of it
+running against the real fleet. The percentages on screen must be explainable by §5 — if a
+number cannot be traced to a formula here, it is a bug.
+
+---
+
+## 12. Gotchas — read before step 3
+
+- `is_initial_query = 1` is the dedup. Remove it and every distributed query counts N times.
+- `ProfileEvents` are **cumulative counters** for the life of the query; the delta needs the
+  previous snapshot keyed by `query_id`.
+- `system.asynchronous_metrics` refreshes about once a second; polling faster than 1 s buys
+  nothing.
+- The HTTP interface truncates long `GET ?query=` URLs — always `POST` the SQL as the body.
+- `max_server_memory_usage = 0` means "auto", which is why the fallback chain rejects 0.
+- Some nodes in this fleet expose **no** `OS*` CPU families at all; `server_cpu_time_us`
+  from `system.events` is the only CPU signal there — hence the delta path in §5.2.
+- Terminal restore on panic: install the color-eyre hook **before** entering raw mode, and
+  make the hook leave raw mode / the alternate screen, or a crash leaves the user's shell
+  unusable.

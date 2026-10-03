@@ -1,0 +1,53 @@
+<!--
+    One shard, two replicas — the same shape as the real fleet (system.clusters on
+    pay-ch-node-1 reports shard_num 1 / replica_num 1 and 2).
+
+    Replica addresses are the docker network names on the native port, the same as the real
+    fleet (system.clusters there reports port 9000 for both replicas). That also means the
+    two names only resolve inside the docker network, not from the host: reach the nodes
+    over the seeds in CH_SEED_URLS (127.0.0.1:8123 and 127.0.0.1:8124) and treat the
+    discovered ch-a / ch-b rows as the one thing this rig cannot prove. Discovery resolving a
+    host name into a reachable URL is verified against the real fleet instead.
+
+    internal_replication=false means both replicas hold the full table, so no cross-node
+    fetch is needed for the rig to be consistent.
+-->
+<clickhouse>
+    <remote_servers>
+        <ch_paysera>
+            <shard>
+                <internal_replication>false</internal_replication>
+                <replica>
+                    <host>ch-a</host>
+                    <port>9000</port>
+                </replica>
+                <replica>
+                    <host>ch-b</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </ch_paysera>
+    </remote_servers>
+
+    <macros>
+        <shard>1</shard>
+        <replica>__REPLICA_NAME__</replica>
+    </macros>
+
+    <!-- Keeper is an external single node, and these servers are clients of it. The section
+         is <zookeeper>, not <keeper_server>: <keeper_server> is ClickHouse's own integrated
+         NuRaft, and a config there without <raft_configuration> yields
+         "Can't create replicated table without ZooKeeper" even though the port is reachable. -->
+    <zookeeper>
+        <node>
+            <host>ch-keeper</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <flush_interval_milliseconds>1000</flush_interval_milliseconds>
+    </query_log>
+</clickhouse>

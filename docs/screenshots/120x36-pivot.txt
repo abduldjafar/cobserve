@@ -1,0 +1,36 @@
+│REDASH QUEUE  unreachable (not polled yet)           8   8                                                 ⏎ open [2] │
+│──────────────12 waiting · oldest 1m49s ⚠ ·─workers─6/6 busy · 2 failed/5m────────────────────────────────────────────│
+│waiting for the first snapshot…                                                                                       │
+│▸ r_redash → r.simonyte         51.3 GiB  1 on 1 node · longest 5m08s ✕                                               │
+│▸ r_redash → j.petrova          29.4 GiB  2 on 2 nodes · longest 2m52s ✕                                              │
+│▸ etl                           23.0 GiB  1 on 1 node · longest 20s ✕                                                 │
+│▸ r_redash → m.kairys           22.7 GiB  2 on 2 nodes · longest 0s ✕                                                 │
+│▸ r_redash → grigol.gankava     16.2 GiB  1 on 1 node · longest 4m43s ✕                                               │
+│▸ bi_loader                     12.8 GiB  1 on 1 node · longest 26s ✕                                                 │
+│▸ dba                           11.5 GiB  4 on 4 nodes · longest 14s                                                  │
+�▸ airflow                        9.9 GiB  2 on 2 nodes · longest 17s
+│▸ haris                          1.2 GiB  1 on 1 node · longest 20s                                                   │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│─ no snapshot yet ────────────────────────────────────────────────────────────────────────────────────────────────────│
+│war_redash → r.simonyte · fleet                                                                                       │
+│r_redash → r.simonyte · Σ mem 51.3 GiB · Σ 2.20 cores · 1 queries on 1 nodes                                          │
+│clickhouse7 40.1% mem / 6.9% cpu                                                                                      │
+└���────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+─┘

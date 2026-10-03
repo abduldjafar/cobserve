@@ -1,0 +1,53 @@
+<!--
+    Read-only users for the local rig. Rendered by dev/local-rig.sh: the __*_PASSWORD__
+    placeholders are filled with values generated per run and written to dev/local/.env,
+    which is gitignored. Nothing here is a real credential.
+
+    The monitor profile caps itself at 2 threads / 6 GB / 5 s on purpose — the same limits
+    the probing rules for the fleet, so the local rig cannot accidentally become a heavy
+    query either.
+-->
+<clickhouse>
+    <profiles>
+        <monitor>
+            <readonly>1</readonly>
+            <max_memory_usage>6000000000</max_memory_usage>
+            <max_threads>2</max_threads>
+            <max_execution_time>5</max_execution_time>
+            <log_queries>0</log_queries>
+        </monitor>
+        <r_redash>
+            <max_memory_usage>9000000000</max_memory_usage>
+            <max_threads>2</max_threads>
+            <log_queries>1</log_queries>
+        </r_redash>
+    </profiles>
+
+    <users>
+        <!-- CH_USER / CH_PASSWORD for the app: exactly what DESIGN.md §9 asks for. -->
+        <monitor>
+            <password>__MONITOR_PASSWORD__</password>
+            <networks><ip>::/0</ip></networks>
+            <profile>monitor</profile>
+            <quota>default</quota>
+            <access_management>0</access_management>
+        </monitor>
+
+        <!-- What Redash's data source logs in as, so system.processes shows
+             initial_user = 'r_redash' exactly like the real fleet. -->
+        <r_redash>
+            <password>__REDASH_PASSWORD__</password>
+            <networks><ip>::/0</ip></networks>
+            <profile>r_redash</profile>
+            <quota>default</quota>
+        </r_redash>
+
+        <!-- Rig-only: dev/local-rig.sh needs DDL and INSERTs to seed the testing database.
+             The app never uses this one. -->
+        <rig>
+            <password>__RIG_PASSWORD__</password>
+            <networks><ip>::/0</ip></networks>
+            <quota>default</quota>
+        </rig>
+    </users>
+</clickhouse>

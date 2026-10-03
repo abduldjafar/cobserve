@@ -1,0 +1,55 @@
+{
+  "queues": {
+    "default": {
+      "name": "default",
+      "started": [],
+      "queued": 0
+    },
+    "emails": {
+      "name": "emails",
+      "started": [],
+      "queued": 0
+    }
+  },
+  "workers": [
+    {
+      "name": "fc5457b3565942aa92c8a3c8ab6a3201",
+      "hostname": null,
+      "pid": null,
+      "queues": "",
+      "state": "?",
+      "last_heartbeat": "2026-09-20T13:13:10.699",
+      "birth_date": null,
+      "current_job": null,
+      "successful_jobs": 0,
+      "failed_jobs": 0,
+      "total_working_time": 0
+    },
+    {
+      "name": "b428d22411bf42ccba1be9fc7aa76ade",
+      "hostname": null,
+      "pid": null,
+      "queues": "",
+      "state": "?",
+      "last_heartbeat": "2026-09-22T23:55:47.609",
+      "birth_date": null,
+      "current_job": null,
+      "successful_jobs": 0,
+      "failed_jobs": 0,
+      "total_working_time": 0
+    },
+    {
+      "name": "05f0236824134b8daaf2de4abbbd9f49",
+      "hostname": null,
+      "pid": null,
+      "queues": "",
+      "state": "?",
+      "last_heartbeat": "2026-09-20T16:28:03.960",
+      "birth_date": null,
+      "current_job": null,
+      "successful_jobs": 0,
+      "failed_jobs": 0,
+      "total_working_time": 0
+    }
+  ]
+}

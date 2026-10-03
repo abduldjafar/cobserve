@@ -1,0 +1,47 @@
+<!--
+    Keeper for the local rig. It gives system.replicas rows to report, so replica_lag_s
+    (DESIGN.md §6.1) is a real number instead of a constant 0.
+
+    Single node on purpose. The two ClickHouse nodes talk to it as plain clients (their
+    config has no server_id/port), so there is no raft quorum to satisfy here. Letting
+    them vote instead needs three live voters before any of them starts, which turns the
+    rig into a startup-order puzzle.
+-->
+<clickhouse>
+    <logger>
+        <level>warning</level>
+        <console>1</console>
+    </logger>
+
+    <!-- Without this the client port binds to 127.0.0.1 inside the container and no other
+         container can reach it; the log then says "Listening for Keeper (tcp): 127.0.0.1:9181"
+         and nothing else. -->
+    <!-- Only IPv4: Docker Desktop here has no IPv6, and asking for :: fails the whole
+         bind with "EAI: Address family for hostname not supported". -->
+    <listen_host>0.0.0.0</listen_host>
+
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse-keeper/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse-keeper/snapshots</snapshot_storage_path>
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+        </coordination_settings>
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <hostname>ch-keeper</hostname>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+
+    <open_ports>
+        <!-- 9181 is the client port the ClickHouse nodes connect to; 9234 is the raft
+             port, and the node needs to reach itself on it or it never wins an election. -->
+        <port>9181</port>
+        <port>9234</port>
+    </open_ports>
+</clickhouse>

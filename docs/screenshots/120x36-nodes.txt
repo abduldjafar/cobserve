@@ -1,0 +1,36 @@
+│REDASH QUEUE  unreachable (not polled yet)          34   8                                                 ⏎ open [2] │
+│──────────────12 waiting · oldest 1m46s ⚠ ·─workers─6/6 busy · 2 failed/5m────────────────────────────────────────────│
+│waiting for the first snapshot…                                                                                       │
+│▾ clickhouse3   mem 58.2 / 64 GB   90.9% ⚠   cpu 15.1 / 16 cores   94.4% ⚠   4 running · lag 0s · parts 1.2k          │
+│                USER → PERSON                  MEM %   CPU %  QUERIES   LONGEST                                       │
+│  ▸ r_redash → grigol.gankava      25.4% ⚠  ▇▇▇▇▇░░░░░░░░░░░░░░░   19.4%  ▇▇▇▇░░░░░░░░░░░░░░░░        1       4m43s ✕ │
+│  ▸ r_redash → j.petrova           12.8%  ▇▇▇░░░░░░░░░░░░░░░░░    4.4%  ▇░░░░░░░░░░░░░░░░░░░        1       2m52s ✕   │
+│  ▸ airflow                         5.5%  ▇░░░░░░░░░░░░░░░░░░░    0.0%  ░░░░░░░░░░░░░░░░░░░░        1          0s     │
+│  ▸ haris                           1.9%  ░░░░░░░░░░░░░░░░░░░░    1.9%  ░░░░░░░░░░░░░░░░░░░░        1         20s     │
+│    server · caches · merges       45.3%  ▇▇▇▇▇▇▇▇▇░░░░░░░░░░░   68.8%  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇░░░░░░  ————  ————              │
+�▸ clickhouse-bi mem 43.6 / 64 GB   68.2%   cpu 12.0 / 16 cores   75.0% ⚠   3 running · lag 0s · parts 640
+│▸ clickhouse7   mem 79.4 / 128 GB   62.0%   cpu 12.8 / 32 cores   40.0%   2 running · lag 12s · parts 980             │
+│▸ clickhouse2   mem 26.2 / 64 GB   41.0%   cpu 4.0 / 16 cores   25.0%   2 running · lag 0s · parts 410                │
+│▸ 4 healthy nodes folded — ch4 ch6 ch8 ch9 (< 21%)                                                                    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│─ no snapshot yet ────────────────────────────────────────────────────────────────────────────────────────────────────│
+│waclickhouse3h· pay-ch-node-1 …                                                                                       │
+│p y-ch-node-1:9000 · shard 1/replica 1 · 24.11.1.2557 · up 1111h06m · 4 running · lag 0s · 1.2k parts · mem 90.9% ·   │
+│cpum94.4%                                                                                                             │
+└���────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+─┘
