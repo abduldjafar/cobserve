@@ -1,30 +1,30 @@
-┌ FLEETLENS ────────● LIVE 09:02:40 · 8 nodes · sort pressure ▼ · [1]NODES [2]QUEUE [3]FLOW [4]TAPE┐
-│REDASH QUEUE  12 waiting · oldest 1m49s ⚠ · workers 6/6 busy · 2 failed/5m             ⏎ open [2] │
-│──────────────────────────────────────────────────────────────────────────────────────────────────│
-│▾ clickhouse3   mem 58.2 / 64 GB   90.9% ⚠   cpu 15.1 / 16 cores   94.4% ⚠   4 running · lag 0s ·…│
-│                USER → PERSON                  MEM %   CPU %  QUERIES   LONGEST                   │
-│  ▸ r_redash → grigol.gankava      25.4% ⚠  ▇▇▇▇▇░░░░░░░░░░░░░░░   19.4%        1       4m41s ✕   │
-│  ▸ r_redash → j.petrova           12.8%  ▇▇▇░░░░░░░░░░░░░░░░░    4.4%        1       2m50s ✕     │
-│  ▸ airflow                         5.5%  ▇░░░░░░░░░░░░░░░░░░░   31.2%        1         28s       │
-│  ▸ haris                           1.9%  ░░░░░░░░░░░░░░░░░░░░    1.9%        1         18s       │
-│    server · caches · merges       45.3%  ▇▇▇▇▇▇▇▇▇░░░░░░░░░░░   37.5%  ————  ————                │
-│▸ clickhouse-bi mem 43.6 / 64 GB   68.2%   cpu 12.0 / 16 cores   75.0% ⚠   3 running · lag 0s · p…│
-│▸ clickhouse7   mem 79.4 / 128 GB   62.0%   cpu 12.8 / 32 cores   40.0%   2 running · lag 12s · p…│
-│▸ clickhouse2   mem 26.2 / 64 GB   41.0%   cpu 4.0 / 16 cores   25.0%   2 running · lag 0s · part…│
-│▸ 4 healthy nodes folded — ch4 ch6 ch8 ch9 (< 21%)                                                │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│──────────────────────────────────────────────────────────────────────────────────────────────────│
-└↑↓ move   ⏎ expand   u pivot by user   / filter   s sort   p pause   1-4 view   q quit────────────┘
+╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────── ● LIVE 2s · 16:40:33 UTC   1N   2Q   3M   4T  ╮
+│ FLEET  9 nodes · 1 hot   MEM ██▏    36.4% 280/768 GiB   CPU █▊     28.7% 55/192 cores            │
+│ REDASH  13 waiting · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in …  [2] queue │
+│ ──────────────────────────────────────────────────────────────────────────────────────────────── │
+│  NODE · USER → PERSON        MEM ▼               GiB  CPU ▼            cores  QUERIES  LONGEST   │
+│ ▌▾ clickhouse3   ▂▃▄▄▅▆▆▇▃▃   93.1%  █████▋  59.6/64   93.4%  █████▋ 14.9/16     4 ✕2    8m31s ✕ │
+│  ├─ r_redash → grigol.gan…    25.5%  █▌         16.3   19.4%  █▏        3.10        1    8m31s ✕ │
+│  ├─ r_redash → j.petrova      12.9%  ▊          8.23    4.4%  ▎         0.70        1    6m40s ✕ │
+│  ├─ airflow                    5.5%  ▍          3.53   31.2%  █▉        5.00        1      18s   │
+│  ├─ haris                      1.9%  ▏          1.22    1.9%  ▏         0.30        1      24s   │
+│  └─ server · caches · mer…    47.4%  ██▉        30.3   36.5%  ██▎       5.84                     │
+│  ▸ clickhouse-bi ▆▆▃▅▆▆▄▅▆▆   67.2%  ████    43.0/64   71.7%  ████▎  11.5/16     3 ✕1    6m40s ✕ │
+│ ▎▸ clickhouse7 lag 12s ▄▅▅▅   59.9%↓ ███▋   76.7/128   44.4%  ██▋    14.2/32     2 ✕1    8m56s ✕ │
+│  ▸ clickhouse2   ▃▅▆▆▃▅▆▆▃▅   41.8%  ██▌     26.7/64   28.6%  █▊      4.6/16        2      18s   │
+│  ▸ clickhouse5 NEW ▆▅▄▆▆▃▆▆   37.6%↗ ██▎     24.0/64    4.0%  ▎       0.6/16        0        —   │
+│  ▸ 4 healthy nodes folded · ch4 ch6 ch8 ch9 · all ≤ 22%                                ␣ unfold  │
+│ ─ INSIGHTS 2 ✖ 8 ▲ 3 ● · tab to browse all ───────────────────────────────────────────────────── │
+│  ✖ clickhouse3 memory 93.1%, CPU 93.4% — server/caches/merges hold 47% of memory and 37% of CPU… │
+│  ✖ Redash queries: 13 waiting, oldest 3m43s · workers 6/6 busy — 2 on runaway queries (clickhou… │
+│  ▲ j.petrova's query on clickhouse-bi at 88% of its 24.0 GiB memory limit · +209.7 KiB/s         │
+│  ▲ r.simonyte's query on clickhouse7 at 80% of its 64.0 GiB memory limit · +314.6 KiB/s          │
+│  ▲ clickhouse-bi memory climbing +1.8%/min — full in ~18m01s at this rate                        │
+│  ▲ 4 runaway queries · longest r.simonyte 8m56s on clickhouse7 (SELECT · wallet.ledger)          │
+│  ▲ Redash scheduled_queries: 3 waiting, oldest 22s · workers 2/2 busy — none of them stuck in C… │
+│   … 6 more · tab to browse                                                                       │
+│ ─ clickhouse3 · pay-ch-node-1:9000 ───────────────────────────────────────────────────────────── │
+│ MEM 59.6/64 GiB  93.1% → steady    CPU 14.9/16 cores  93.4% → steady                             │
+│ memory: queries 45.7% + server 47.4% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.4 GiB = 0… │
+│  ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy     │
+╰───────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

@@ -3,9 +3,13 @@
 //! Everything the UI draws lives here or in the model; sources push `Event`s in and the loop
 //! applies them. Nothing in this file knows that ClickHouse or Redash exist.
 
-use crate::model::{mark_new_nodes, FleetSnapshot, FleetView, Job, QueueStatus};
-use crate::tree::{self, Payload, Row, RowId, TreeState};
+use crate::history::{self, History};
+use crate::insight::{self, Insight, Subject};
+use crate::model::{fleet_totals, mark_new_nodes, FleetSnapshot, FleetView, Job, QueueStatus};
+use crate::tape::{Tape, Watch};
+use crate::tree::{self, Row, RowId, TreeState};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
@@ -20,7 +24,9 @@ pub type QueueRowRef<'a> = (usize, &'a Job);
 pub enum View {
     Nodes,
     Queue,
-    Flow,
+    /// The fleet as a heat map of tiles — the shape of a 40-node fleet on one screen.
+    Map,
+    /// What changed, newest first (`tape.rs`).
     Tape,
 }
 
@@ -29,26 +35,20 @@ impl View {
         match self {
             View::Nodes => "NODES",
             View::Queue => "QUEUE",
-            View::Flow => "FLOW",
+            View::Map => "MAP",
             View::Tape => "TAPE",
         }
     }
 
-    /// Views 3 and 4 are named in the header so the navigation is stable, and render a
-    /// one-line placeholder this pass (§0).
-    pub fn is_placeholder(self) -> bool {
-        matches!(self, View::Flow | View::Tape)
-    }
-
     /// The tab order of §1, which is also the `1` … `4` keymap.
-    pub const ALL: [View; 4] = [View::Nodes, View::Queue, View::Flow, View::Tape];
+    pub const ALL: [View; 4] = [View::Nodes, View::Queue, View::Map, View::Tape];
 
     /// `1` … `4`, the number that selects this view.
     pub fn number(self) -> u8 {
         match self {
             View::Nodes => 1,
             View::Queue => 2,
-            View::Flow => 3,
+            View::Map => 3,
             View::Tape => 4,
         }
     }
@@ -57,11 +57,50 @@ impl View {
         match n {
             1 => Some(View::Nodes),
             2 => Some(View::Queue),
-            3 => Some(View::Flow),
+            3 => Some(View::Map),
             4 => Some(View::Tape),
             _ => None,
         }
     }
+}
+
+/// Where the cursor keys go on view 1: the tree, or the insights under it (`tab`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Tree,
+    Insights,
+}
+
+/// Scroll positions the screen keeps while drawing. `draw` only gets `&App`, and the first
+/// visible row depends on the height it is drawing into, so these are cells the drawing code
+/// updates — state that belongs to the screen, not to the model.
+#[derive(Debug, Default)]
+pub struct Viewport {
+    pub tree: Cell<usize>,
+    pub queue: Cell<usize>,
+    pub tape: Cell<usize>,
+    pub map: Cell<usize>,
+    pub insights: Cell<usize>,
+    /// How many tiles fit in a row of the map, so ↑ ↓ can move by a row.
+    pub map_columns: Cell<usize>,
+}
+
+/// Keep `selected` inside a window of `height` rows starting at `offset`, moving the window as
+/// little as possible. Returns the new first visible row.
+pub fn scroll_into_view(offset: usize, selected: Option<usize>, height: usize, len: usize) -> usize {
+    if height == 0 || len <= height {
+        return 0;
+    }
+    let max_offset = len - height;
+    let mut offset = offset.min(max_offset);
+    if let Some(selected) = selected {
+        if selected < offset {
+            offset = selected;
+        } else if selected >= offset + height {
+            offset = selected + 1 - height;
+        }
+    }
+    offset.min(max_offset)
 }
 
 #[derive(Debug)]
@@ -97,8 +136,6 @@ pub struct App {
     first_seen: HashSet<String>,
     pub tree: TreeState,
     selected: Option<RowId>,
-    /// First visible row.
-    scroll: usize,
 
     pub view: View,
     pub paused: bool,
@@ -112,6 +149,21 @@ pub struct App {
     /// Which row of view 2 the cursor is on, so ⏎ can jump to its ClickHouse query (§2.8).
     queue_selection: Option<usize>,
     pub quit: bool,
+
+    /// The last few minutes of every number, for sparklines, trends and forecasts.
+    pub history: History,
+    /// What changed, for view 4.
+    pub tape: Tape,
+    watch: Watch,
+    pub focus: Focus,
+    insight_selection: usize,
+    map_selection: usize,
+    tape_selection: usize,
+    /// `POLL_MS`, so the header can say how often it polls and notice when data is late.
+    pub poll_interval: Duration,
+    /// Wall time the last snapshot arrived: data older than a few polls is called stale.
+    last_snapshot_wall: Option<SystemTime>,
+    pub viewport: Viewport,
 }
 
 impl Default for App {
@@ -125,13 +177,12 @@ impl App {
         Self {
             snapshot: None,
             prev: None,
-            queue: QueueStatus::unreachable("not polled yet"),
+            queue: QueueStatus::unreachable(crate::model::QUEUE_NOT_POLLED),
             notice: None,
             notice_ttl: std::time::Duration::from_secs(30),
             first_seen: HashSet::new(),
             tree: TreeState::default(),
             selected: None,
-            scroll: 0,
             view: View::Nodes,
             paused: false,
             filter_input: None,
@@ -141,6 +192,16 @@ impl App {
             unreachable_since: HashMap::new(),
             queue_selection: None,
             quit: false,
+            history: History::default(),
+            tape: Tape::default(),
+            watch: Watch::default(),
+            focus: Focus::Tree,
+            insight_selection: 0,
+            map_selection: 0,
+            tape_selection: 0,
+            poll_interval: Duration::from_millis(2000),
+            last_snapshot_wall: None,
+            viewport: Viewport::default(),
         }
     }
 
@@ -157,7 +218,7 @@ impl App {
             }
             Event::Queue(queue) => {
                 if !self.paused {
-                    self.queue = *queue
+                    self.on_queue(*queue)
                 }
             }
             Event::Notice(message) => {
@@ -212,6 +273,19 @@ impl App {
         let is_first = first;
         self.prev = self.snapshot.replace(Box::new(snapshot));
         self.stitch_queue();
+        self.last_snapshot_wall = Some(SystemTime::now());
+
+        // Derive once per poll for the two things that remember: the tape compares this poll
+        // with the last one *before* the history takes it in.
+        if let Some(snapshot) = self.snapshot.as_deref() {
+            let view = crate::model::fleet_view(snapshot, self.prev.as_deref());
+            let totals = fleet_totals(&view);
+            let at = history::secs(snapshot.taken_at);
+            let events = self.watch.observe_fleet(&view, &self.tree.new_nodes, at);
+            Self::add_events(&mut self.tape, &mut self.tape_selection, events);
+            self.history.record_fleet(&view, &totals, snapshot.taken_at);
+        }
+
         if is_first {
             // §2.5: the top node is open, everything else closed.
             let snapshot = self.snapshot.as_ref().expect("just stored");
@@ -225,6 +299,27 @@ impl App {
         }
     }
 
+    fn on_queue(&mut self, queue: QueueStatus) {
+        self.queue = queue;
+        // The stitch has to run on every queue poll too: the source knows nothing about
+        // ClickHouse, so a fresh status arrives with every running job unlinked.
+        self.stitch_queue();
+        let at = history::secs(self.queue.taken_at);
+        let events = self.watch.observe_queue(&self.queue, at);
+        Self::add_events(&mut self.tape, &mut self.tape_selection, events);
+        self.history.record_queue(&self.queue);
+    }
+
+    /// New tape lines go on top. A cursor at the top follows them, like `tail -f`; a cursor
+    /// further down stays on the line it was reading.
+    fn add_events(tape: &mut Tape, selection: &mut usize, events: Vec<crate::tape::Event>) {
+        let added = events.len();
+        tape.extend(events);
+        if *selection > 0 {
+            *selection = (*selection + added).min(tape.len().saturating_sub(1));
+        }
+    }
+
     /// Which job row view 2 has selected.
     pub fn queue_selection(&self) -> Option<usize> {
         self.queue_selection
@@ -233,15 +328,20 @@ impl App {
     /// View 2's two halves, each with the row index the cursor uses: waiting jobs first, then
     /// the ones on a worker, both longest first. A full queue is what on call wants to see
     /// before anything else, so it comes first.
+    ///
+    /// Partitioned by state *before* sorting: sorting everything by age and cutting at the
+    /// first started job would put every waiting job younger than the oldest running one
+    /// into the RUNNING half.
     pub fn queue_sections(&self) -> (Vec<QueueRowRef<'_>>, Vec<QueueRowRef<'_>>) {
-        let mut rows: Vec<QueueRowRef<'_>> = self.queue.jobs.iter().enumerate().collect();
-        rows.sort_by_key(|(_, job)| std::cmp::Reverse(job.age_s));
-        let split = rows
+        let (mut waiting, mut started): (Vec<QueueRowRef<'_>>, Vec<QueueRowRef<'_>>) = self
+            .queue
+            .jobs
             .iter()
-            .position(|(_, job)| job.state == crate::model::JobState::Started)
-            .unwrap_or(rows.len());
-        let started = rows.split_off(split);
-        (rows, started)
+            .enumerate()
+            .partition(|(_, job)| job.state == crate::model::JobState::Queued);
+        waiting.sort_by_key(|(_, job)| std::cmp::Reverse(job.age_s));
+        started.sort_by_key(|(_, job)| std::cmp::Reverse(job.age_s));
+        (waiting, started)
     }
 
     /// Every job row of view 2, in the order they are drawn.
@@ -279,34 +379,49 @@ impl App {
         let Some(snapshot) = self.snapshot.as_deref() else {
             return;
         };
-        let mut by_redash_id: HashMap<u64, (String, String)> = HashMap::new();
+        // Every ClickHouse query carrying a Redash number, with where it runs and for whom.
+        let mut by_redash_id: HashMap<u64, Vec<(String, String, Option<String>)>> = HashMap::new();
         for node in &snapshot.nodes {
             for query in &node.queries {
                 if let Some(redash_id) = query.redash_query_id {
-                    // First match wins: the initiators are already deduplicated by
-                    // is_initial_query, so two rows with the same number are the same query.
-                    by_redash_id
-                        .entry(redash_id)
-                        .or_insert_with(|| (node.name.clone(), query.query_id.clone()));
+                    by_redash_id.entry(redash_id).or_default().push((
+                        node.name.clone(),
+                        query.query_id.clone(),
+                        query.person.clone(),
+                    ));
                 }
             }
         }
 
+        // The same Redash query can run twice at once (a dashboard refreshed twice): pick, for
+        // each job, the run on the node its data source names, then the one for the same
+        // person — and never hand one ClickHouse query to two jobs.
+        let mut taken: HashSet<String> = HashSet::new();
         for job in &mut self.queue.jobs {
-            let target = job
-                .redash_query_id
-                .and_then(|id| by_redash_id.get(&id))
-                .cloned();
-            match (target, job.state) {
-                // A started job with no ClickHouse row is a worker doing something else.
-                (Some((node, query_id)), crate::model::JobState::Started) => {
-                    job.ch_node = Some(node);
-                    job.ch_query_id = Some(query_id);
-                }
-                _ => {
-                    job.ch_node = None;
-                    job.ch_query_id = None;
-                }
+            job.ch_node = None;
+            job.ch_query_id = None;
+            if job.state != crate::model::JobState::Started {
+                continue;
+            }
+            let Some(candidates) = job.redash_query_id.and_then(|id| by_redash_id.get(&id)) else {
+                continue;
+            };
+            let free = |c: &&(String, String, Option<String>)| !taken.contains(&c.1);
+            let pick = candidates
+                .iter()
+                .filter(free)
+                .find(|(node, _, _)| job.data_source.as_deref() == Some(node.as_str()))
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .filter(free)
+                        .find(|(_, _, person)| person.is_some() && person == &job.person)
+                })
+                .or_else(|| candidates.iter().find(free));
+            if let Some((node, query_id, _)) = pick {
+                taken.insert(query_id.clone());
+                job.ch_node = Some(node.clone());
+                job.ch_query_id = Some(query_id.clone());
             }
         }
     }
@@ -320,30 +435,90 @@ impl App {
         }
         let queries = self.queue.queues.iter().map(|q| (q.workers_busy, q.workers_total));
         let (busy, total) = queries.fold((0, 0), |(b, t), (qb, qt)| (b + qb, t + qt));
-        let mut runaway_nodes: Vec<&str> = Vec::new();
+        let mut stuck = 0usize;
+        let mut runaway_nodes: Vec<String> = Vec::new();
         for job in &running {
-            let Some(node) = job.ch_node.as_deref() else {
+            let Some((node, query_id)) = job.clickhouse_target() else {
                 continue;
             };
-            let is_runaway = self.with_rows(|_, rows| {
-                rows.iter().any(|row| {
-                    matches!(&row.id,
-                        crate::tree::RowId::Query { node: n, query_id, .. }
-                            if n == node && Some(query_id.as_str()) == job.ch_query_id.as_deref())
-                })
-            });
-            if is_runaway == Some(true) && !runaway_nodes.contains(&node) {
-                runaway_nodes.push(node);
+            if self.query_is_runaway(node, query_id) {
+                stuck += 1;
+                if !runaway_nodes.iter().any(|n| n == node) {
+                    runaway_nodes.push(node.to_string());
+                }
             }
         }
-        if runaway_nodes.is_empty() {
+        if stuck == 0 {
             return format!("{busy}/{total} workers busy · none of them is stuck in ClickHouse");
         }
         format!(
-            "{busy}/{total} workers busy · {} of them hold a runaway ClickHouse query ({}) → why it is full",
-            runaway_nodes.len(),
+            "{busy}/{total} workers busy · {stuck} of them hold a runaway ClickHouse query ({}) → why it is full",
             runaway_nodes.join(", ")
         )
+    }
+
+    /// Whether a ClickHouse query is runaway right now (§5.4), by node and query id.
+    pub fn query_is_runaway(&self, node: &str, query_id: &str) -> bool {
+        self.with_view(|view| {
+            view.nodes
+                .iter()
+                .filter(|n| n.node.name == node)
+                .flat_map(|n| n.users.iter())
+                .flat_map(|u| u.queries.iter())
+                .any(|q| q.query.query_id == query_id && q.runaway)
+        })
+        .unwrap_or(false)
+    }
+
+    /// The derived fleet view of the current snapshot.
+    pub fn with_view<R>(&self, f: impl FnOnce(&FleetView<'_>) -> R) -> Option<R> {
+        let snapshot = self.snapshot.as_ref()?;
+        let view = crate::model::fleet_view(snapshot, self.prev.as_deref());
+        Some(f(&view))
+    }
+
+    /// Everything the insights engine has to say right now, worst first.
+    pub fn insights(&self) -> Vec<Insight> {
+        self.with_view(|view| {
+            insight::analyze(view, &self.history, &self.queue, &self.tree.new_nodes)
+        })
+        .unwrap_or_default()
+    }
+
+    pub fn insight_selection(&self) -> usize {
+        self.insight_selection
+    }
+
+    pub fn map_selection(&self) -> usize {
+        self.map_selection
+    }
+
+    pub fn tape_selection(&self) -> usize {
+        self.tape_selection
+    }
+
+    /// How old the numbers on screen are, by the wall clock of the last arrival.
+    pub fn data_age(&self) -> Option<Duration> {
+        let at = self.last_snapshot_wall?;
+        Some(self.clock.duration_since(at).unwrap_or_default())
+    }
+
+    /// No snapshot for three poll intervals: the header stops saying LIVE.
+    pub fn is_stale(&self) -> bool {
+        !self.paused
+            && self
+                .data_age()
+                .is_some_and(|age| age > self.poll_interval * 3 + Duration::from_secs(1))
+    }
+
+    /// The node names of the map, in the order the map draws them (§2.5's sort, no fold).
+    pub fn map_nodes(&self) -> Vec<String> {
+        self.with_view(|view| {
+            let mut nodes: Vec<&crate::model::NodeView<'_>> = view.nodes.iter().collect();
+            nodes.sort_by(|a, b| crate::model::compare_nodes(a, b, self.tree.sort));
+            nodes.iter().map(|n| n.node.name.clone()).collect()
+        })
+        .unwrap_or_default()
     }
 
     pub fn snapshot(&self) -> Option<&FleetSnapshot> {
@@ -358,11 +533,6 @@ impl App {
         (age < self.notice_ttl).then_some(message.as_str())
     }
 
-    /// `p` pauses polling: the header dot goes hollow and the numbers stop moving.
-    pub fn is_live(&self) -> bool {
-        !self.paused
-    }
-
     /// The derived view and the rows for the current state. Passed to a closure because the
     /// rows borrow the view, and the view borrows the snapshot.
     pub fn with_rows<R>(&self, f: impl FnOnce(&FleetView<'_>, &[Row<'_>]) -> R) -> Option<R> {
@@ -374,10 +544,6 @@ impl App {
 
     pub fn selected(&self) -> Option<&RowId> {
         self.selected.as_ref()
-    }
-
-    pub fn scroll(&self) -> usize {
-        self.scroll
     }
 
     pub fn selected_index(&self) -> Option<usize> {
@@ -437,32 +603,68 @@ impl App {
         }
 
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // Keys that mean the same thing everywhere.
         match key.code {
-            KeyCode::Char('c') if ctrl => self.quit = true,
-            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('c') if ctrl => {
+                self.quit = true;
+                return;
+            }
+            KeyCode::Char('q') => {
+                self.quit = true;
+                return;
+            }
             KeyCode::Char(c @ '1'..='4') => {
                 if let Some(view) = View::from_number(c as u8 - b'0') {
                     self.view = view;
-                    self.scroll = 0;
+                    self.focus = Focus::Tree;
                     if view != View::Queue {
                         self.queue_selection = None;
                     }
                 }
+                self.sync_view_state();
+                return;
             }
-            KeyCode::Char('?') => self.help = true,
-            KeyCode::Char('p') => self.paused = !self.paused,
+            KeyCode::Char('?') => {
+                self.help = true;
+                self.sync_view_state();
+                return;
+            }
+            KeyCode::Char('p') => {
+                self.paused = !self.paused;
+                self.sync_view_state();
+                return;
+            }
+            _ => {}
+        }
+
+        match self.view {
+            View::Nodes if self.focus == Focus::Insights => self.on_insights_key(key.code),
+            View::Nodes => self.on_tree_key(key.code),
+            View::Queue => self.on_queue_key(key.code),
+            View::Map => self.on_map_key(key.code),
+            View::Tape => self.on_tape_key(key.code),
+        }
+        self.sync_view_state();
+    }
+
+    fn on_tree_key(&mut self, code: KeyCode) {
+        match code {
             KeyCode::Char('s') => self.tree.sort = self.tree.sort.next(),
             KeyCode::Char('u') => {
                 self.tree.pivot = !self.tree.pivot;
                 // Identity is per direction, so the cursor cannot stay on a row that is gone.
                 self.selected = None;
                 self.tree.clear_expansions();
-                self.scroll = 0;
             }
             KeyCode::Char(' ') => self.tree.fold_healthy = !self.tree.fold_healthy,
             KeyCode::Char('/') => {
                 self.filter_input = Some(String::new());
                 self.tree.filter.clear();
+            }
+            KeyCode::Tab => {
+                if !self.insights().is_empty() {
+                    self.focus = Focus::Insights;
+                }
             }
             KeyCode::Esc => self.tree.filter.clear(),
             KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
@@ -471,14 +673,129 @@ impl App {
             KeyCode::PageDown => self.move_by(10),
             KeyCode::Home => self.move_to(0),
             KeyCode::End => self.move_to(usize::MAX),
-            KeyCode::Left => self.collapse(),
-            KeyCode::Right => self.expand(),
-            // On the queue, ⏎ is the stitch of §2.8 instead of an expand.
-            KeyCode::Enter if self.view == View::Queue => self.activate_queue_row(),
+            KeyCode::Left | KeyCode::Char('h') => self.collapse(),
+            KeyCode::Right | KeyCode::Char('l') => self.expand(),
             KeyCode::Enter => self.toggle(),
             _ => {}
         }
-        self.sync_view_state();
+    }
+
+    /// `tab` moved the cursor into the insights: ↑ ↓ pick one, ⏎ goes to what it is about.
+    fn on_insights_key(&mut self, code: KeyCode) {
+        let len = self.insights().len();
+        match code {
+            KeyCode::Tab | KeyCode::Esc => self.focus = Focus::Tree,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.insight_selection = self.insight_selection.saturating_sub(1)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.insight_selection = (self.insight_selection + 1).min(len.saturating_sub(1))
+            }
+            KeyCode::Home => self.insight_selection = 0,
+            KeyCode::End => self.insight_selection = len.saturating_sub(1),
+            KeyCode::Enter => {
+                if let Some(insight) = self.insights().get(self.insight_selection) {
+                    let subject = insight.subject.clone();
+                    self.go_to(&subject);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_queue_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_queue_row(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_queue_row(1),
+            KeyCode::PageUp => self.move_queue_row(-10),
+            KeyCode::PageDown => self.move_queue_row(10),
+            KeyCode::Home => self.move_queue_row(isize::MIN / 2),
+            KeyCode::End => self.move_queue_row(isize::MAX / 2),
+            // On the queue, ⏎ is the stitch of §2.8 instead of an expand.
+            KeyCode::Enter => self.activate_queue_row(),
+            _ => {}
+        }
+    }
+
+    fn on_map_key(&mut self, code: KeyCode) {
+        let len = self.map_nodes().len();
+        if len == 0 {
+            return;
+        }
+        let columns = self.viewport.map_columns.get().max(1);
+        let current = self.map_selection.min(len - 1);
+        self.map_selection = match code {
+            KeyCode::Left | KeyCode::Char('h') => current.saturating_sub(1),
+            KeyCode::Right | KeyCode::Char('l') => (current + 1).min(len - 1),
+            KeyCode::Up | KeyCode::Char('k') => current.saturating_sub(columns),
+            KeyCode::Down | KeyCode::Char('j') => (current + columns).min(len - 1),
+            KeyCode::Home => 0,
+            KeyCode::End => len - 1,
+            KeyCode::Char('s') => {
+                self.tree.sort = self.tree.sort.next();
+                current
+            }
+            KeyCode::Enter => {
+                if let Some(name) = self.map_nodes().get(current).cloned() {
+                    self.go_to(&Subject::Node(name));
+                }
+                return;
+            }
+            _ => current,
+        };
+    }
+
+    fn on_tape_key(&mut self, code: KeyCode) {
+        let len = self.tape.len();
+        let current = self.tape_selection.min(len.saturating_sub(1));
+        self.tape_selection = match code {
+            KeyCode::Up | KeyCode::Char('k') => current.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => (current + 1).min(len.saturating_sub(1)),
+            KeyCode::PageUp => current.saturating_sub(10),
+            KeyCode::PageDown => (current + 10).min(len.saturating_sub(1)),
+            KeyCode::Home => 0,
+            KeyCode::End => len.saturating_sub(1),
+            KeyCode::Enter => {
+                if let Some(subject) = self.tape.get_newest(current).and_then(|e| e.subject.clone()) {
+                    self.go_to(&subject);
+                }
+                return;
+            }
+            _ => current,
+        };
+    }
+
+    /// Put the cursor on whatever an insight or a tape line is about.
+    pub fn go_to(&mut self, subject: &Subject) {
+        self.focus = Focus::Tree;
+        match subject {
+            Subject::Fleet => self.view = View::Nodes,
+            Subject::Queue => {
+                self.view = View::Queue;
+                self.queue_selection = None;
+            }
+            Subject::Node(name) => {
+                self.view = View::Nodes;
+                if self.tree.pivot {
+                    self.tree.pivot = false;
+                    self.tree.clear_expansions();
+                }
+                // Opening it also takes it out of the healthy fold (§2.5: opened nodes stay).
+                self.tree.expanded_nodes.insert(name.clone());
+                self.selected = Some(RowId::Node(name.clone()));
+            }
+            Subject::Query { node, query_id, .. } => {
+                let exists = self
+                    .snapshot
+                    .as_deref()
+                    .is_some_and(|s| s.nodes.iter().any(|n| &n.name == node));
+                if exists {
+                    self.jump_to_clickhouse(node, query_id);
+                } else {
+                    self.view = View::Nodes;
+                }
+            }
+        }
     }
 
     fn rows_len(&self) -> usize {
@@ -661,13 +978,20 @@ impl App {
                 _ if len > 0 => Some(0),
                 _ => None,
             };
-            return;
         }
+
+        if self.focus == Focus::Insights {
+            let len = self.insights().len();
+            if len == 0 || self.view != View::Nodes {
+                self.focus = Focus::Tree;
+            }
+            self.insight_selection = self.insight_selection.min(len.saturating_sub(1));
+        }
+        self.tape_selection = self.tape_selection.min(self.tape.len().saturating_sub(1));
 
         let len = self.rows_len();
         if len == 0 {
             self.selected = None;
-            self.scroll = 0;
             return;
         }
 
@@ -680,22 +1004,22 @@ impl App {
                 self.selected = self
                     .with_rows(|_, rows| rows.first().map(|r| r.id.clone()))
                     .flatten();
-                self.scroll = 0;
             }
         }
     }
 }
 
-/// The label a row shows in its first column, shared by the tree and the drawer.
+/// The label a row shows in its first column, for the tests that walk the tree.
+#[cfg(test)]
 pub fn row_title(row: &Row<'_>) -> String {
     match &row.payload {
-        Payload::Node(view) => view.name().to_string(),
-        Payload::User { slice, .. } => slice.label(),
-        Payload::Closing(_) => "server · caches · merges".to_string(),
-        Payload::Folded { names, .. } => names.join(" "),
-        Payload::FleetUser(user) => user.label(),
-        Payload::PivotNode { user, node } => format!("{} → {}", user.label(), node.node.name),
-        Payload::Query { stat, user, .. } => {
+        crate::tree::Payload::Node(view) => view.name().to_string(),
+        crate::tree::Payload::User { slice, .. } => slice.label(),
+        crate::tree::Payload::Closing(_) => "server · caches · merges".to_string(),
+        crate::tree::Payload::Folded { names, .. } => names.join(" "),
+        crate::tree::Payload::FleetUser(user) => user.label(),
+        crate::tree::Payload::PivotNode { user, node } => format!("{} → {}", user.label(), node.node.name),
+        crate::tree::Payload::Query { stat, user, .. } => {
             crate::attrib::user_label(user, stat.query.person.as_deref())
         }
     }
@@ -706,7 +1030,7 @@ mod tests {
     use super::*;
     use crate::fake::FakeSource;
     use crate::model::SortKey;
-    use crate::tree::Kind;
+    use crate::tree::{Kind, Payload};
 
     fn key(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -923,16 +1247,154 @@ mod tests {
     }
 
     #[test]
-    fn view_keys_switch_and_placeholders_are_marked() {
+    fn view_keys_switch_views() {
         let mut app = app_with_fake();
         app.update(key(KeyCode::Char('2')));
         assert_eq!(app.view, View::Queue);
         app.update(key(KeyCode::Char('3')));
-        assert_eq!(app.view, View::Flow);
-        assert!(app.view.is_placeholder());
+        assert_eq!(app.view, View::Map);
+        app.update(key(KeyCode::Char('4')));
+        assert_eq!(app.view, View::Tape);
         app.update(key(KeyCode::Char('1')));
         assert_eq!(app.view, View::Nodes);
         assert_eq!(View::from_number(9), None);
+    }
+
+    #[test]
+    fn tab_moves_into_the_insights_and_enter_goes_to_their_subject() {
+        let mut app = app_with_fake();
+        let insights = app.insights();
+        assert!(!insights.is_empty());
+        app.update(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Insights);
+
+        // Find an insight about a node that is folded away, and go there.
+        let target = insights
+            .iter()
+            .position(|i| matches!(&i.subject, Subject::Node(n) if n == "clickhouse7"))
+            .expect("clickhouse7 has something to say (lag 12 s)");
+        for _ in 0..target {
+            app.update(key(KeyCode::Down));
+        }
+        assert_eq!(app.insight_selection(), target);
+        app.update(key(KeyCode::Enter));
+        assert_eq!(app.focus, Focus::Tree, "⏎ hands the cursor back to the tree");
+        assert_eq!(app.selected(), Some(&RowId::Node("clickhouse7".into())));
+        assert!(app.tree.node_expanded("clickhouse7"));
+
+        // Esc and tab both leave the insights.
+        app.update(key(KeyCode::Tab));
+        app.update(key(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::Tree);
+    }
+
+    #[test]
+    fn an_insight_about_a_query_lands_on_that_query() {
+        let mut app = app_with_fake();
+        let (index, query_id) = app
+            .insights()
+            .iter()
+            .enumerate()
+            .find_map(|(i, insight)| match &insight.subject {
+                Subject::Query { query_id, .. } => Some((i, query_id.clone())),
+                _ => None,
+            })
+            .expect("the fake fleet has a runaway insight");
+        app.update(key(KeyCode::Tab));
+        for _ in 0..index {
+            app.update(key(KeyCode::Down));
+        }
+        app.update(key(KeyCode::Enter));
+        assert!(
+            matches!(app.selected(), Some(RowId::Query { query_id: id, .. }) if *id == query_id),
+            "{:?}",
+            app.selected()
+        );
+    }
+
+    #[test]
+    fn the_map_moves_by_tile_and_by_row_and_opens_a_node() {
+        let mut app = app_with_fake();
+        app.update(key(KeyCode::Char('3')));
+        app.viewport.map_columns.set(4);
+        app.update(key(KeyCode::Right));
+        assert_eq!(app.map_selection(), 1);
+        app.update(key(KeyCode::Down));
+        assert_eq!(app.map_selection(), 5, "down is one row of four");
+        app.update(key(KeyCode::Up));
+        app.update(key(KeyCode::Left));
+        assert_eq!(app.map_selection(), 0);
+        app.update(key(KeyCode::End));
+        let last = app.map_nodes().len() - 1;
+        assert_eq!(app.map_selection(), last);
+
+        let name = app.map_nodes()[last].clone();
+        app.update(key(KeyCode::Enter));
+        assert_eq!(app.view, View::Nodes);
+        assert_eq!(app.selected(), Some(&RowId::Node(name)));
+    }
+
+    #[test]
+    fn the_tape_records_what_happened_and_follows_new_lines() {
+        let mut fake = FakeSource::new();
+        let mut app = App::new();
+        app.update(Event::Snapshot(Box::new(fake.snapshot())));
+        app.update(Event::Queue(Box::new(fake.queue())));
+        assert!(app.tape.len() >= 3, "start line, hot nodes, runaways, queue");
+        assert!(app
+            .tape
+            .newest_first()
+            .any(|e| e.text().starts_with("watching")));
+
+        // Scrolled down, the cursor stays on its line when new ones arrive.
+        app.update(key(KeyCode::Char('4')));
+        app.update(key(KeyCode::Down));
+        let reading = app.tape.get_newest(app.tape_selection()).unwrap().text();
+        let mut broken = app.snapshot().cloned().unwrap();
+        for node in &mut broken.nodes {
+            if node.name == "ch4" {
+                *node = crate::model::NodeSnapshot::unreachable("ch4", "connection refused");
+            }
+        }
+        broken.taken_at += Duration::from_secs(2);
+        app.update(Event::Snapshot(Box::new(broken)));
+        assert_eq!(app.tape.get_newest(app.tape_selection()).unwrap().text(), reading);
+        assert!(app.tape.get_newest(0).unwrap().text().contains("ch4"));
+    }
+
+    #[test]
+    fn a_fresh_queue_status_is_stitched_straight_away() {
+        let mut fake = FakeSource::new();
+        let mut app = App::new();
+        app.update(Event::Snapshot(Box::new(fake.snapshot())));
+        // The source never sets the ClickHouse side; the app does, on arrival.
+        let mut queue = fake.queue();
+        for job in &mut queue.jobs {
+            job.ch_node = None;
+            job.ch_query_id = None;
+        }
+        app.update(Event::Queue(Box::new(queue)));
+        assert!(app.queue.started().iter().any(|j| j.clickhouse_target().is_some()));
+        assert!(app.queue_explanation().contains("runaway"), "{}", app.queue_explanation());
+    }
+
+    #[test]
+    fn data_goes_stale_after_three_missed_polls() {
+        let mut app = app_with_fake();
+        assert!(!app.is_stale());
+        app.clock = SystemTime::now() + Duration::from_secs(10);
+        assert!(app.is_stale());
+        app.paused = true;
+        assert!(!app.is_stale(), "paused is not stale, it is paused");
+    }
+
+    #[test]
+    fn scrolling_keeps_the_cursor_on_screen_and_moves_as_little_as_possible() {
+        assert_eq!(scroll_into_view(0, Some(3), 10, 5), 0, "everything fits");
+        assert_eq!(scroll_into_view(0, Some(12), 10, 40), 3);
+        assert_eq!(scroll_into_view(3, Some(5), 10, 40), 3, "already visible: no jump");
+        assert_eq!(scroll_into_view(8, Some(2), 10, 40), 2);
+        assert_eq!(scroll_into_view(50, None, 10, 40), 30, "never past the end");
     }
 
     #[test]
