@@ -1,8 +1,9 @@
 //! Redash attribution: the two regexes of DESIGN.md §6.4 and the display rule for a person.
 //!
 //! Redash writes a comment into every query it runs, so the ClickHouse user alone never says
-//! who is actually behind a query — everything in this fleet is `r_redash`. The SQL in §6.1
-//! also extracts these server-side; the same regexes live here for FAKE mode and tests.
+//! who is actually behind a query — every query from Redash runs as the one account it
+//! connects with. The SQL in §6.1 also extracts these server-side; the same regexes live here
+//! for the fallback, FAKE mode and tests.
 
 use regex::Regex;
 use std::sync::OnceLock;
@@ -14,9 +15,18 @@ fn username_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"Username:\s*([^,]+)").expect("static regex"))
 }
 
+/// `query_id: 7438` as Redash 10 writes it, `Query ID: 7438` as older ones did for scheduled
+/// runs.
 fn redash_query_id_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"query_id:\s*(\d+)").expect("static regex"))
+    RE.get_or_init(|| Regex::new(r"(?i)query[ _]id:\s*(\d+)").expect("static regex"))
+}
+
+/// `Job ID: 4c8d…` — the RQ job that ran the query, which Redash adds to the comment as it
+/// starts it. It is the one exact link between a job in the queue and a ClickHouse process.
+fn redash_job_id_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)job[ _]id:\s*([A-Za-z0-9_-]+)").expect("static regex"))
 }
 
 /// The organisation's own e-mail domain — `EMAIL_DOMAIN`, or `email_domain:` under `redash:`
@@ -39,8 +49,8 @@ fn home_domain() -> Option<&'static str> {
     HOME_DOMAIN.get().and_then(|d| d.as_deref())
 }
 
-/// The ClickHouse user that means "somebody through Redash" — the only one worth trying to
-/// resolve to a person at all (§6.4).
+/// The account Redash connects to ClickHouse with in the design's fleet (§6.4) — and in the
+/// fake one. Attribution itself goes by the comment, whatever the account.
 pub const REDASH_USER: &str = "r_redash";
 
 /// The address Redash put in the comment, if any.
@@ -70,6 +80,11 @@ pub fn redash_query_id(sql: &str) -> Option<u64> {
         .captures(sql)
         .and_then(|c| c.get(1))
         .and_then(|m| m.as_str().trim().parse::<u64>().ok())
+}
+
+/// The RQ job id from the comment, when Redash wrote one.
+pub fn redash_job_id(sql: &str) -> Option<&str> {
+    redash_job_id_re().captures(sql).and_then(|c| c.get(1)).map(|m| m.as_str())
 }
 
 /// Display form of a person: the local part at the home domain, the whole address otherwise,
@@ -154,6 +169,19 @@ mod tests {
         assert_eq!(redash_query_id(REDASH_COMMENT), Some(7438));
         assert_eq!(redash_query_id("/* Username: j.petrova@example.net */"), None);
         assert_eq!(redash_query_id("SELECT 1"), None);
+    }
+
+    /// What Redash 10 actually prepends: the job id is in it, and scheduled runs say so.
+    const REDASH_10: &str = "/* Username: j.petrova@example.net, query_id: 8585, Queue: queries, Job ID: 4c8d1b5e-2f3a-4e1b-9d7c-0a1b2c3d4e5f, Query Hash: 1a2b3c, Scheduled: False */ SELECT 1";
+
+    #[test]
+    fn the_job_id_and_both_spellings_of_the_query_id() {
+        assert_eq!(redash_job_id(REDASH_10), Some("4c8d1b5e-2f3a-4e1b-9d7c-0a1b2c3d4e5f"));
+        assert_eq!(redash_query_id(REDASH_10), Some(8585));
+        assert_eq!(person_address(REDASH_10).as_deref(), Some("j.petrova@example.net"));
+        assert_eq!(redash_query_id("/* Query ID: 7438, Username: Scheduled */"), Some(7438));
+        assert_eq!(redash_job_id(REDASH_COMMENT), None, "the design's comment has no job id");
+        assert_eq!(redash_job_id("SELECT 1"), None);
     }
 
     #[test]

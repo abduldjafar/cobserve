@@ -1,6 +1,6 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 03:19:00 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 04:26:05 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
-│ REDASH  13 waiting    ▇████ · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues  [2] queue │
+│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
 │  MAP · 9 nodes · sorted by pressure ▼ · ←→↑↓ move · ⏎ open in view 1 · s sort                                        │
 │ ┏ clickhouse3 ✖ ━━━━━━━━━━━━┓╭ clickhouse-bi ────────────╮╭ clickhouse7 ▲ ────────────╮╭ clickhouse2 ──────────────╮ │

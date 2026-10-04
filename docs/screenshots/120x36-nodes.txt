@@ -1,6 +1,6 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 03:18:59 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 04:26:04 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
-│ REDASH  13 waiting    ▇████ · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues  [2] queue │
+│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
 │  NODE · USER → PERSON            MEM ▼                       GiB  CPU ▼                    cores  QUERIES  LONGEST   │
 │ ▌▾ clickhouse3       ▂▃▄▄▅▆▆▇▃▃   93.1%  █████████████   59.6/64   93.4%  █████████████▏ 14.9/16     4 ✕2    8m31s ✕ │
@@ -23,7 +23,7 @@
 │                                                                                                                      │
 │ ─ INSIGHTS · tab to go to one ────────────────────────────────────────────────────────────────────────────────────── │
 │  ✖ clickhouse3    memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more                                    │
-│  ✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 6 workers on long queries  +1 more                       │
+│  ✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 4 workers on long queries  +1 more                       │
 │  ▲ clickhouse-bi  memory 67.2% ↗ full in ~18m · j.petrova holds 33%  +1 more                                         │
 │  ▲ clickhouse7    r.simonyte's query at 80% of its memory limit  +1 more                                             │
 │  ▲ Redash #7711   running 2× · m.kairys                                                                              │
@@ -31,6 +31,6 @@
 │ ─ clickhouse3 · pay-ch-node-1:9000 ───────────────────────────────────────────────────────────────────────────────── │
 │ MEM 59.6/64 GiB  93.1%  ▂▃▄▅▆▇▇▃ → steady    CPU 14.9/16 cores  93.4%  ▇▇▇▇▇▆▇▇ → steady                             │
 │ memory: queries 45.7% + server 47.4% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.4 GiB = 0.2× a 24.0 GiB query  │
-│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 46 ms · numbers from 03:22:55 UTC                             │
+│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 46 ms · numbers from 04:30:00 UTC                             │
 │  ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help    │
 ╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

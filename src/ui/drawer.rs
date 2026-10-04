@@ -4,10 +4,10 @@
 //! important first, so a short terminal loses the least useful line.
 
 use super::widgets::{bar, rule, sparkline, tone_spans, Cells, PCT_SHAPE};
-use crate::app::{App, View};
+use crate::app::{App, SqlFrom, View};
 use crate::fmt;
 use crate::history::{eta_to, Trend};
-use crate::model::{FleetUser, JobState, NodeView, QueryStat, UserNode, UserSlice};
+use crate::model::{FleetUser, JobState, NodeView, QueryStat, Stale, UserNode, UserSlice};
 use crate::severity::{self, Severity};
 use crate::theme::Theme;
 use crate::tree::{Payload, Row, TreeState};
@@ -624,10 +624,8 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
 // ---------------------------------------------------------------------------
 
 fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
-    let rows = app.queue_rows();
     let explanation = app.queue_explanation();
-    let selected = app.queue_selection().and_then(|i| rows.get(i).copied());
-    let Some(job) = selected else {
+    let Some(job) = app.selected_job() else {
         return (
             title("queue", theme),
             vec![muted_line(explanation, theme, width)],
@@ -635,13 +633,15 @@ fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
     };
 
     let head = vec![
-        Span::styled(format!("queue · {}", job.queue), theme.strong()),
+        Span::styled(format!("job · {}", job.queue), theme.strong()),
         Span::styled(" · ", theme.faint()),
         Span::styled(job.label(), theme.person()),
     ];
     let mut lines = vec![muted_line(explanation, theme, width)];
 
+    // What it is doing, and what can be done about it from here.
     let mut cells = Cells::new();
+    let age = fmt::dur(job.age_s as f64);
     match (job.state, job.clickhouse_target()) {
         // A waiting job has not reached ClickHouse yet: there is nothing to kill, and the
         // wait is the queue (§2.8).
@@ -652,7 +652,7 @@ fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
                 .iter()
                 .filter(|other| other.age_s > job.age_s)
                 .count();
-            cells.push(format!("waiting {}", fmt::dur(job.age_s as f64)), theme.text());
+            cells.push(format!("waiting {age}"), theme.text());
             cells.push(
                 format!(" · {ahead} job{} ahead of it", if ahead == 1 { "" } else { "s" }),
                 theme.sev(Severity::Warn),
@@ -660,8 +660,7 @@ fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
             cells.push(" · nothing to kill: it has not reached ClickHouse", theme.muted());
         }
         (JobState::Started, Some((node, query_id))) => {
-            cells.push(format!("running {}", fmt::dur(job.age_s as f64)), theme.text());
-            cells.push(format!(" · job {} → ", job.id), theme.muted());
+            cells.push(format!("running {age} → "), theme.text());
             cells.push(node.to_string(), theme.accent().add_modifier(Modifier::BOLD));
             cells.push(format!(" · {query_id}"), theme.muted());
             if app.query_is_runaway(node, query_id) {
@@ -670,26 +669,59 @@ fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
             cells.push(" · ⏎ jumps to the query on view 1", theme.faint());
         }
         (JobState::Started, None) => {
-            cells.push(
-                "running · no ClickHouse query matches its Redash number yet",
-                theme.muted(),
-            );
+            cells.push(format!("running {age}"), theme.text());
+            match (job.on_clickhouse(), job.data_source_type.as_deref()) {
+                (Some(false), Some("results")) => cells.push(
+                    " · Query Results runs inside Redash, on the worker: nothing in ClickHouse to jump to",
+                    theme.muted(),
+                ),
+                (Some(false), kind) => cells.push(
+                    format!(" · on {}, not ClickHouse: this monitor does not see it run", kind.unwrap_or("another database")),
+                    theme.muted(),
+                ),
+                _ => cells.push(" · no ClickHouse query carries its job id or its Redash number", theme.muted()),
+            };
+        }
+        (JobState::Stale(why), target) => {
+            cells.push(format!("in RQ's started list for {age}"), theme.text());
+            let reason = match why {
+                Stale::Cancelled => " · cancelled, and no worker was left to stop it",
+                Stale::NoWorker => " · no live worker holds it: the one that ran it died or restarted",
+                Stale::OverADay => " · started over a day ago and never let go of",
+            };
+            cells.push(reason, theme.muted());
+            if let Some((node, _)) = target {
+                cells.push(" · ClickHouse still runs it on ", theme.sev(Severity::Warn));
+                cells.push(node.to_string(), theme.accent().add_modifier(Modifier::BOLD));
+                cells.push(" · ⏎ to see it", theme.faint());
+            }
         }
     }
     lines.push(cells.line_unpadded(width));
 
+    // Who, what, on what — and where the SQL under the row comes from.
     let mut cells = Cells::new();
-    if let Some(ds) = &job.data_source {
-        cells.push(format!("data source {ds}"), theme.muted());
+    match job.person_full.as_ref().or(job.person.as_ref()) {
+        Some(who) => cells.push(who.clone(), theme.text2()),
+        None => cells.push("who: unknown to Redash", theme.muted()),
+    };
+    if job.scheduled {
+        cells.push(" · scheduled refresh", theme.muted());
     }
-    if let Some(id) = job.redash_query_id {
-        cells.push(format!(" · Redash #{id}"), theme.muted());
+    if let Some(source) = &job.data_source {
+        let kind = job.data_source_type.as_deref().map(|k| format!(" ({k})")).unwrap_or_default();
+        cells.push(format!(" · on {source}{kind}"), theme.muted());
     }
-    if let Some(name) = &job.query_name {
-        cells.push(format!(" {name}"), theme.text2());
-    }
+    cells.push(format!(" · {}", job.query_label()), theme.muted());
+    match app.job_sql(job) {
+        Some((_, SqlFrom::ClickHouse)) => cells.push(" · SQL as ClickHouse runs it", theme.faint()),
+        Some((_, SqlFrom::Redash)) => cells.push(" · SQL as saved in Redash", theme.faint()),
+        None if job.adhoc => cells.push(" · Redash keeps no text for ad-hoc queries", theme.faint()),
+        None => &mut cells,
+    };
+    cells.push(format!(" · job {}", job.id), theme.faint());
     if let Some(age) = app.queue.age(app.clock) {
-        cells.push(format!(" · queue read {} ago", fmt::dur(age.as_secs_f64())), theme.faint());
+        cells.push(format!(" · read {} ago", fmt::dur(age.as_secs_f64())), theme.faint());
     }
     lines.push(cells.line_unpadded(width));
     (head, lines)

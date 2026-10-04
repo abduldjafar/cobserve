@@ -323,6 +323,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         View::Queue => &[
             ("↑↓", "move"),
             ("⏎", "jump to ClickHouse"),
+            ("J K", "scroll SQL"),
             ("1", "nodes"),
             ("p", "pause"),
             ("?", "help"),
@@ -365,7 +366,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("↑ ↓  j k", "move the cursor · PgUp PgDn Home End jump"),
     ("⏎", "open / close · on an insight, a queue job, a tile or a tape line: go there"),
     ("← →  h l", "collapse / expand, vim-style"),
-    ("J K  ⇧↑↓", "scroll the SQL under the selected query"),
+    ("J K  ⇧↑↓", "scroll the SQL under the selected query or Redash job"),
     ("tab", "move between the tree and the insights"),
     ("space", "fold / unfold the healthy nodes"),
     ("u", "pivot node ↔ user: who is burning the fleet"),

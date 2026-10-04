@@ -170,19 +170,124 @@ fn short_terminals_shrink_the_drawer() {
 fn the_queue_view_lists_people_and_the_stitch_to_clickhouse() {
     let mut app = app_after(3);
     app.update(key(KeyCode::Char('2')));
-    let screen = render(&app, 120, 36);
-    assert!(screen.contains("WAITING"), "{screen}");
-    assert!(screen.contains("RUNNING"), "{screen}");
-    assert!(screen.contains("r_redash → r.simonyte"), "a waiting person");
-    assert!(screen.contains("→ clickhouse3"), "the arrow into ClickHouse");
-    assert!(screen.contains("6/6 busy"), "worker saturation");
-    assert!(screen.contains("●●●●●●"), "workers drawn as slots");
+    let screen = render(&app, 140, 48);
+    assert!(screen.contains("RUNNING · 6 on a worker"), "{screen}");
+    assert!(screen.contains("─ WAITING ·"), "{screen}");
+    assert!(screen.contains("→ clickhouse3"), "the arrow into ClickHouse: {screen}");
+    assert!(screen.contains("mysql · not ClickHouse"), "a job on another database says so: {screen}");
+    assert!(screen.contains("runs inside Redash"), "Query Results is not a missing stitch: {screen}");
+    assert!(screen.contains("4/4 busy"), "worker saturation");
+    assert!(screen.contains("●●●●"), "workers drawn as slots");
     assert!(screen.contains("runaway ClickHouse query"), "the drawer explains why it is full: {screen}");
-    // Waiting jobs are listed as waiting, not as running.
-    let waiting = screen.find("WAITING ·").expect("waiting section");
-    let running = screen.find("RUNNING ·").expect("running section");
-    let simonyte = screen.find("r_redash → r.simonyte").expect("r.simonyte waits");
-    assert!(waiting < simonyte && simonyte < running, "r.simonyte is in the WAITING half");
+    assert!(!screen.contains("r_redash →"), "people, not the account Redash connects as: {screen}");
+    assert!(!screen.contains("FAILED"), "no column the API cannot fill: {screen}");
+    // Running jobs are listed before the waiting ones, and the waiting ones as waiting.
+    let running = screen.find("─ RUNNING ·").expect("running section");
+    let waiting = screen.find("─ WAITING ·").expect("waiting section");
+    let simonyte = screen.find("#8093 July close pack").expect("r.simonyte waits");
+    assert!(running < waiting && waiting < simonyte, "r.simonyte is in the WAITING list");
+    // The cursor is on the first running job, and its SQL is open under it.
+    assert!(screen.contains("▎ WITH BankRecord AS ("), "{screen}");
+}
+
+#[test]
+fn j_and_k_scroll_the_sql_under_a_job() {
+    let mut app = app_after(3);
+    app.update(key(KeyCode::Char('2')));
+    // A short screen, so the SQL under the first running job has to scroll.
+    let before = render(&app, 120, 30);
+    assert!(before.contains("lines 1–"), "{before}");
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT)));
+    let after = render(&app, 120, 30);
+    assert!(after.contains("lines 2–"), "{after}");
+    // Another job starts at its first line again.
+    app.update(key(KeyCode::Down));
+    let next = render(&app, 120, 30);
+    assert!(!next.contains("lines 2–"), "{next}");
+}
+
+/// The Redash on the screenshot this view was rebuilt from: nothing waiting, one worker on
+/// `queries` and that one idle, a scheduled refresh running — and RQ's started list holding
+/// leftovers from months ago, which the old view listed as RUNNING for 177 days.
+fn quiet_redash_with_leftovers() -> crate::model::QueueStatus {
+    use crate::model::{Job, JobState, QueueRow, QueueStatus, Stale};
+    let leftover = |id: &str, who: &str, query: u64, name: &str, source: &str, kind: &str, age_s: u64, why: Stale| {
+        let mut job = Job::new(id, JobState::Stale(why), "queries");
+        job.person = Some(who.to_string());
+        job.redash_query_id = Some(query);
+        job.query_name = Some(name.to_string());
+        job.data_source = Some(source.to_string());
+        job.data_source_type = Some(kind.to_string());
+        job.age_s = age_s;
+        job
+    };
+    let day = 86_400;
+    let mut jobs = vec![
+        leftover("z1", "grigol.gankava", 5120, "Transfers · weekly summary", "clickhouse-bi", "clickhouse", 177 * day + 36_000, Stale::OverADay),
+        leftover("z2", "a.vaitkus", 6301, "Card margin · by day", "payments-mysql", "mysql", 173 * day + 61_200, Stale::Cancelled),
+        leftover("z3", "j.petrova", 6302, "Ledger export · full", "clickhouse-bi", "clickhouse", 172 * day + 46_800, Stale::OverADay),
+        leftover("o1", "d.zaleckas", 161, "Replica health check 2", "Query Results", "results", 772, Stale::NoWorker),
+        leftover("o2", "d.zaleckas", 162, "Replica health check 1", "Query Results", "results", 742, Stale::NoWorker),
+    ];
+    let mut refresh = Job::new("s1", JobState::Started, "scheduled_queries");
+    refresh.person = Some("r.simonyte".to_string());
+    refresh.redash_query_id = Some(8091);
+    refresh.query_name = Some("July close pack".to_string());
+    refresh.data_source = Some("clickhouse7".to_string());
+    refresh.data_source_type = Some("clickhouse".to_string());
+    refresh.scheduled = true;
+    refresh.age_s = 140;
+    jobs.push(refresh);
+    let row = |name: &str, running: u32, stale: u32, busy: u32, total: u32| QueueRow {
+        name: name.to_string(),
+        running,
+        waiting: 0,
+        oldest_wait_s: None,
+        stale,
+        workers_busy: busy,
+        workers_total: total,
+    };
+    QueueStatus {
+        reachable: true,
+        error: None,
+        queues: vec![
+            row("default", 0, 0, 1, 2),
+            row("emails", 0, 0, 1, 2),
+            row("periodic", 0, 0, 1, 2),
+            row("queries", 0, 5, 0, 1),
+            row("scheduled_queries", 1, 0, 2, 6),
+            row("schemas", 0, 0, 2, 6),
+        ],
+        jobs,
+        names_available: false,
+        workers_busy: 3,
+        workers_total: 9,
+        host: Some("redash.example.net".to_string()),
+        version: Some("10.1.0".to_string()),
+        taken_at: std::time::SystemTime::now(),
+    }
+}
+
+#[test]
+fn leftovers_in_the_started_list_are_not_shown_as_running() {
+    let mut app = app_after(3);
+    app.update(Event::Queue(Box::new(quiet_redash_with_leftovers())));
+    app.update(key(KeyCode::Char('2')));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("REDASH  0 waiting · 1 running · ●●●○○○○○○ 3/9 workers busy · 5 stale"), "{screen}");
+    assert!(!screen.contains("oldest"), "no age without Redis, and no dash in its place: {screen}");
+    assert!(screen.contains("RUNNING · 1 on a worker · scheduled_queries"), "{screen}");
+    assert!(screen.contains("→ clickhouse7"), "the scheduled refresh is stitched: {screen}");
+    assert!(screen.contains("STALE · 5 in RQ's started list that no worker runs · queries"), "{screen}");
+    for why in ["over a day old", "cancelled", "no worker holds it"] {
+        assert!(screen.contains(why), "{why}: {screen}");
+    }
+    assert!(!screen.contains("─ WAITING"), "nothing waits, so no list of nobody: {screen}");
+    assert!(screen.contains("1 idle"), "the queries worker is idle, and says so: {screen}");
+    let running = screen.find("─ RUNNING ·").unwrap();
+    let stale = screen.find("─ STALE ·").unwrap();
+    let months = screen.find("177d").expect("the oldest leftover is listed");
+    assert!(stale < months && running < stale, "177 days is under STALE, not RUNNING: {screen}");
 }
 
 #[test]
@@ -697,6 +802,12 @@ fn export_screens() {
     queue.update(key(KeyCode::Char('2')));
     queue.update(key(KeyCode::Down));
     save("120x36-queue", &queue, 120, 36);
+    save("160x48-queue", &queue, 160, 48);
+
+    let mut quiet = app_after(118);
+    quiet.update(Event::Queue(Box::new(quiet_redash_with_leftovers())));
+    quiet.update(key(KeyCode::Char('2')));
+    save("120x36-queue-leftovers", &quiet, 120, 36);
 
     let mut map = app_after(118);
     map.update(key(KeyCode::Char('3')));

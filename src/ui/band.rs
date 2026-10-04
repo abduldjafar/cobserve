@@ -111,8 +111,8 @@ fn fleet_line(app: &App, totals: Option<&FleetTotals>, theme: &Theme, width: usi
     cells.line(width, theme.text())
 }
 
-/// `REDASH  12 waiting ▁▂▅▇ · oldest 1m43s ▲ · workers ●●●●●● 6/6 busy · 2 failed/5m`, or
-/// `REDASH  unreachable (HTTP 401)` — never blank (§1, §6.3).
+/// `REDASH  15 waiting ▁▂▅▇ · oldest 1m43s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale`,
+/// or `REDASH  unreachable (HTTP 401)` — never blank (§1, §6.3).
 pub fn queue_strip(app: &App, theme: &Theme, width: usize) -> Line<'static> {
     let mut cells = Cells::new();
     cells.push("REDASH", theme.section());
@@ -151,55 +151,68 @@ pub fn queue_strip(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         return cells.line(width, theme.text());
     }
 
-    let Some(q) = app.queue.queue("queries") else {
+    let queue = &app.queue;
+    if queue.queues.is_empty() {
         cells.push("no queues reported", theme.sev(Severity::Warn));
         return cells.line(width, theme.text());
-    };
+    }
 
-    let saturated = q.saturated();
-    let oldest = q.oldest_wait_s.unwrap_or(0);
-    let wait_sev = severity::wait(oldest, false);
-    let count_sev = severity::wait(oldest, saturated);
-
-    cells.push(format!("{} waiting", q.waiting), theme.sev(count_sev).add_modifier(Modifier::BOLD));
-    if width >= 110 && !app.history.queue_waiting.is_empty() {
-        let series = app.history.queue("queries");
-        let top = series.and_then(|s| s.max_in(crate::history::WINDOW_S)).unwrap_or(0.0).max(10.0);
+    // Waiting first: it is what people feel. Its severity is the worst queue's — the oldest
+    // wait, made worse when every worker of that queue is busy.
+    let waiting = queue.total_waiting();
+    let worst = queue
+        .queues
+        .iter()
+        .filter(|row| row.waiting > 0)
+        .max_by_key(|row| (severity::wait(row.oldest_wait_s.unwrap_or(0), row.saturated()), row.oldest_wait_s, row.waiting));
+    let count_sev = worst.map_or(Severity::None, |row| severity::wait(row.oldest_wait_s.unwrap_or(0), row.saturated()));
+    cells.push(
+        format!("{waiting} waiting"),
+        if waiting > 0 { theme.sev(count_sev).add_modifier(Modifier::BOLD) } else { theme.muted() },
+    );
+    // A flat line of zeros says nothing a "0" does not.
+    let series = &app.history.queue_waiting;
+    if width >= 110 && series.max_in(crate::history::WINDOW_S).is_some_and(|m| m > 0.0) {
+        let top = series.max_in(crate::history::WINDOW_S).unwrap_or(0.0).max(10.0);
         cells.push(" ", theme.text());
-        cells.spans(sparkline(series, crate::history::secs(app.queue.taken_at), 8, Scale::Fixed(0.0, top), |_| {
+        cells.spans(sparkline(Some(series), crate::history::secs(queue.taken_at), 8, Scale::Fixed(0.0, top), |_| {
             theme.bar_fill(count_sev)
         }));
     }
+    // Only Redis knows how long; without it there is no "oldest" to show, not a dash.
+    if let Some(oldest) = worst.and_then(|row| row.oldest_wait_s) {
+        let wait_sev = severity::wait(oldest, false);
+        cells.push(" · ", theme.faint());
+        cells.push("oldest ", theme.muted());
+        cells.push(fmt::dur(oldest as f64), theme.sev(wait_sev).add_modifier(Modifier::BOLD));
+        cells.push(wait_sev.mark(), theme.sev(wait_sev));
+    }
+
     cells.push(" · ", theme.faint());
-    cells.push("oldest ", theme.muted());
-    cells.push(fmt::opt_dur(q.oldest_wait_s), theme.sev(wait_sev).add_modifier(Modifier::BOLD));
-    cells.push(wait_sev.mark(), theme.sev(wait_sev));
+    let running = queue.total_running();
+    cells.push(format!("{running} running"), if running > 0 { theme.strong() } else { theme.muted() });
+
     cells.push(" · ", theme.faint());
-    cells.push("workers ", theme.muted());
-    let worker_sev = if saturated { Severity::Warn } else { Severity::None };
-    let worker_dots = dots(q.workers_busy, q.workers_total, theme.bar_fill(worker_sev), theme);
+    // Busy workers are a problem only with jobs waiting behind them.
+    let full = worst.is_some_and(|row| row.saturated());
+    let worker_sev = if full { Severity::Warn } else { Severity::None };
+    let worker_dots = dots(queue.workers_busy, queue.workers_total, theme.bar_fill(worker_sev), theme);
     if !worker_dots.is_empty() {
         cells.spans(worker_dots);
         cells.push(" ", theme.text());
     }
-    cells.push(
-        format!("{}/{} {}", q.workers_busy, q.workers_total, if saturated { "busy" } else { "idle" }),
-        theme.sev(worker_sev),
-    );
-    if q.failed_5m > 0 {
+    let workers = match (queue.workers_total, queue.workers_busy) {
+        (0, _) => "no live worker".to_string(),
+        (total, 0) => format!("{} idle", fmt::plural(total as usize, "worker", "workers")),
+        (total, busy) => format!("{busy}/{total} workers busy"),
+    };
+    let worker_style = if queue.workers_total == 0 || full { theme.sev(Severity::Warn) } else { theme.text2() };
+    cells.push(workers, worker_style);
+
+    let stale = queue.total_stale();
+    if stale > 0 {
         cells.push(" · ", theme.faint());
-        cells.push(format!("{} failed/5m", q.failed_5m), theme.sev(Severity::Warn));
-    }
-    let others: u32 = app
-        .queue
-        .queues
-        .iter()
-        .filter(|row| row.name != "queries")
-        .map(|row| row.waiting)
-        .sum();
-    if others > 0 {
-        cells.push(" · ", theme.faint());
-        cells.push(format!("+{others} in other queues"), theme.muted());
+        cells.push(format!("{stale} stale"), theme.muted());
     }
 
     let mut line = Cells::new();

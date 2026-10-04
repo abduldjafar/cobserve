@@ -5,7 +5,7 @@
 
 use crate::history::{self, History};
 use crate::insight::{self, Insight, Subject};
-use crate::model::{fleet_totals, mark_new_nodes, FleetSnapshot, FleetView, Job, QueueStatus};
+use crate::model::{fleet_totals, mark_new_nodes, FleetSnapshot, FleetView, Job, JobState, QueueStatus};
 use crate::tape::{Tape, Watch};
 use crate::tree::{self, Row, RowId, TreeState};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -19,6 +19,23 @@ const UNREACHABLE_GRACE: Duration = Duration::from_secs(5 * 60);
 /// A queue row with the index the cursor uses, so the screen and the selection cannot disagree
 /// about which job is selected.
 pub type QueueRowRef<'a> = (usize, &'a Job);
+
+/// Where the SQL under a job on view 2 comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlFrom {
+    /// The query the stitch found in `system.processes`: what really runs.
+    ClickHouse,
+    /// The saved query's text from Redash's API.
+    Redash,
+}
+
+/// View 2's three lists, in the order they are drawn.
+#[derive(Debug, Default)]
+pub struct QueueSections<'a> {
+    pub running: Vec<QueueRowRef<'a>>,
+    pub waiting: Vec<QueueRowRef<'a>>,
+    pub stale: Vec<QueueRowRef<'a>>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -85,6 +102,20 @@ pub struct Viewport {
     pub map_columns: Cell<usize>,
     /// How far the selected query's SQL can scroll, as last drawn.
     pub sql_max: Cell<usize>,
+}
+
+/// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
+/// `clickhouse-bi.example.net`. Names only — Redash's list of data sources has no hosts.
+fn names_node(data_source: Option<&str>, node: &str) -> bool {
+    let Some(source) = data_source else {
+        return false;
+    };
+    let node = node.to_ascii_lowercase();
+    let label = node.split(['.', ':']).next().unwrap_or(&node).to_string();
+    source
+        .to_ascii_lowercase()
+        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        .any(|token| token == label || token == node)
 }
 
 /// Keep `selected` inside a window of `height` rows starting at `offset`, moving the window as
@@ -333,44 +364,71 @@ impl App {
         self.queue_selection
     }
 
-    /// View 2's two halves, each with the row index the cursor uses: waiting jobs first, then
-    /// the ones on a worker, both longest first. A full queue is what on call wants to see
-    /// before anything else, so it comes first.
+    /// View 2's lists: what runs — the table above already says how full the queue is, and
+    /// the running jobs are why — then what waits, both longest first, then what RQ's started
+    /// list holds without anyone running it, oldest first.
     ///
     /// Partitioned by state *before* sorting: sorting everything by age and cutting at the
     /// first started job would put every waiting job younger than the oldest running one
     /// into the RUNNING half.
-    pub fn queue_sections(&self) -> (Vec<QueueRowRef<'_>>, Vec<QueueRowRef<'_>>) {
-        let (mut waiting, mut started): (Vec<QueueRowRef<'_>>, Vec<QueueRowRef<'_>>) = self
-            .queue
-            .jobs
-            .iter()
-            .enumerate()
-            .partition(|(_, job)| job.state == crate::model::JobState::Queued);
-        waiting.sort_by_key(|(_, job)| std::cmp::Reverse(job.age_s));
-        started.sort_by_key(|(_, job)| std::cmp::Reverse(job.age_s));
-        (waiting, started)
+    pub fn queue_sections(&self) -> QueueSections<'_> {
+        let mut sections = QueueSections::default();
+        for (index, job) in self.queue.jobs.iter().enumerate() {
+            match job.state {
+                JobState::Queued => sections.waiting.push((index, job)),
+                JobState::Started => sections.running.push((index, job)),
+                JobState::Stale(_) => sections.stale.push((index, job)),
+            }
+        }
+        for list in [&mut sections.running, &mut sections.waiting, &mut sections.stale] {
+            list.sort_by_key(|(_, job)| std::cmp::Reverse(job.age_s));
+        }
+        sections
     }
 
     /// Every job row of view 2, in the order they are drawn.
     pub fn queue_rows(&self) -> Vec<&crate::model::Job> {
-        let (waiting, started) = self.queue_sections();
-        waiting
+        let sections = self.queue_sections();
+        sections
+            .running
             .into_iter()
-            .chain(started)
+            .chain(sections.waiting)
+            .chain(sections.stale)
             .map(|(_, job)| job)
             .collect()
     }
 
+    /// The SQL to show under a job on view 2: what ClickHouse is running for it when the stitch
+    /// found the query, the query as saved in Redash otherwise. An ad-hoc query that is not in
+    /// ClickHouse has none — Redash's API does not keep its text.
+    pub fn job_sql(&self, job: &Job) -> Option<(String, SqlFrom)> {
+        let running = job.clickhouse_target().and_then(|(node, query_id)| {
+            self.snapshot()?
+                .nodes
+                .iter()
+                .find(|n| n.name == node)?
+                .queries
+                .iter()
+                .find(|q| q.query_id == query_id)
+                .map(|q| q.sql.clone())
+        });
+        match running {
+            Some(sql) => Some((sql, SqlFrom::ClickHouse)),
+            None => job.sql.clone().filter(|sql| !sql.trim().is_empty()).map(|sql| (sql, SqlFrom::Redash)),
+        }
+    }
+
+    /// The job under view 2's cursor.
+    pub fn selected_job(&self) -> Option<&crate::model::Job> {
+        let index = self.queue_selection?;
+        self.queue_rows().get(index).copied()
+    }
+
     /// `⏎` on a running job: jump to the ClickHouse query it became (§2.8).
     pub fn activate_queue_row(&mut self) {
-        let Some(index) = self.queue_selection else {
-            return;
-        };
         // The target has to be copied out before `jump_to_clickhouse` borrows self mutably.
         let target = self
-            .queue_rows()
-            .get(index)
+            .selected_job()
             .and_then(|job| job.clickhouse_target())
             .map(|(node, id)| (node.to_string(), id.to_string()));
         // A waiting job has not reached ClickHouse: there is nothing to jump to, and the
@@ -380,45 +438,62 @@ impl App {
         }
     }
 
-    /// §2.8's stitch: a Redash job that has started IS a `system.processes` row somewhere, and
-    /// the only thing that links the two is the Redash query number Redash writes into the
-    /// comment (§6.4). Matching on it here is what lets ⏎ jump from the queue into the tree.
+    /// §2.8's stitch: a Redash job that has started IS a `system.processes` row somewhere.
+    ///
+    /// Redash writes the job's id into the comment of the SQL it runs (`Job ID: …`), which is
+    /// an exact match, and the Redash query's number (§6.4), which is not: the same query can
+    /// run twice at once. The id comes first; the number is the fallback for comments without
+    /// one. Matching here is what lets ⏎ jump from the queue into the tree.
     fn stitch_queue(&mut self) {
         let Some(snapshot) = self.snapshot.as_deref() else {
             return;
         };
-        // Every ClickHouse query carrying a Redash number, with where it runs and for whom.
-        let mut by_redash_id: HashMap<u64, Vec<(String, String, Option<String>)>> = HashMap::new();
+        type Run = (String, String, Option<String>);
+        let mut by_job: HashMap<String, Run> = HashMap::new();
+        let mut by_redash_id: HashMap<u64, Vec<Run>> = HashMap::new();
         for node in &snapshot.nodes {
             for query in &node.queries {
-                if let Some(redash_id) = query.redash_query_id {
-                    by_redash_id.entry(redash_id).or_default().push((
-                        node.name.clone(),
-                        query.query_id.clone(),
-                        query.person.clone(),
-                    ));
+                let run = (node.name.clone(), query.query_id.clone(), query.person.clone());
+                // A query that names its job belongs to that job and to no other.
+                if let Some(job_id) = crate::attrib::redash_job_id(&query.sql) {
+                    by_job.insert(job_id.to_string(), run);
+                } else if let Some(redash_id) = query.redash_query_id {
+                    by_redash_id.entry(redash_id).or_default().push(run);
                 }
             }
         }
 
-        // The same Redash query can run twice at once (a dashboard refreshed twice): pick, for
-        // each job, the run on the node its data source names, then the one for the same
-        // person — and never hand one ClickHouse query to two jobs.
         let mut taken: HashSet<String> = HashSet::new();
         for job in &mut self.queue.jobs {
             job.ch_node = None;
             job.ch_query_id = None;
-            if job.state != crate::model::JobState::Started {
+            // A stale entry is matched by its id too: a query still running for a job its
+            // worker has given up on is exactly what someone has to go and kill.
+            if job.state == JobState::Queued {
+                continue;
+            }
+            if let Some((node, query_id, _)) = by_job.get(&job.id) {
+                taken.insert(query_id.clone());
+                job.ch_node = Some(node.clone());
+                job.ch_query_id = Some(query_id.clone());
+            }
+        }
+        // By number, for running jobs only — a leftover from last spring must not claim
+        // today's run of the same query — and only for ClickHouse data sources. Each job
+        // takes the run on the node its data source names, then one for the same person, and
+        // one ClickHouse query never goes to two jobs.
+        for job in &mut self.queue.jobs {
+            if job.state != JobState::Started || job.ch_node.is_some() || job.on_clickhouse() == Some(false) {
                 continue;
             }
             let Some(candidates) = job.redash_query_id.and_then(|id| by_redash_id.get(&id)) else {
                 continue;
             };
-            let free = |c: &&(String, String, Option<String>)| !taken.contains(&c.1);
+            let free = |c: &&Run| !taken.contains(&c.1);
             let pick = candidates
                 .iter()
                 .filter(free)
-                .find(|(node, _, _)| job.data_source.as_deref() == Some(node.as_str()))
+                .find(|(node, _, _)| names_node(job.data_source.as_deref(), node))
                 .or_else(|| {
                     candidates
                         .iter()
@@ -437,12 +512,19 @@ impl App {
     /// The question the drawer on view 2 answers: are the workers busy because of ClickHouse
     /// queries, or is Redash keeping up (§2.8)?
     pub fn queue_explanation(&self) -> String {
+        let (busy, total) = (self.queue.workers_busy, self.queue.workers_total);
         let running: Vec<&crate::model::Job> = self.queue.started();
         if running.is_empty() {
-            return "no jobs on a worker".to_string();
+            let stale = self.queue.total_stale();
+            return match stale {
+                0 => format!("nothing on a worker · {total} workers idle"),
+                _ => format!(
+                    "nothing on a worker · the {} in RQ's started list {} leftovers, not work",
+                    crate::fmt::plural(stale as usize, "entry", "entries"),
+                    if stale == 1 { "is a" } else { "are" }
+                ),
+            };
         }
-        let queries = self.queue.queues.iter().map(|q| (q.workers_busy, q.workers_total));
-        let (busy, total) = queries.fold((0, 0), |(b, t), (qb, qt)| (b + qb, t + qt));
         let mut stuck = 0usize;
         let mut runaway_nodes: Vec<String> = Vec::new();
         for job in &running {
@@ -459,8 +541,11 @@ impl App {
         if stuck == 0 {
             return format!("{busy}/{total} workers busy · none of them is stuck in ClickHouse");
         }
+        let holds = if stuck == 1 { "holds" } else { "hold" };
+        // Stuck workers explain a full queue; with nothing waiting they are only expensive.
+        let why = if self.queue.total_waiting() > 0 { " → why it is full" } else { "" };
         format!(
-            "{busy}/{total} workers busy · {stuck} of them hold a runaway ClickHouse query ({}) → why it is full",
+            "{busy}/{total} workers busy · {stuck} of them {holds} a runaway ClickHouse query ({}){why}",
             runaway_nodes.join(", ")
         )
     }
@@ -497,19 +582,30 @@ impl App {
         self.insight_selection
     }
 
-    /// The first line of `query_id`'s SQL to show under its row.
-    pub fn sql_scroll_for(&self, query_id: &str) -> usize {
-        if self.sql_scroll_of.as_deref() == Some(query_id) { self.sql_scroll } else { 0 }
+    /// The first line to show of the SQL under the row `key` names: a query id on view 1,
+    /// [`App::job_sql_key`] on view 2.
+    pub fn sql_scroll_for(&self, key: &str) -> usize {
+        if self.sql_scroll_of.as_deref() == Some(key) { self.sql_scroll } else { 0 }
     }
 
-    /// `J` `K` (or shift ↑ ↓): scroll the SQL of the selected query, when one is selected.
+    /// What the SQL under a job on view 2 scrolls by — never equal to a ClickHouse query id.
+    pub fn job_sql_key(job: &Job) -> String {
+        format!("redash job {}", job.id)
+    }
+
+    /// `J` `K` (or shift ↑ ↓): scroll the SQL under the selected query or job.
     fn scroll_sql(&mut self, delta: isize) {
-        let Some(RowId::Query { query_id, .. }) = self.selected.clone() else {
+        let key = match (self.view, self.selected.clone()) {
+            (View::Queue, _) => self.selected_job().map(Self::job_sql_key),
+            (_, Some(RowId::Query { query_id, .. })) => Some(query_id),
+            _ => None,
+        };
+        let Some(key) = key else {
             return;
         };
-        if self.sql_scroll_of.as_deref() != Some(query_id.as_str()) {
+        if self.sql_scroll_of.as_deref() != Some(key.as_str()) {
             self.sql_scroll = 0;
-            self.sql_scroll_of = Some(query_id);
+            self.sql_scroll_of = Some(key);
         }
         let max = self.viewport.sql_max.get() as isize;
         self.sql_scroll = (self.sql_scroll as isize + delta).clamp(0, max) as usize;
@@ -666,7 +762,7 @@ impl App {
         match self.view {
             View::Nodes if self.focus == Focus::Insights => self.on_insights_key(key.code),
             View::Nodes => self.on_tree_key(key),
-            View::Queue => self.on_queue_key(key.code),
+            View::Queue => self.on_queue_key(key),
             View::Map => self.on_map_key(key.code),
             View::Tape => self.on_tape_key(key.code),
         }
@@ -738,8 +834,17 @@ impl App {
         }
     }
 
-    fn on_queue_key(&mut self, code: KeyCode) {
-        match code {
+    fn on_queue_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Up => return self.scroll_sql(-1),
+                KeyCode::Down => return self.scroll_sql(1),
+                _ => {}
+            }
+        }
+        match key.code {
+            KeyCode::Char('K') => self.scroll_sql(-1),
+            KeyCode::Char('J') => self.scroll_sql(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_queue_row(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_queue_row(1),
             KeyCode::PageUp => self.move_queue_row(-10),
@@ -1419,6 +1524,100 @@ mod tests {
         app.update(Event::Queue(Box::new(queue)));
         assert!(app.queue.started().iter().any(|j| j.clickhouse_target().is_some()));
         assert!(app.queue_explanation().contains("runaway"), "{}", app.queue_explanation());
+    }
+
+    /// A reachable queue status with just these jobs.
+    fn queue_of(jobs: Vec<Job>) -> QueueStatus {
+        QueueStatus { reachable: true, error: None, jobs, ..QueueStatus::unreachable("") }
+    }
+
+    fn running(id: &str, redash: u64) -> Job {
+        let mut job = Job::new(id, JobState::Started, "queries");
+        job.redash_query_id = Some(redash);
+        job
+    }
+
+    #[test]
+    fn the_job_id_in_the_comment_is_the_exact_stitch() {
+        let mut fake = FakeSource::new();
+        let mut snapshot = fake.snapshot();
+        // 8585 runs twice, and Redash's comment says which job each run is.
+        let mut runs = Vec::new();
+        for node in &mut snapshot.nodes {
+            for query in &mut node.queries {
+                if query.redash_query_id == Some(8585) {
+                    let job = format!("job-{}", node.name);
+                    query.sql = format!("/* Username: j.petrova@example.net, query_id: 8585, Job ID: {job} */ SELECT 1");
+                    runs.push((job, node.name.clone(), query.query_id.clone()));
+                }
+            }
+        }
+        assert_eq!(runs.len(), 2, "the fake fleet runs 8585 twice");
+        let mut app = App::new();
+        app.update(Event::Snapshot(Box::new(snapshot)));
+        // Each job names the other run's node as its data source: the id wins over the name.
+        let jobs = runs
+            .iter()
+            .zip(runs.iter().rev())
+            .map(|((job, _, _), (_, other, _))| {
+                let mut job = running(job, 8585);
+                job.data_source = Some(other.clone());
+                job
+            })
+            .collect();
+        app.update(Event::Queue(Box::new(queue_of(jobs))));
+        for (job, node, query_id) in &runs {
+            let stitched = app.queue.jobs.iter().find(|j| &j.id == job).unwrap();
+            assert_eq!(stitched.clickhouse_target(), Some((node.as_str(), query_id.as_str())));
+        }
+    }
+
+    #[test]
+    fn only_running_clickhouse_jobs_are_stitched_by_number() {
+        let mut app = app_with_fake();
+        let mut leftover = Job::new("z1", JobState::Stale(crate::model::Stale::OverADay), "queries");
+        leftover.redash_query_id = Some(7438);
+        let mut mysql = running("m1", 7438);
+        mysql.data_source_type = Some("mysql".into());
+        let mut clickhouse = running("c1", 7438);
+        clickhouse.data_source_type = Some("clickhouse".into());
+        app.update(Event::Queue(Box::new(queue_of(vec![leftover, mysql, clickhouse]))));
+        let node = |id: &str| {
+            let job = app.queue.jobs.iter().find(|j| j.id == id).unwrap();
+            job.clickhouse_target().map(|(node, _)| node.to_string())
+        };
+        assert_eq!(node("z1"), None, "a leftover from months ago does not claim today's run");
+        assert_eq!(node("m1"), None, "a MySQL job is not a ClickHouse query");
+        assert_eq!(node("c1").as_deref(), Some("clickhouse3"));
+    }
+
+    #[test]
+    fn a_stale_job_that_clickhouse_still_runs_is_found() {
+        let mut fake = FakeSource::new();
+        let mut snapshot = fake.snapshot();
+        let query = snapshot
+            .nodes
+            .iter_mut()
+            .flat_map(|n| n.queries.iter_mut())
+            .find(|q| q.redash_query_id == Some(7438))
+            .unwrap();
+        query.sql = format!("/* Username: grigol.gankava@example.net, query_id: 7438, Job ID: z9 */ {}", query.sql);
+        let mut app = App::new();
+        app.update(Event::Snapshot(Box::new(snapshot)));
+        let mut ghost = Job::new("z9", JobState::Stale(crate::model::Stale::NoWorker), "queries");
+        ghost.redash_query_id = Some(7438);
+        app.update(Event::Queue(Box::new(queue_of(vec![ghost]))));
+        assert_eq!(app.queue.jobs[0].clickhouse_target().map(|(node, _)| node), Some("clickhouse3"));
+    }
+
+    #[test]
+    fn a_data_source_names_a_node_by_its_first_label() {
+        assert!(names_node(Some("clickhouse-bi (prod)"), "clickhouse-bi.example.net"));
+        assert!(names_node(Some("clickhouse3"), "clickhouse3"));
+        assert!(names_node(Some("CH: clickhouse-bi.example.net"), "clickhouse-bi.example.net"));
+        assert!(!names_node(Some("clickhouse1"), "clickhouse10.example.net"));
+        assert!(!names_node(Some("ClickHouse BI"), "clickhouse-bi"));
+        assert!(!names_node(None, "clickhouse3"));
     }
 
     #[test]

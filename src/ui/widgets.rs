@@ -301,6 +301,67 @@ pub fn tone_spans(parts: &[(String, Tone)], theme: &Theme) -> Vec<Span<'static>>
         .collect()
 }
 
+/// SQL as a block of code under a row: comments gone, clauses on their own lines, wrapped to
+/// the screen and coloured. `lead` runs down the left of every line (the tree's trunk). When
+/// the SQL is longer than `room` lines it scrolls: from line `scroll`, with a scrollbar and a
+/// last line that says where it is and which keys move it. Returns the lines and how far the
+/// SQL can scroll.
+pub fn code_block(sql: &str, lead: &str, scroll: usize, room: usize, width: usize, theme: &Theme) -> (Vec<Line<'static>>, usize) {
+    let lead_width = fmt::width(lead);
+    // The gutter, a space, the text, a space, and the scrollbar.
+    let text_width = width.saturating_sub(lead_width + 4).max(10);
+    let all = crate::sqltext::layout(sql, text_width);
+    let scrollable = all.len() > room;
+    let text_rows = if scrollable { room.saturating_sub(1).max(1) } else { all.len() };
+    let max_scroll = all.len().saturating_sub(text_rows);
+    let scroll = scroll.min(max_scroll);
+
+    // The scrollbar's thumb: as long as the share of the SQL on screen, where that share is.
+    let thumb = (text_rows * text_rows / all.len().max(1)).clamp(1, text_rows.max(1));
+    let thumb_at = (scroll * (text_rows - thumb)).checked_div(max_scroll).unwrap_or(0);
+
+    let code = theme.code();
+    let style_of = |token: crate::sqltext::Token| {
+        let fg = match token {
+            crate::sqltext::Token::Keyword => theme.accent(),
+            crate::sqltext::Token::String => theme.sev(Severity::Ok),
+            crate::sqltext::Token::Number => theme.sev(Severity::Warn),
+            crate::sqltext::Token::Plain => theme.text(),
+        };
+        code.patch(fg)
+    };
+    let mut out = Vec::with_capacity(text_rows + 1);
+    for (n, line) in all.iter().skip(scroll).take(text_rows).enumerate() {
+        let mut cells = Cells::new();
+        cells.push(lead.to_string(), theme.faint());
+        cells.push("▎", code.patch(theme.accent()));
+        cells.push(" ", code);
+        for (text, token) in line {
+            cells.push(text.clone(), style_of(*token));
+        }
+        let fill = (lead_width + 2 + text_width + 1).saturating_sub(cells.width());
+        cells.push(" ".repeat(fill), code);
+        if scrollable {
+            let on_thumb = (thumb_at..thumb_at + thumb).contains(&n);
+            cells.push(if on_thumb { "┃" } else { "│" }, if on_thumb { theme.accent() } else { theme.faint() });
+        }
+        out.push(cells.line(width, Style::default()));
+    }
+    if scrollable {
+        let mut cells = Cells::new();
+        cells.push(lead.to_string(), theme.faint());
+        cells.push("▎", code.patch(theme.accent()));
+        cells.push(
+            format!(" lines {}–{} of {} · J K or shift ↑↓ to scroll", scroll + 1, scroll + text_rows, all.len()),
+            code.patch(theme.muted()),
+        );
+        let fill = (lead_width + 2 + text_width + 1).saturating_sub(cells.width());
+        cells.push(" ".repeat(fill), code);
+        out.push(cells.line(width, Style::default()));
+    }
+    (out, max_scroll)
+}
+
 /// Worker slots as dots: `●●●●○○` — busy in colour, idle hollow. Too many to draw becomes a
 /// plain count.
 pub fn dots(busy: u32, total: u32, color: Color, theme: &Theme) -> Vec<Span<'static>> {
