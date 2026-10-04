@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 16:40:34 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 02:16:19 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.8% 283/768 GiB          ▅   CPU ██▊        27.4% 53/192 cores          ▅  │
 │ REDASH  16 waiting        █ · oldest 1m55s ▲ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues  [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
@@ -14,23 +14,23 @@
 │  ▸ clickhous│          u  pivot node ↔ user: who is burning the fleet                                  │0        —   │
 │  ▸ clickhous│          s  sort: pressure, memory, CPU, name                                            │2      12s   │
 │  ▸ 4 healthy│          /  filter by node, user, person, SQL or query id · esc clears                   │   ␣ unfold  │
-│ ─ INSIGHTS 1│    1 2 3 4  views: nodes · queue · map · tape                                            │──────────── │
-│  ✖ clickhous│          p  pause: the numbers stop, the clock does not                                  │ways · only… │
-│  ▲ clickhous│  q  ctrl-c  quit                                                                         │             │
-│  ▲ m.kairys'│─ ON SCREEN ────────────────────────────────────────────────────────────────────────────  │             │
-│  ▲ j.petrova│        ✖ ▲  critical (red) · warning (amber), by DESIGN.md §7                            │             │
-│  ▲ r.simonyt│          ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                      │             │
-│  ▲ 5 runaway│          ↯  node not answering — its numbers are unknown, not zero                       │             │
-│  ▲ Redash qu│   ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                         │ickhouse3) … │
-│  ▲ Redash sc│      ▁▂▃▅▇  the last 4 minutes, each cell its worst moment                               │             │
-│  ▲ Redash #7│        NEW  joined the fleet during this session                                         │             │
-│  ▲ Redash #8│                                                                                          │             │
-│  ▲ clickhous│read-only by design: nothing here can kill or change a query                              │             │
-│  ● Heaviest │not in this pass: k kill, a ask Klikas, mouse                                             │             │
-│   … 2 more ·╰──────────────────────────────────────────────────────────────────────────────────────────╯             │
+│             │    1 2 3 4  views: nodes · queue · map · tape                                            │             │
+│             │          p  pause: the numbers stop, the clock does not                                  │             │
+│             │  q  ctrl-c  quit                                                                         │             │
+│             │─ ON SCREEN ────────────────────────────────────────────────────────────────────────────  │             │
+│             │        ✖ ▲  critical (red) · warning (amber), by DESIGN.md §7                            │             │
+│             │          ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                      │             │
+│             │          ↯  node not answering — its numbers are unknown, not zero                       │             │
+│ ─ INSIGHTS ·│   ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                         │──────────── │
+│  ✖ clickhous│      ▁▂▃▅▇  the last 4 minutes, each cell its worst moment                               │             │
+│  ▲ clickhous│        NEW  joined the fleet during this session                                         │             │
+│  ▲ clickhous│                                                                                          │             │
+│  ▲ Redash   │read-only by design: nothing here can kill or change a query                              │             │
+│  ▲ Redash #7│not in this pass: k kill, a ask Klikas, mouse                                             │             │
+│  ▲ Redash #8╰──────────────────────────────────────────────────────────────────────────────────────────╯             │
 │ ─ clickhouse3 · pay-ch-node-1:9000 ───────────────────────────────────────────────────────────────────────────────── │
 │ MEM 58.7/64 GiB  91.7%         ▅ ↑ +2.4%/min    CPU 15.8/16 cores  99.0%         ▇ ↑ +33.9%/min                      │
 │ memory: queries 45.6% + server 46.1% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 5.3 GiB = 0.2× a 24.0 GiB query  │
-│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 16:40:54 UTC                             │
+│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 02:16:39 UTC                             │
 │  ?  close   any other key goes back                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 1029 ms · read-only ╯

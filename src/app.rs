@@ -480,7 +480,7 @@ impl App {
     /// Everything the insights engine has to say right now, worst first.
     pub fn insights(&self) -> Vec<Insight> {
         self.with_view(|view| {
-            insight::analyze(view, &self.history, &self.queue, &self.tree.new_nodes)
+            insight::analyze(view, &self.history, &self.queue)
         })
         .unwrap_or_default()
     }
@@ -1268,10 +1268,10 @@ mod tests {
         app.update(key(KeyCode::Tab));
         assert_eq!(app.focus, Focus::Insights);
 
-        // Find an insight about a node that is folded away, and go there.
+        // Go to what clickhouse7's line is about — the node, or the query that leads it.
         let target = insights
             .iter()
-            .position(|i| matches!(&i.subject, Subject::Node(n) if n == "clickhouse7"))
+            .position(|i| i.label == "clickhouse7")
             .expect("clickhouse7 has something to say (lag 12 s)");
         for _ in 0..target {
             app.update(key(KeyCode::Down));
@@ -1279,7 +1279,15 @@ mod tests {
         assert_eq!(app.insight_selection(), target);
         app.update(key(KeyCode::Enter));
         assert_eq!(app.focus, Focus::Tree, "⏎ hands the cursor back to the tree");
-        assert_eq!(app.selected(), Some(&RowId::Node("clickhouse7".into())));
+        match &insights[target].subject {
+            Subject::Node(node) => assert_eq!(app.selected(), Some(&RowId::Node(node.clone()))),
+            Subject::Query { query_id, .. } => assert!(
+                matches!(app.selected(), Some(RowId::Query { query_id: id, .. }) if id == query_id),
+                "{:?}",
+                app.selected()
+            ),
+            other => panic!("a node's line is about the node or a query on it, not {other:?}"),
+        }
         assert!(app.tree.node_expanded("clickhouse7"));
 
         // Esc and tab both leave the insights.

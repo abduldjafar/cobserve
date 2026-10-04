@@ -7,7 +7,7 @@ Read all of it before writing code; §5 (the math) and §10 (tests) are the cont
 
 ## 0. What this is
 
-A terminal UI (Rust, ratatui) for on-call at Paysera that answers, on one screen, for a
+A terminal UI (Rust, ratatui) for on-call that answers, on one screen, for a
 ClickHouse fleet whose node count keeps growing:
 
 1. **What is every node's resource state right now** — memory and CPU against that node's
@@ -17,7 +17,7 @@ ClickHouse fleet whose node count keeps growing:
 3. **What the Redash queue looks like** — waiting jobs, oldest wait, worker saturation —
    because a "slow dashboard" is usually a full queue, not a slow database.
 
-It is a sibling of FleetLens (the web app in `~/Documents/work/paysera/code/fleetlens`); it
+It is a sibling of FleetLens (the web app); it
 reads ClickHouse **directly** so it keeps working when the web app is down. Views 1 and 2 are
 in scope for this pass (§2.8 for view 2). Views 3–4 (FLOW, TAPE) are named in the header so
 the navigation is stable, but they render a one-line "not built yet" placeholder.
@@ -168,7 +168,7 @@ without a second data path. `u` again flips back.
 The strip on view 1 is deliberately one line. `2` (or `⏎` on the strip) opens the people:
 
 ```
-┌ FLEETLENS ──────────────── ● LIVE 3s  12:41:07 · redash.paysera.net · [1]NODES [2]QUEUE [3]FLOW [4]TAPE ┐
+┌ FLEETLENS ──────────────── ● LIVE 3s  12:41:07 · redash.example.net · [1]NODES [2]QUEUE [3]FLOW [4]TAPE ┐
 │ queries              12 waiting   oldest 1m40s ▲   workers 6/6 busy ▲   failed/5m 2                       │
 │ scheduled_queries     3 waiting   oldest   22s     workers 2/2 busy     failed/5m 0                       │
 │ periodic              0 waiting   oldest    —      workers 0/1 idle     failed/5m 0                       │
@@ -343,7 +343,7 @@ renders `—` for that node — a partial column is a lie.
 
 A query is **runaway** when `elapsed_s ≥ 30` **or** `memory_bytes ≥ 0.8 × per-query limit`
 where the limit is `max_memory_usage` from `system.settings` on that node (fallback 9 GiB —
-Paysera's known ceiling — if unreadable). Runaway rows carry `✕` and the red tint.
+the fleet's known ceiling — if unreadable). Runaway rows carry `✕` and the red tint.
 
 ---
 
@@ -483,12 +483,12 @@ hash gives the real wait time; without it, show `—`.
 Redash writes a comment into every query it runs. Two regexes (same as FleetLens):
 
 ```
-person          : Username:\s*([^,]+)        → trim → "grigol.gankava@paysera.net"
+person          : Username:\s*([^,]+)        → trim → "grigol.gankava@example.net"
 redash_query_id : query_id:\s*(\d+)
 ```
 
-Display the person as the local part before `@` when the domain is `paysera.net`, full
-address otherwise. A user that is not `r_redash` and has no `Username:` shows only the user.
+Display the person as the local part before `@` when the domain is the organisation's own
+(`EMAIL_DOMAIN`), full address otherwise. A user that is not `r_redash` and has no `Username:` shows only the user.
 
 ---
 
@@ -637,11 +637,14 @@ or from a slope over the last minutes of it.
 
 ### Added
 
-- **Insights** (`src/insight.rs`), under the tree on view 1: hot nodes and whether a person or
-  the server holds them, memory forecasts, queries near their own limit with the time left,
-  the same Redash query running twice, a full queue explained by the workers stuck on runaway
-  queries, lag, unreachable and slow nodes, the heaviest user. `tab` focuses them, `⏎` jumps
-  to the row an insight is about. CPU is judged over 10 s, not one poll.
+- **Insights** (`src/insight.rs`), under the tree on view 1: one short line per subject in
+  trouble — a node, the Redash queue, a Redash query running twice — worst first, its subject in
+  a column of its own. A node's line is its worst finding (down, memory or CPU and who holds
+  it, a forecast, a query near its own limit, long queries, lag) with `+N more` for the rest; no
+  query is named twice. The drawer shows every finding of the chosen line with its numbers.
+  Merely interesting things (the heaviest user, slow polls, new nodes) are left to the screen
+  elsewhere, and a quiet fleet is one line. `tab` focuses them, `⏎` jumps to the row. CPU is
+  judged over 10 s, not one poll.
 - **History** (`src/history.rs`): four minutes of every node, user row, query and queue.
   Sparklines (each cell the worst moment of its slice, gaps left as gaps), trend arrows from a
   least-squares slope over 60 s, forecasts only once 30 s of history exist.
@@ -680,6 +683,9 @@ or from a slope over the last minutes of it.
   instead of one under every open node, bars on node rows on the same scale as the user rows
   under them, insights between the tree and the drawer. The drawer and the §7 degradation order
   are as specified.
+- **§6.4 the organisation's domain** is configuration — `EMAIL_DOMAIN`, or `email_domain:`
+  under `redash:` in the credential file — rather than written into the code. Without it every
+  person is shown by the whole address; FAKE=1 uses its own `example.net`.
 - **§9 nothing on disk** has one exception: the credential file, read only when the command
   line names it. `CH_USER` / `CH_PASSWORD` are required only when some server has no login of
   its own, and one of the two is never completed with a guess for the other.
@@ -689,8 +695,8 @@ or from a slope over the last minutes of it.
   anyone: by `is_local` (the row that is the server answering), else by the server's own
   `hostName()`, else by the seed's URL naming the host or its address, else by the seed's
   name resolving to the row's address — and a binding, once made, is kept. Matching by name
-  alone made a seed reached as `clickhouse1.paysera.net` and listed by its cluster as
-  `pay-ch-node-1.paysera.lan` two nodes, the second one unreachable from a laptop that cannot
+  alone made a seed reached as `clickhouse1.example.net` and listed by its cluster as
+  `pay-ch-node-1.example.lan` two nodes, the second one unreachable from a laptop that cannot
   resolve `.lan`. A seed keeps the name it was typed with (a bare IP takes the cluster's);
   the cluster's name is in the drawer. A host no seed is — a real other node — is reached by
   name when that resolves here, by its listed address when it does not.
@@ -700,9 +706,14 @@ or from a slope over the last minutes of it.
   answers nor matches, rows nobody has a login for are not added: they may be that seed, and
   would only say "add this host" about a host that is already there.
 - **Unreachable reasons** are said plainly (*name does not resolve from here (DNS)*,
-  *connection refused*, *no answer within 1.5 s*, *login refused for user monitor_ch2 — check
-  this server's user and password*) instead of reqwest's `error sending request for url (…)`
-  or ClickHouse's stack of exception text.
+  *connection refused*, *no answer within 1.5 s*) instead of reqwest's `error sending request
+  for url (…)` or ClickHouse's paragraph. A server that answers is not called unreachable: it
+  reads **no access** with the grant it is missing (*monitor needs SELECT on
+  system.asynchronous_metrics*), **login refused**, or **not polled** when there is no login
+  for it.
+- **A query's own limit** that it is already more than 10% past is not quoted ("1279% of its
+  limit"): the server is evidently holding it to something else, so no forecast is made from
+  it.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
 

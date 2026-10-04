@@ -77,45 +77,36 @@ fn nodes(app: &App, theme: &Theme, width: usize) -> Drawer {
     })
 }
 
-/// The chosen insight in full — the panel cuts it to one line — and where ⏎ will go.
+/// The chosen insight: what its line is about, and the numbers behind it — one finding a
+/// line, the line's own first.
 fn insight_detail(app: &App, theme: &Theme, width: usize) -> Drawer {
     let insights = app.insights();
     let Some(insight) = insights.get(app.insight_selection()) else {
         return (title("insights", theme), Vec::new());
     };
+    let goes = match &insight.subject {
+        crate::insight::Subject::Fleet => "",
+        crate::insight::Subject::Node(_) => " · ⏎ goes to the node",
+        crate::insight::Subject::Query { .. } => " · ⏎ goes to the query",
+        crate::insight::Subject::Queue => " · ⏎ opens the queue",
+    };
     let head = vec![
         Span::styled(format!("{} ", insight.level.glyph()), theme.sev(insight.level).add_modifier(Modifier::BOLD)),
+        Span::styled(insight.label.clone(), theme.accent().add_modifier(Modifier::BOLD)),
         Span::styled(
-            format!("insight {} of {}", app.insight_selection() + 1, insights.len()),
-            theme.strong(),
+            format!(" · {} of {}{goes}", app.insight_selection() + 1, insights.len()),
+            theme.muted(),
         ),
     ];
-    // Wrapped by hand into the drawer's lines: a sentence cut mid-word reads worse than a
-    // sentence on two lines.
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut current = Cells::new();
-    for (text, tone) in &insight.parts {
-        for word in text.split_inclusive(' ') {
-            let w = fmt::width(word);
-            if current.width() + w > width && current.width() > 0 {
-                lines.push(Line::from(std::mem::take(&mut current).into_spans()));
-            }
-            current.spans(tone_spans(&[(word.to_string(), *tone)], theme));
-        }
-    }
-    if current.width() > 0 {
-        lines.push(Line::from(current.into_spans()));
-    }
-    lines.truncate(2);
-    let target = match &insight.subject {
-        crate::insight::Subject::Fleet => "the fleet".to_string(),
-        crate::insight::Subject::Node(node) => format!("node {node}"),
-        crate::insight::Subject::Query { node, query_id, .. } => {
-            format!("query {} on {node}", fmt::truncate(query_id, 8))
-        }
-        crate::insight::Subject::Queue => "the Redash queue (view 2)".to_string(),
-    };
-    lines.push(muted_line(format!("⏎ goes to {target}"), theme, width));
+    let lines = insight
+        .details
+        .iter()
+        .map(|detail| {
+            let mut cells = Cells::new();
+            cells.spans(tone_spans(detail, theme));
+            cells.line_unpadded(width)
+        })
+        .collect();
     (head, lines)
 }
 
@@ -191,10 +182,9 @@ fn node_detail(view: &NodeView<'_>, app: &App, theme: &Theme, width: usize) -> D
     let mut lines = Vec::new();
     if !node.reachable {
         let mut cells = Cells::new();
-        let lead = if node.down_word() == "unreachable" { "the last poll failed" } else { "not polled" };
-        cells.push(lead, theme.sev(Severity::Crit));
-        if let Some(reason) = &node.unreachable_reason {
-            cells.push(format!(": {reason}"), theme.text());
+        cells.push(node.down_word(), theme.sev(Severity::Crit));
+        if let Some(detail) = node.down_detail() {
+            cells.push(format!(": {detail}"), theme.text());
         }
         cells.push(" · its numbers are unknown, not zero · dropped after 5 minutes if it leaves system.clusters", theme.muted());
         lines.push(cells.line_unpadded(width));
@@ -558,11 +548,18 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
         cells.push(" ✕ runaway", theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
     }
     let fraction = stat.limit_fraction();
-    let limit_sev = severity::limit_share(fraction);
+    let holds = stat.limit_holds();
     cells.push("   MEM ", theme.section());
     cells.push(fmt::bytes(query.memory_bytes), theme.strong());
-    cells.push(format!(" = {} of its {} limit ", fmt::pct0(fraction * 100.0), fmt::bytes(stat.limit)), theme.muted());
-    cells.spans(bar(Some(fraction * 100.0), 10, theme.bar_fill(limit_sev), theme));
+    if holds {
+        let limit_sev = severity::limit_share(fraction);
+        cells.push(format!(" = {} of its {} limit ", fmt::pct0(fraction * 100.0), fmt::bytes(stat.limit)), theme.muted());
+        cells.spans(bar(Some(fraction * 100.0), 10, theme.bar_fill(limit_sev), theme));
+    } else {
+        // Twelve times past the limit its settings show is not a query about to be killed: the
+        // server holds it to something else.
+        cells.push(format!(" · past the {} limit its settings show", fmt::bytes(stat.limit)), theme.muted());
+    }
     if let Some(rate) = history.and_then(|h| h.mem_rate()).filter(|r| r.abs() >= 1024.0 * 1024.0) {
         let growing = rate > 0.0;
         cells.push(
@@ -570,6 +567,7 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
             if growing { theme.sev(Severity::Warn) } else { theme.muted() },
         );
         if growing
+            && holds
             && let Some(eta) = eta_to(query.memory_bytes as f64, rate, stat.limit as f64)
                 .filter(|eta| *eta <= crate::insight::KILL_HORIZON_S)
         {

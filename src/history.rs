@@ -251,8 +251,6 @@ pub struct NodeHistory {
     pub running: Series,
     pub lag_s: Series,
     pub poll_ms: Series,
-    /// When this node first answered in this session (wall time of the snapshot).
-    pub first_seen: f64,
     /// Since when it has not been answering, if it is not.
     pub unreachable_since: Option<f64>,
 }
@@ -336,10 +334,7 @@ impl History {
         let mut seen_users: HashSet<(String, String)> = HashSet::new();
         for node in &view.nodes {
             let name = node.node.name.clone();
-            let entry = self.nodes.entry(name.clone()).or_insert_with(|| NodeHistory {
-                first_seen: t,
-                ..NodeHistory::default()
-            });
+            let entry = self.nodes.entry(name.clone()).or_default();
             if !node.node.reachable {
                 // A gap, not a zero: the sparkline shows nothing for the time it was gone.
                 entry.unreachable_since.get_or_insert(t);

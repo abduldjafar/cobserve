@@ -74,6 +74,9 @@ pub struct Config {
     /// Discovery runs every 60 s (§6.2).
     pub discover_every: Duration,
     pub fake: bool,
+    /// The organisation's own e-mail domain: people there are shown by the local part alone
+    /// (§6.4). `EMAIL_DOMAIN`, or `email_domain:` under `redash:` in the credential file.
+    pub email_domain: Option<String>,
     /// Worth saying, not worth refusing to start over — shown in the footer.
     pub warnings: Vec<String>,
 }
@@ -88,8 +91,8 @@ Usage: pay_monitoring [--credential FILE]
   -V, --version       the version
 
 Everything else comes from the environment (DESIGN.md §9): CH_SEED_URLS, CH_CLUSTER,
-CH_USER, CH_PASSWORD, CH_HTTP_PORT, REDASH_URL, REDASH_ADMIN_API_KEY, REDIS_URL, POLL_MS,
-THEME, NO_COLOR, and FAKE=1 for a generated fleet.
+CH_USER, CH_PASSWORD, CH_HTTP_PORT, REDASH_URL, REDASH_ADMIN_API_KEY, REDIS_URL,
+EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, and FAKE=1 for a generated fleet.
 ";
 
 /// The command line. It only says where the credential file is; the rest is environment.
@@ -169,7 +172,7 @@ impl std::fmt::Display for ConfigError {
                         "the fleet, a login per server (credentials.example.yaml)",
                     ),
                     (
-                        "CH_SEED_URLS=http://host:8123 CH_CLUSTER=ch_paysera CH_USER=u CH_PASSWORD=p pay_monitoring",
+                        "CH_SEED_URLS=http://host:8123 CH_CLUSTER=ch_cluster CH_USER=u CH_PASSWORD=p pay_monitoring",
                         "the fleet, one login for every server",
                     ),
                 ];
@@ -326,11 +329,12 @@ struct FileLogin {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, expecting = "url:, api_key: and redis_url:")]
+#[serde(deny_unknown_fields, expecting = "url:, api_key:, redis_url: and email_domain:")]
 struct FileRedash {
     url: Option<String>,
     api_key: Option<String>,
     redis_url: Option<String>,
+    email_domain: Option<String>,
 }
 
 /// A credential file that has been read and parsed, and the name it was given by.
@@ -517,6 +521,9 @@ impl Config {
             poll: Duration::from_millis(env.number("POLL_MS", 2000u64)?),
             discover_every: Duration::from_secs(60),
             fake,
+            // The fake fleet's people are at a domain of its own.
+            email_domain: pick(redash.and_then(|r| r.email_domain.as_ref()), "EMAIL_DOMAIN")
+                .or_else(|| fake.then(|| crate::fake::DOMAIN.to_string())),
             warnings: Vec::new(),
         })
     }
@@ -575,27 +582,28 @@ mod tests {
         let config = from(&[("FAKE", "1")]).expect("FAKE=1 runs with nothing configured");
         assert!(config.fake);
         assert!(config.clickhouse.seeds.is_empty());
+        assert_eq!(config.email_domain.as_deref(), Some(crate::fake::DOMAIN), "the fake fleet's own");
         assert_eq!(config.poll, Duration::from_millis(2000), "the default from §9");
         assert!(config.redash.url.is_none(), "Redash is optional");
     }
 
     #[test]
     fn a_login_per_server_in_the_seed_urls_needs_no_shared_one() {
-        let seeds = "http://mon1:Zq9-one@clickhouse1.paysera.net:8123, http://mon2:Zq9-two@clickhouse2.paysera.net:8123";
-        let config = from(&[("CH_SEED_URLS", seeds), ("CH_CLUSTER", "paysera")]).unwrap();
+        let seeds = "http://mon1:Zq9-one@clickhouse1.example.net:8123, http://mon2:Zq9-two@clickhouse2.example.net:8123";
+        let config = from(&[("CH_SEED_URLS", seeds), ("CH_CLUSTER", "ch_cluster")]).unwrap();
         assert_eq!(users(&config), [Some("mon1"), Some("mon2")]);
-        assert_eq!(config.clickhouse.seeds[0].url, "http://clickhouse1.paysera.net:8123");
+        assert_eq!(config.clickhouse.seeds[0].url, "http://clickhouse1.example.net:8123");
         assert!(config.clickhouse.default_login.is_none());
         assert!(!format!("{config:?}").contains("Zq9"), "Debug never shows a password");
 
         // One seed without a login: the shared one is required again.
         let mixed = "http://mon1:Zq9-one@clickhouse1:8123,http://clickhouse2:8123";
-        let err = from(&[("CH_SEED_URLS", mixed), ("CH_CLUSTER", "paysera")]).unwrap_err().to_string();
+        let err = from(&[("CH_SEED_URLS", mixed), ("CH_CLUSTER", "ch_cluster")]).unwrap_err().to_string();
         assert!(err.contains("CH_USER is required"), "{err}");
         assert!(!err.contains("Zq9"), "a password is never echoed: {err}");
 
         // CH_USER without CH_PASSWORD is not completed with a guess.
-        let err = from(&[("CH_SEED_URLS", mixed), ("CH_CLUSTER", "paysera"), ("CH_USER", "monitor")])
+        let err = from(&[("CH_SEED_URLS", mixed), ("CH_CLUSTER", "ch_cluster"), ("CH_USER", "monitor")])
             .unwrap_err()
             .to_string();
         assert!(err.contains("CH_PASSWORD is required"), "{err}");
@@ -603,7 +611,7 @@ mod tests {
         // With both, the seed without a login uses them and the other keeps its own.
         let config = from(&[
             ("CH_SEED_URLS", mixed),
-            ("CH_CLUSTER", "paysera"),
+            ("CH_CLUSTER", "ch_cluster"),
             ("CH_USER", "monitor"),
             ("CH_PASSWORD", "Zq9-shared"),
             ("REDASH_ADMIN_API_KEY", "Zq9-key"),
@@ -636,9 +644,9 @@ mod tests {
 
     #[test]
     fn a_seed_url_says_where_the_server_is_and_how_to_log_in() {
-        let seed = parse_seed("http://monitor:p@ss:w%2Fx@clickhouse1.paysera.net:8123/", 8123).unwrap();
-        assert_eq!(seed.url, "http://clickhouse1.paysera.net:8123", "the login is never part of the URL");
-        assert_eq!((seed.host.as_str(), seed.port), ("clickhouse1.paysera.net", 8123));
+        let seed = parse_seed("http://monitor:p@ss:w%2Fx@clickhouse1.example.net:8123/", 8123).unwrap();
+        assert_eq!(seed.url, "http://clickhouse1.example.net:8123", "the login is never part of the URL");
+        assert_eq!((seed.host.as_str(), seed.port), ("clickhouse1.example.net", 8123));
         let login = seed.credentials.unwrap();
         assert_eq!((login.user.as_str(), login.password.as_str()), ("monitor", "p@ss:w/x"));
 
@@ -666,17 +674,18 @@ mod tests {
     const FILE: &str = r#"
 # a comment
 clickhouse:
-  cluster: paysera
+  cluster: ch_cluster
   servers:
-    - url: http://clickhouse1.paysera.net:8123
+    - url: http://clickhouse1.example.net:8123
       user: mon1
       password: "Zq9-one"
-    - url: http://clickhouse2.paysera.net:8123
+    - url: http://clickhouse2.example.net:8123
       user: mon2
       password: Zq9-two
 redash:
   url: https://redash.example
   api_key: Zq9-key
+  email_domain: example.org
 "#;
 
     #[test]
@@ -685,11 +694,12 @@ redash:
         assert_eq!(users(&config), [Some("mon1"), Some("mon2")]);
         assert_eq!(password_of(&config, 0), "Zq9-one");
         assert_eq!(password_of(&config, 1), "Zq9-two");
-        assert_eq!(config.clickhouse.seeds[1].url, "http://clickhouse2.paysera.net:8123");
-        assert_eq!(config.clickhouse.cluster, "paysera", "the file can name the cluster");
+        assert_eq!(config.clickhouse.seeds[1].url, "http://clickhouse2.example.net:8123");
+        assert_eq!(config.clickhouse.cluster, "ch_cluster", "the file can name the cluster");
         assert!(config.clickhouse.default_login.is_none(), "nobody needs one");
         assert_eq!(config.redash.url.as_deref(), Some("https://redash.example"));
         assert_eq!(config.redash.admin_api_key.as_deref(), Some("Zq9-key"));
+        assert_eq!(config.email_domain.as_deref(), Some("example.org"));
         assert!(!format!("{config:?}").contains("Zq9"));
     }
 
@@ -697,7 +707,7 @@ redash:
     fn the_example_file_is_a_working_file() {
         let config = with_file(include_str!("../credentials.example.yaml"), &[]).unwrap();
         assert_eq!(users(&config), [Some("monitor_ch1"), Some("monitor_ch2")]);
-        assert_eq!(config.clickhouse.cluster, "ch_paysera");
+        assert_eq!(config.clickhouse.cluster, "ch_cluster");
         assert!(config.clickhouse.default_login.is_none() && config.redash.url.is_none(), "the rest is commented out");
     }
 
@@ -710,6 +720,7 @@ redash:
             ("CH_USER", "shared"),
             ("CH_PASSWORD", "p"),
             ("REDASH_URL", "https://redash.env"),
+            ("EMAIL_DOMAIN", "example.com"),
         ];
         let config = with_file(yaml, &env).unwrap();
         let hosts: Vec<&str> = config.clickhouse.seeds.iter().map(|s| s.host.as_str()).collect();
@@ -718,6 +729,7 @@ redash:
         assert_eq!(config.clickhouse.default_login.as_ref().unwrap().user, "shared");
         assert_eq!(config.clickhouse.cluster, "from-env");
         assert_eq!(config.redash.url.as_deref(), Some("https://redash.env"));
+        assert_eq!(config.email_domain.as_deref(), Some("example.com"));
 
         let yaml = format!("{yaml}  cluster: from-file\n  default_login:\n    user: file-default\n    password: p\n");
         let config = with_file(&yaml, &env).unwrap();

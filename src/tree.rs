@@ -603,7 +603,7 @@ mod tests {
             memory_bytes: 512 * 1024 * 1024,
             read_rows: 10,
             read_bytes: 1024,
-            sql: "/* Username: grigol.gankava@paysera.net, */ SELECT 2".into(),
+            sql: "/* Username: grigol.gankava@example.net, */ SELECT 2".into(),
             cpu_time_us: 1_800_000,
             ..crate::model::QueryRow::new("cafe0001", "r_redash")
         };

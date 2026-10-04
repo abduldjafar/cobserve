@@ -68,8 +68,12 @@ pub fn opt_dur(seconds: Option<u64>) -> String {
         .unwrap_or_else(|| "—".to_string())
 }
 
-/// A forecast: `~2m50s`. The tilde is the point — it is an extrapolation, not a promise.
+/// A forecast: `~2m50s`. The tilde is the point — it is an extrapolation, not a promise, and
+/// past ten minutes its seconds are noise: `~18m`.
 pub fn eta(seconds: f64) -> String {
+    if (600.0..3600.0).contains(&seconds) {
+        return format!("~{}m", (seconds / 60.0).round() as u64);
+    }
     format!("~{}", dur(seconds))
 }
 
@@ -176,6 +180,8 @@ mod tests {
         assert_eq!(dur(4_000_000.0), "46d07h", "uptimes read in days");
         assert_eq!(opt_dur(None), "—");
         assert_eq!(eta(170.0), "~2m50s");
+        assert_eq!(eta(1081.0), "~18m", "a forecast that far out is minutes, not seconds");
+        assert_eq!(eta(4000.0), "~1h06m");
         assert_eq!(rows(1_900_000_000), "1.9B");
         assert_eq!(count(1204), "1.2k");
         assert_eq!(rate(152.0 * 1024.0 * 1024.0), "152.0 MiB/s");

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Local ClickHouse 24.10 rig for developing pay_monitoring without touching the fleet.
 #
-#   ch-a   127.0.0.1:8123   native 9000   cluster ch_paysera, shard 1, replica paymon_ch1
-#   ch-b   127.0.0.1:8124   native 9002   cluster ch_paysera, shard 1, replica paymon_ch2
+#   ch-a   127.0.0.1:8123   native 9000   cluster ch_cluster, shard 1, replica paymon_ch1
+#   ch-b   127.0.0.1:8124   native 9002   cluster ch_cluster, shard 1, replica paymon_ch2
 #   ch-keeper                     9181   so system.replicas has rows and lag is a real number
 #
 #   ./dev/local-rig.sh up      start everything, render users, seed the testing database
@@ -193,7 +193,7 @@ cmd_env() {
   cat <<EOF
 export FAKE=
 export CH_SEED_URLS=http://127.0.0.1:8123,http://127.0.0.1:8124
-export CH_CLUSTER=ch_paysera
+export CH_CLUSTER=ch_cluster
 export CH_USER=monitor
 export CH_PASSWORD=$CH_MONITOR_PASSWORD
 export CH_HTTP_PORT=8123
@@ -215,7 +215,7 @@ cmd_credentials() {
 # A login per server, the way the fleet can have them: monitor_a exists only on ch-a and
 # monitor_b only on ch-b, so a login sent to the wrong node is refused.
 clickhouse:
-  cluster: ch_paysera
+  cluster: ch_cluster
   servers:
     - url: http://127.0.0.1:8123
       user: monitor_a

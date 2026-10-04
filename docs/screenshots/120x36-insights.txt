@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 16:40:34 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 02:16:19 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
 │ REDASH  13 waiting    ▇████ · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues  [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
@@ -14,23 +14,23 @@
 │  ▸ clickhouse2       ▃▅▆▆▃▅▆▆▃▅   41.8%  █████▉          26.7/64   28.6%  ████            4.6/16        2      18s   │
 │  ▸ clickhouse5 NEW   ▆▆▃▄▆▆▃▄▆▆   37.6%↗ █████▎          24.0/64    4.0%  ▌               0.6/16        0        —   │
 │  ▸ 4 healthy nodes folded · ch4 ch6 ch8 ch9 · all ≤ 22%                                                    ␣ unfold  │
-│ ─ INSIGHTS 2 ✖ 8 ▲ 3 ● · ↑↓ choose · ⏎ go there · tab back ───────────────────────────────────────────────────────── │
-│  ✖ clickhouse3 memory 93.1%, CPU 93.4% — server/caches/merges hold 47% of memory and 37% of CPU · 2 runaways · only… │
-│ ▌✖ Redash queries: 13 waiting, oldest 3m43s · workers 6/6 busy — 2 on runaway queries (clickhouse-bi, clickhouse3) … │
-│  ▲ j.petrova's query on clickhouse-bi at 88% of its 24.0 GiB memory limit · +209.7 KiB/s                             │
-│  ▲ r.simonyte's query on clickhouse7 at 80% of its 64.0 GiB memory limit · +314.6 KiB/s                              │
-│  ▲ clickhouse-bi memory climbing +1.8%/min — full in ~18m01s at this rate                                            │
-│  ▲ 4 runaway queries · longest r.simonyte 8m56s on clickhouse7 (SELECT · wallet.ledger)                              │
-│  ▲ Redash scheduled_queries: 3 waiting, oldest 22s · workers 2/2 busy — none of them stuck in ClickHouse             │
-│  ▲ Redash #7711 is running 2× (clickhouse-bi, clickhouse2) by m.kairys — 22.2 GiB together                           │
-│  ▲ Redash #8585 is running 2× (clickhouse3, clickhouse-bi) by j.petrova — 29.4 GiB together                          │
-│  ▲ clickhouse7 replica lag 12s — reads there may be stale                                                            │
-│  ● Heaviest user: r.simonyte — 51.4 GiB on 1 node · 1 query (6.7% of fleet memory)                                   │
-│  ● clickhouse5 joined the fleet 3m36s ago                                                                            │
-│  ● clickhouse7 is slow to answer: 955 ms per poll                                                                    │
-│ ─ ✖ insight 2 of 13 ──────────────────────────────────────────────────────────────────────────────────────────────── │
-│ Redash queries: 13 waiting, oldest 3m43s · workers 6/6 busy — 2 on runaway queries (clickhouse-bi, clickhouse3) ·    │
-│ growing +2/min                                                                                                       │
-│ ⏎ goes to the Redash queue (view 2)                                                                                  │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ─ INSIGHTS · ↑↓ choose · ⏎ go there · tab back ───────────────────────────────────────────────────────────────────── │
+│  ✖ clickhouse3    memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more                                    │
+│ ▌✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 6 workers on long queries  +1 more                       │
+│  ▲ clickhouse-bi  memory 67.2% ↗ full in ~18m · j.petrova holds 33%  +1 more                                         │
+│  ▲ clickhouse7    r.simonyte's query at 80% of its memory limit  +1 more                                             │
+│  ▲ Redash #7711   running 2× · m.kairys                                                                              │
+│  ▲ Redash #8585   running 2× · j.petrova                                                                             │
+│ ─ ✖ Redash · 2 of 6 · ⏎ opens the queue ──────────────────────────────────────────────────────────────────────────── │
+│ queries: 13 waiting, oldest 3m43s · workers 6/6 busy · growing +2/min                                                │
+│ scheduled_queries: 3 waiting, oldest 22s · workers 2/2 busy                                                          │
+│ workers waiting on long ClickHouse queries: clickhouse-bi, clickhouse3                                               │
 │  ↑↓  choose   ⏎  go there   tab  back to the tree   p  pause   ?  help   q  quit                                     │
 ╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

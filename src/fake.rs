@@ -10,6 +10,9 @@ use std::time::{Duration, SystemTime};
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+/// The e-mail domain of the fake fleet's people; FAKE=1 shows them by their local part.
+pub const DOMAIN: &str = "example.net";
+
 /// The node's memory and CPU percentage at `t` seconds into the session: its template's
 /// value, moving. Smooth waves for most nodes; clickhouse3 climbs steadily and drops back when
 /// its caches are "evicted", every three minutes — the shape a real hot node has, and what
@@ -74,7 +77,7 @@ impl QueryTemplate {
     fn sql_with_comment(&self) -> String {
         match (self.person, self.redash_id) {
             (Some(person), Some(id)) => format!(
-                "/* Application: Redash */ /* Username: {person}@paysera.net, Redash query_id: {id}, Redash: 10.1.0 */ {}",
+                "/* Application: Redash */ /* Username: {person}@{DOMAIN}, Redash query_id: {id}, Redash: 10.1.0 */ {}",
                 self.sql
             ),
             _ => self.sql.to_string(),
@@ -86,7 +89,7 @@ const AML: &str = "WITH BankRecord AS (\n  SELECT BillOpId, Bank,\n    multiIf(A
 const GATEWAY: &str = "SELECT\n  toDate(ts) AS d,\n  countIf(status = 'error') AS errors,\n  count() AS total\nFROM gateway.transfers\nWHERE ts >= now() - INTERVAL 1 DAY\nGROUP BY d ORDER BY d";
 const FX: &str = "SELECT currency, sum(amount) AS volume, uniqExact(merchant_id) AS merchants\nFROM statistics.fx_exposure\nWHERE event_date = today()\nGROUP BY currency";
 const JULY_CLOSE: &str = "SELECT merchant_id, sum(amount) AS july, sum(if(month = 7, amount, 0)) AS delta\nFROM wallet.ledger\nGROUP BY merchant_id\nHAVING delta > 1000\nORDER BY delta DESC";
-const CLUSTER_HISTORY: &str = "SELECT host_name, max(absolute_delay) AS lag, count() AS parts\nFROM clusterAllReplicas('ch_paysera', system.parts)\nGROUP BY host_name";
+const CLUSTER_HISTORY: &str = "SELECT host_name, max(absolute_delay) AS lag, count() AS parts\nFROM clusterAllReplicas('ch_cluster', system.parts)\nGROUP BY host_name";
 const AIRFLOW_ETL: &str = "INSERT INTO statistics.daily_rollup SELECT toDate(event_time) AS d, user, sum(amount) FROM accounting.raw GROUP BY d, user";
 
 /// Per node: capacity, its own share of that capacity, and the queries running on it.
@@ -758,7 +761,7 @@ impl FakeSource {
             queues,
             jobs,
             names_available: true,
-            host: Some("redash.paysera.net".to_string()),
+            host: Some("redash.example.net".to_string()),
             taken_at: self.epoch + self.queue_tick,
         }
     }

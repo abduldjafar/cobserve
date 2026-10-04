@@ -23,17 +23,33 @@ on top of it and are listed in `DESIGN.md` §13.
 
 ### Insights
 
-Each poll the screen is read out loud, worst first, each line pointing at its row (`tab`,
-then `⏎` jumps there):
+One short line for each thing in trouble, worst first: a node, the Redash queue, a Redash
+query running twice. A node with several problems is still one line — its worst, then
+`+N more`. When all is well there is one line that says so.
 
-- a hot node, and whether a **person** or the **server itself** (caches, merges) holds it,
-  with how much memory is left against one more query's limit;
-- memory **climbing** steadily enough to run out — *"full in ~3m30s at this rate"*;
-- a query close to **its own** memory limit (read from its `Settings`, not the monitor's) —
-  *"+43 MiB/s → killed in ~42s"*;
-- the same **Redash query running twice** at once;
-- a **full Redash queue explained**: how many workers are stuck on runaway ClickHouse queries;
-- replica lag, unreachable or slow nodes, nodes that joined, the heaviest user.
+```
+✖ clickhouse5     no access · monitor needs SELECT on system.asynchronous_metrics
+✖ clickhouse3     memory 91.2% · CPU 93.5% · the server itself holds 46%  +1 more
+▲ clickhouse-bi   j.petrova's query at 88% of its memory limit  +2 more
+▲ Redash          queries: 16 waiting · oldest 1m49s · 2 of 6 workers on long queries
+▲ Redash #8585    running 2× · j.petrova
+```
+
+`tab` picks a line and the drawer shows the numbers behind it — who holds what, the forecast,
+the free memory against one more query, every finding about that node — and `⏎` goes to the
+row. What a line can say:
+
+- a node without numbers: **unreachable**, **no access** (it answered, but the login lacks a
+  grant — the grant is named), **login refused**, or **not polled** (no login for it);
+- memory or CPU hot, and whether a **person** or **the server itself** holds it;
+- memory **climbing** to full — *"↗ full in ~3m30s"*;
+- a query close to **its own** memory limit, and when ClickHouse will kill it;
+- long queries, replica lag;
+- the Redash queue backing up, and whether its workers are stuck on long ClickHouse queries;
+- the same Redash query running twice.
+
+The heaviest user, slow polls and new nodes are on screen elsewhere (`u`, the drawer, the tape)
+and are not repeated here.
 
 ### Reading the screen
 
@@ -41,7 +57,7 @@ then `⏎` jumps there):
 |---|---|
 | `✖` `▲` | critical (red) · warning (amber), by `DESIGN.md` §7 |
 | `✕` | runaway query: ≥ 30 s, or ≥ 80% of its own memory limit |
-| `↯` | node not answering — its numbers are unknown, never zero |
+| `↯` | node without numbers — unreachable, no access, login refused or not polled; unknown, never zero |
 | `↗ ↑ ↘ ↓` | rising · rising fast · falling, over the last minute |
 | `▁▂▃▅▇` | the last 4 minutes, each cell its worst moment, coloured by severity |
 | `NEW` | joined the fleet during this session |
@@ -59,7 +75,7 @@ eval "$(./dev/local-rig.sh env)" && cargo run --release
 
 cargo run --release -- --credential credentials.yaml     # the fleet, a login per server
 
-CH_SEED_URLS=http://ch-node-1:8123 CH_CLUSTER=ch_paysera \
+CH_SEED_URLS=http://ch-node-1:8123 CH_CLUSTER=ch_cluster \
 CH_USER=monitor CH_PASSWORD=… cargo run --release        # the fleet, one login for all
 ```
 
@@ -70,12 +86,12 @@ on the command line. [`credentials.example.yaml`](credentials.example.yaml) is t
 
 ```yaml
 clickhouse:
-  cluster: ch_paysera
+  cluster: ch_cluster
   servers:
-    - url: http://clickhouse1.paysera.net:8123
+    - url: http://clickhouse1.example.net:8123
       user: monitor_ch1
       password: "…"
-    - url: http://clickhouse2.paysera.net:8123
+    - url: http://clickhouse2.example.net:8123
       user: monitor_ch2
       password: "…"
 ```
@@ -94,7 +110,7 @@ pay_monitoring --credential credentials.yaml     # or: cargo run --release -- --
   YAML's own rules apply: quote one that starts with a quote, `#`, `{`, `[`, `&`, `*`, `!`, `|`,
   `>`, `%` or `@`, or holds ` #`.
 - What the file says wins over the environment; `CH_SEED_URLS` adds servers to its list. An
-  optional `redash:` section holds `url`, `api_key` and `redis_url`.
+  optional `redash:` section holds `url`, `api_key`, `redis_url` and `email_domain`.
 - A wrong password shows on its node as *login refused for user monitor_ch2* — the user,
   never the password. A file other users can read gets a warning in the footer. A mistake in
   the file is reported with its key and line, never with the value in it.
@@ -113,6 +129,7 @@ have a user the other one does not know.
 | `CH_HTTP_PORT` | HTTP port for discovered hosts | `8123` |
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — the strip says *not configured* |
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |
+| `EMAIL_DOMAIN` | your organisation's e-mail domain: people there are shown by name alone (`grigol.gankava`), everyone else by the whole address | unset — every address whole |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `THEME` | `dark`, `light` or `mono` | `dark` |
 | `NO_COLOR` | any value: no colour at all (glyphs still carry severity) | unset |

@@ -7,7 +7,7 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
-/// `Username: grigol.gankava@paysera.net,` → the address. The comma of the surrounding
+/// `Username: grigol.gankava@example.net,` → the address. The comma of the surrounding
 /// comment is not part of the capture, which is why the character class stops at it.
 fn username_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -19,8 +19,25 @@ fn redash_query_id_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"query_id:\s*(\d+)").expect("static regex"))
 }
 
-/// Paysera's own domain, shown as the bare local part (`grigol.gankava`).
-const PAYSERA_DOMAIN: &str = "paysera.net";
+/// The organisation's own e-mail domain — `EMAIL_DOMAIN`, or `email_domain:` under `redash:`
+/// in the credential file. Its people are shown by the local part alone (`grigol.gankava`);
+/// without it every address is shown whole. Set once at startup, before any source runs.
+static HOME_DOMAIN: OnceLock<Option<String>> = OnceLock::new();
+
+pub fn set_home_domain(domain: Option<String>) {
+    let domain = domain
+        .map(|d| d.trim().trim_start_matches('@').to_string())
+        .filter(|d| !d.is_empty());
+    let _ = HOME_DOMAIN.set(domain);
+}
+
+fn home_domain() -> Option<&'static str> {
+    // Tests run against the fake fleet, whose people are at its domain — as FAKE=1 does.
+    if cfg!(test) {
+        return Some(crate::fake::DOMAIN);
+    }
+    HOME_DOMAIN.get().and_then(|d| d.as_deref())
+}
 
 /// The ClickHouse user that means "somebody through Redash" — the only one worth trying to
 /// resolve to a person at all (§6.4).
@@ -55,13 +72,15 @@ pub fn redash_query_id(sql: &str) -> Option<u64> {
         .and_then(|m| m.as_str().trim().parse::<u64>().ok())
 }
 
-/// Display form of a person: the local part for @paysera.net, the whole address otherwise,
+/// Display form of a person: the local part at the home domain, the whole address otherwise,
 /// because a partner's domain is the only way to tell two grigols apart.
 pub fn display_person(address: &str) -> String {
-    match address.split_once('@') {
-        Some((local, domain)) if domain.eq_ignore_ascii_case(PAYSERA_DOMAIN) => {
-            local.to_string()
-        }
+    display_person_at(address, home_domain())
+}
+
+fn display_person_at(address: &str, home: Option<&str>) -> String {
+    match (address.split_once('@'), home) {
+        (Some((local, domain)), Some(home)) if domain.eq_ignore_ascii_case(home) => local.to_string(),
         _ => address.to_string(),
     }
 }
@@ -82,27 +101,34 @@ mod tests {
     // Attribution as §6.4 stores it on a row is `model::attribution_from_sql`, which combines
     // these regexes with what the server already extracted. The pieces are tested here.
 
-    const REDASH_COMMENT: &str = "/* Application: Redash */ /* Username: grigol.gankava@paysera.net, Redash query_id: 7438, Redash: */";
+    const REDASH_COMMENT: &str = "/* Application: Redash */ /* Username: grigol.gankava@example.net, Redash query_id: 7438, Redash: */";
 
     #[test]
     fn person_from_a_real_shaped_comment() {
         assert_eq!(
             person_address(REDASH_COMMENT).as_deref(),
-            Some("grigol.gankava@paysera.net")
+            Some("grigol.gankava@example.net")
         );
-        assert_eq!(display_person("grigol.gankava@paysera.net"), "grigol.gankava");
+        assert_eq!(display_person("grigol.gankava@example.net"), "grigol.gankava");
     }
 
     #[test]
     fn person_stops_at_the_trailing_comma() {
-        let sql = "/* Username: j.petrova@paysera.net, Redash query_id: 8585 */ SELECT 1";
-        assert_eq!(person_address(sql).as_deref(), Some("j.petrova@paysera.net"));
+        let sql = "/* Username: j.petrova@example.net, Redash query_id: 8585 */ SELECT 1";
+        assert_eq!(person_address(sql).as_deref(), Some("j.petrova@example.net"));
     }
 
     #[test]
     fn person_without_a_comma_still_parses() {
-        let sql = "/* Username: m.kairys@paysera.net */";
-        assert_eq!(person_address(sql).as_deref(), Some("m.kairys@paysera.net"));
+        let sql = "/* Username: m.kairys@example.net */";
+        assert_eq!(person_address(sql).as_deref(), Some("m.kairys@example.net"));
+    }
+
+    #[test]
+    fn without_a_home_domain_every_address_is_whole() {
+        assert_eq!(display_person_at("grigol.gankava@example.net", None), "grigol.gankava@example.net");
+        assert_eq!(display_person_at("grigol.gankava@Example.NET", Some("example.net")), "grigol.gankava");
+        assert_eq!(display_person_at("grigol.gankava", Some("example.net")), "grigol.gankava", "no @ at all");
     }
 
     #[test]
@@ -126,10 +152,9 @@ mod tests {
     #[test]
     fn redash_query_id_present_and_absent() {
         assert_eq!(redash_query_id(REDASH_COMMENT), Some(7438));
-        assert_eq!(redash_query_id("/* Username: j.petrova@paysera.net */"), None);
+        assert_eq!(redash_query_id("/* Username: j.petrova@example.net */"), None);
         assert_eq!(redash_query_id("SELECT 1"), None);
     }
-
 
     #[test]
     fn labels_fall_back_to_the_bare_user() {
@@ -140,7 +165,7 @@ mod tests {
 
     #[test]
     fn multiple_username_comments_take_the_first() {
-        let sql = "/* Username: first@paysera.net, */ /* Username: second@paysera.net, */";
-        assert_eq!(person_address(sql).as_deref(), Some("first@paysera.net"));
+        let sql = "/* Username: first@example.net, */ /* Username: second@example.net, */";
+        assert_eq!(person_address(sql).as_deref(), Some("first@example.net"));
     }
 }

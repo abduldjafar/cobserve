@@ -54,7 +54,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         // The strip above already says why; repeating it would be noise, not information.
         lines.push(Line::from(Span::styled(
             if app.queue.error.as_deref() == Some(crate::model::QUEUE_NOT_CONFIGURED) {
-                "  Redash is not configured: set REDASH_URL and REDASH_ADMIN_API_KEY (REDIS_URL for the names of waiting jobs)"
+                "  Redash is not configured: add redash: url, api_key (and redis_url, for the names of waiting jobs) to the --credential file, or set REDASH_URL, REDASH_ADMIN_API_KEY and REDIS_URL"
             } else {
                 "  no queue data — the strip above says why"
             },

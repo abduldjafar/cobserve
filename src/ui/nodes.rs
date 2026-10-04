@@ -850,8 +850,8 @@ fn unreachable_cells(cells: &mut Cells, view: &NodeView<'_>, app: &App, theme: &
     if let Some(for_s) = since {
         cells.push(format!(" for {}", fmt::dur(for_s)), theme.sev(Severity::Crit));
     }
-    if let Some(reason) = &view.node.unreachable_reason {
-        cells.push(format!(" · {reason}"), theme.muted());
+    if let Some(detail) = view.node.down_detail() {
+        cells.push(format!(" · {detail}"), theme.muted());
     }
     cells.push(" · numbers unknown, not zero", theme.faint());
 }
@@ -887,13 +887,6 @@ pub fn draw_insights(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, in
         "INSIGHTS",
         if focused { theme.accent().add_modifier(Modifier::BOLD) } else { theme.section() },
     )];
-    for level in [Severity::Crit, Severity::Warn, Severity::Info] {
-        let n = insights.iter().filter(|i| i.level == level).count();
-        if n > 0 {
-            title.push(Span::raw(" "));
-            title.push(Span::styled(format!("{n} {}", level.glyph()), theme.sev(level)));
-        }
-    }
     let hint = if focused {
         " · ↑↓ choose · ⏎ go there · tab back"
     } else if insights.len() > lines_room {
@@ -921,6 +914,13 @@ pub fn draw_insights(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, in
     let mut lines: Vec<Line<'static>> = Vec::new();
     let visible: Vec<(usize, &Insight)> = insights.iter().enumerate().skip(offset).take(lines_room).collect();
     let hidden = insights.len().saturating_sub(offset + visible.len());
+    // What each line is about, in a column of its own: the lines read as a table.
+    let label_width = visible
+        .iter()
+        .map(|(_, insight)| fmt::width(&insight.label))
+        .max()
+        .unwrap_or(0)
+        .min((width / 3).max(8));
     for (n, (index, insight)) in visible.iter().enumerate() {
         let last_line = n + 1 == lines_room;
         if last_line && hidden > 0 && !focused {
@@ -934,6 +934,7 @@ pub fn draw_insights(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, in
         let mut cells = Cells::new();
         cells.push(if is_selected { "▌" } else { " " }, theme.accent());
         cells.push(format!("{} ", insight.level.glyph()), theme.sev(insight.level).add_modifier(Modifier::BOLD));
+        cells.push(format!("{}  ", fmt::pad(&insight.label, label_width)), theme.accent().add_modifier(Modifier::BOLD));
         cells.spans(tone_spans(&insight.parts, theme));
         lines.push(cells.line(width, if is_selected { theme.selected() } else { Style::default() }));
     }
