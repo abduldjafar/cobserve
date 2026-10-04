@@ -341,7 +341,7 @@ impl Watch {
                     out.push(event(
                         Severity::Crit,
                         Kind::Node,
-                        Text::new().node(&name).plain(" ").sev("unreachable", Severity::Crit).muted(" at start"),
+                        Text::new().node(&name).plain(" ").sev(node.node.down_word(), Severity::Crit).muted(" at start"),
                         node_subject(&name),
                     ));
                 }
@@ -517,7 +517,7 @@ fn node_changes(before: &NodeState, now: &NodeState, node: &NodeView<'_>, at: f6
                 Text::new()
                     .node(name)
                     .plain(" ")
-                    .sev("unreachable", Severity::Crit)
+                    .sev(node.node.down_word(), Severity::Crit)
                     .muted(match &node.node.unreachable_reason {
                         Some(reason) => format!(" — {reason}"),
                         None => String::new(),

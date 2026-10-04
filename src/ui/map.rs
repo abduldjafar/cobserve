@@ -114,7 +114,10 @@ fn tile(frame: &mut Frame, app: &App, theme: &Theme, rect: Rect, node: &NodeView
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     if !node.node.reachable {
-        lines.push(Line::from(Span::styled(" ↯ unreachable", theme.sev(Severity::Crit).add_modifier(Modifier::BOLD))));
+        lines.push(Line::from(Span::styled(
+            format!(" ↯ {}", node.node.down_word()),
+            theme.sev(Severity::Crit).add_modifier(Modifier::BOLD),
+        )));
         if let Some(reason) = &node.node.unreachable_reason {
             lines.push(Line::from(Span::styled(format!(" {}", fmt::truncate(reason, width - 1)), theme.muted())));
         }

@@ -65,7 +65,21 @@ pub struct NodeSnapshot {
     pub poll_ms: Option<u32>,
 }
 
+/// Why a node has no numbers when it was never asked: a host only discovery knows, with a
+/// login per server and no default login to use for it. No server is sent another's password.
+pub const NO_LOGIN: &str = "no login for this host — add it to the credential file, or set a default login";
+
 impl NodeSnapshot {
+    /// The word for a node without numbers: `unreachable`, or `not polled` when it was never
+    /// asked because there is no login for it — a gap in the configuration, not an outage.
+    pub fn down_word(&self) -> &'static str {
+        if self.unreachable_reason.as_deref() == Some(NO_LOGIN) {
+            "not polled"
+        } else {
+            "unreachable"
+        }
+    }
+
     /// A node the poll could not reach: it stays in the list (§2.6) with unknown numbers
     /// rather than zeros, so nothing renders a fake `0%`.
     pub fn unreachable(name: &str, reason: impl Into<String>) -> Self {

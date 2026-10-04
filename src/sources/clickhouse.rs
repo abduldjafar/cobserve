@@ -4,11 +4,12 @@
 //! up the fleet. A node that does not answer comes back as `NodeSnapshot::unreachable` with no
 //! numbers — never as zeros (§2.6).
 
-use crate::config::ClickHouseConfig;
-use crate::model::{attribution_from_sql, FleetSnapshot, NodeSnapshot, QueryRow};
+use crate::config::{ClickHouseConfig, Credentials};
+use crate::model::{attribution_from_sql, FleetSnapshot, NodeSnapshot, QueryRow, NO_LOGIN};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashSet;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 /// §6: 1.5 s per request. The poll interval is longer, so one slow node misses a poll instead
@@ -134,8 +135,11 @@ pub struct NodeTarget {
     pub port: u16,
     pub shard: u32,
     pub replica: u32,
-    /// Came from `CH_SEED_URLS` rather than from discovery.
+    /// Came from the credential file or `CH_SEED_URLS` rather than from discovery.
     pub seed: bool,
+    /// Its own login (from the credential file or its URL), or the default login; `None` when
+    /// neither exists for this host, which is then reported instead of polled.
+    pub credentials: Option<Credentials>,
 }
 
 /// One row of `system.clusters`, as one seed saw it.
@@ -289,18 +293,26 @@ struct ClusterRow {
 
 pub struct ClickHouseSource {
     client: reqwest::Client,
-    user: String,
-    password: String,
+    /// The default login (`default_login` in the credential file, or `CH_USER` /
+    /// `CH_PASSWORD`), for seeds without one of their own and for discovered hosts. `None`
+    /// when every seed carries its own.
+    default_login: Option<Credentials>,
     cluster: String,
     http_port: u16,
     /// Targets keyed by node name; the fleet is seeds ∪ discovered (§6.2).
     targets: Vec<NodeTarget>,
-    /// Cleared the first time a server refuses the query settings: a read-only user cannot
-    /// set `max_execution_time`, so this is the normal path in production, not an edge case.
-    settings_ok: AtomicBool,
-    /// Cleared the first time a server refuses the extended `system.processes` columns; from
-    /// then on §6.1's own statement is used.
-    extended_processes: AtomicBool,
+    /// Servers (by URL) that refused the query settings: a read-only user cannot set
+    /// `max_execution_time`, so this is the normal path in production, not an edge case. Per
+    /// server, because with a login per server one can be read-only and the next not.
+    settings_refused: Mutex<HashSet<String>>,
+    /// Servers that refused the extended `system.processes` columns (an older version); they
+    /// get §6.1's own statement from then on.
+    basic_processes: Mutex<HashSet<String>>,
+    /// The name each server (by URL) gave in `X-ClickHouse-Server-Display-Name` — its host
+    /// name unless configured otherwise. ClickHouse sends it with every answer, a refused
+    /// login included, so it can say which cluster row a seed is when the seed would not
+    /// answer the discovery query.
+    server_names: Mutex<HashMap<String, String>>,
 }
 
 impl ClickHouseSource {
@@ -311,26 +323,20 @@ impl ClickHouseSource {
             .map_err(|e| format!("http client: {e}"))?;
 
         // A seed is still a node even when it is not in any cluster (§6.2), so it joins the
-        // fleet under its own host name.
+        // fleet under its own host name — logging in with its own login when it has one, with
+        // the default login otherwise.
         let mut targets: Vec<NodeTarget> = config
             .seeds
             .iter()
-            .filter_map(|seed| {
-                let (scheme, rest) = seed.split_once("://")?;
-                let authority = rest.split('/').next()?;
-                let (host, port) = match authority.rsplit_once(':') {
-                    Some((host, port)) => (host.to_string(), port.parse().ok()?),
-                    None => (authority.to_string(), config.http_port),
-                };
-                Some(NodeTarget {
-                    name: host.clone(),
-                    url: format!("{scheme}://{authority}"),
-                    host,
-                    port,
-                    shard: 0,
-                    replica: 0,
-                    seed: true,
-                })
+            .map(|seed| NodeTarget {
+                name: seed.host.clone(),
+                url: seed.url.clone(),
+                host: seed.host.clone(),
+                port: seed.port,
+                shard: 0,
+                replica: 0,
+                seed: true,
+                credentials: seed.credentials.clone().or_else(|| config.default_login.clone()),
             })
             .collect();
 
@@ -351,13 +357,13 @@ impl ClickHouseSource {
 
         Ok(Self {
             client,
-            user: config.user.clone(),
-            password: config.password.clone(),
+            default_login: config.default_login.clone(),
             cluster: config.cluster.clone(),
             http_port: config.http_port,
             targets,
-            settings_ok: AtomicBool::new(true),
-            extended_processes: AtomicBool::new(true),
+            settings_refused: Mutex::new(HashSet::new()),
+            basic_processes: Mutex::new(HashSet::new()),
+            server_names: Mutex::new(HashMap::new()),
         })
     }
 
@@ -376,14 +382,10 @@ impl ClickHouseSource {
         let mut errors = Vec::new();
         let mut answers: Vec<SeedAnswer> = Vec::new();
 
-        let seed_urls: Vec<String> = self
-            .targets
-            .iter()
-            .filter(|t| t.seed)
-            .map(|t| t.url.clone())
-            .collect();
-        for url in seed_urls {
-            match self.post(&url, &sql).await {
+        let seed_targets: Vec<NodeTarget> = self.targets.iter().filter(|t| t.seed).cloned().collect();
+        for seed in seed_targets {
+            let url = seed.url.clone();
+            match self.post(&seed, &sql).await {
                 Ok(body) => match parse_clusters(&body) {
                     Ok(hosts) => answers.push(SeedAnswer { url, hosts }),
                     Err(e) => errors.push(format!("{url}: {e}")),
@@ -426,18 +428,22 @@ impl ClickHouseSource {
             })
             .collect();
         let resolved = join_all(seeds.iter().map(|(_, host, port)| addresses(host.clone(), *port))).await;
-        let seed_addresses: HashMap<String, Vec<String>> = seeds
-            .into_iter()
-            .zip(resolved)
-            .map(|((url, _, _), found)| (url, found))
-            .collect();
+        let clues = SeedClues {
+            addresses: seeds
+                .into_iter()
+                .zip(resolved)
+                .map(|((url, _, _), found)| (url, found))
+                .collect(),
+            names: self.server_names.lock().map(|names| names.clone()).unwrap_or_default(),
+        };
 
         merge_discovered(
             &mut self.targets,
             &answers,
             self.http_port,
             &|name| resolvable.contains(name),
-            &seed_addresses,
+            &clues,
+            self.default_login.as_ref(),
         );
         errors
     }
@@ -465,9 +471,9 @@ impl ClickHouseSource {
 
     async fn poll_node(&self, target: &NodeTarget) -> Result<NodeSnapshot, String> {
         let started = std::time::Instant::now();
-        let capacity = self.post(&target.url, CAPACITY_SQL).await?;
+        let capacity = self.post(target, CAPACITY_SQL).await?;
         let row: CapacityRow = parse_one_row(&capacity)?;
-        let queries: Vec<QueryRow> = parse_processes(&self.processes(&target.url).await);
+        let queries: Vec<QueryRow> = parse_processes(&self.processes(target).await);
         let poll_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
 
         // §6.1: the denominator is the fallback chain's answer, and 0 means "we do not know",
@@ -504,86 +510,118 @@ impl ClickHouseSource {
     }
 
     /// The running queries, with the extended columns while the server accepts them.
-    async fn processes(&self, url: &str) -> String {
-        if self.extended_processes.load(Ordering::Relaxed) {
-            match self.post(url, PROCESSES_SQL).await {
+    async fn processes(&self, target: &NodeTarget) -> String {
+        let basic = self
+            .basic_processes
+            .lock()
+            .map(|set| set.contains(&target.url))
+            .unwrap_or(false);
+        if !basic {
+            match self.post(target, PROCESSES_SQL).await {
                 Ok(body) => return body,
                 // An unknown column is a property of the server, not of this poll: §6.1's
                 // statement for the rest of the session. Any other error only costs this poll
                 // its extras — the basic statement still gets the rows.
                 Err(e) if e.starts_with("HTTP ") => {
-                    if refuses_columns(&e) {
-                        self.extended_processes.store(false, Ordering::Relaxed);
+                    if refuses_columns(&e)
+                        && let Ok(mut set) = self.basic_processes.lock()
+                    {
+                        set.insert(target.url.clone());
                     }
                 }
                 // A timeout or a refused connection: the basic statement would fail the same way.
                 Err(_) => return String::new(),
             }
         }
-        self.post(url, PROCESSES_SQL_BASIC).await.unwrap_or_default()
+        self.post(target, PROCESSES_SQL_BASIC).await.unwrap_or_default()
     }
 
-    /// POST the SQL as the body (§12: the HTTP interface truncates long GET query strings).
-    async fn post(&self, url: &str, sql: &str) -> Result<String, String> {
-        let settings = if self.settings_ok.load(Ordering::Relaxed) {
-            SETTINGS
-        } else {
-            SETTINGS_READONLY_FRIENDLY
-        };
-        let endpoint = format!("{url}/?{settings}&default_format=JSONEachRow");
-        let response = self
-            .client
-            .post(&endpoint)
-            // §9: credentials go in headers, and are never logged.
-            .header("X-ClickHouse-User", &self.user)
-            .header("X-ClickHouse-Key", &self.password)
-            .body(sql.to_string())
-            .send()
-            .await
-            .map_err(describe)?;
-
-        let status = response.status();
-        let body = response.text().await.map_err(describe)?;
-
+    /// POST the SQL as the body (§12: the HTTP interface truncates long GET query strings),
+    /// logged in as this target's user.
+    async fn post(&self, target: &NodeTarget, sql: &str) -> Result<String, String> {
+        let login = target.credentials.as_ref().ok_or_else(|| NO_LOGIN.to_string())?;
+        let refused = self
+            .settings_refused
+            .lock()
+            .map(|set| set.contains(&target.url))
+            .unwrap_or(false);
+        let settings = if refused { SETTINGS_READONLY_FRIENDLY } else { SETTINGS };
+        let (status, body) = self.send(&target.url, login, sql, settings).await?;
         if status.is_success() {
             return Ok(body);
         }
 
         // A read-only user cannot change `max_execution_time`, so the server refuses and names
-        // the setting — with 500, not 400. Drop the settings once and remember it for the
-        // session; the user's own profile already carries the limits (§9).
-        if body.contains("Cannot modify") && body.contains("readonly mode") {
-            self.setting_refused();
-            return self
-                .post_with(url, sql, SETTINGS_READONLY_FRIENDLY)
-                .await;
+        // the setting — with 500, not 400. Drop the settings once and remember it for this
+        // server; the user's own profile already carries the limits (§9).
+        if !refused && body.contains("Cannot modify") && body.contains("readonly mode") {
+            if let Ok(mut set) = self.settings_refused.lock() {
+                set.insert(target.url.clone());
+            }
+            let (status, body) = self.send(&target.url, login, sql, SETTINGS_READONLY_FRIENDLY).await?;
+            if status.is_success() {
+                return Ok(body);
+            }
+            return Err(http_error(status, &body, login));
         }
-        Err(format!("HTTP {}: {}", status.as_u16(), first_line(&body)))
+        Err(http_error(status, &body, login))
     }
 
-    async fn post_with(&self, url: &str, sql: &str, settings: &str) -> Result<String, String> {
+    async fn send(
+        &self,
+        url: &str,
+        login: &Credentials,
+        sql: &str,
+        settings: &str,
+    ) -> Result<(reqwest::StatusCode, String), String> {
         let endpoint = format!("{url}/?{settings}&default_format=JSONEachRow");
         let response = self
             .client
             .post(&endpoint)
-            .header("X-ClickHouse-User", &self.user)
-            .header("X-ClickHouse-Key", &self.password)
+            // §9: credentials go in headers, and are never logged.
+            .header("X-ClickHouse-User", &login.user)
+            .header("X-ClickHouse-Key", &login.password)
             .body(sql.to_string())
             .send()
             .await
             .map_err(describe)?;
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if status.is_success() {
-            Ok(body)
-        } else {
-            Err(format!("HTTP {}: {}", status.as_u16(), first_line(&body)))
+        if let Some(name) = response
+            .headers()
+            .get("X-ClickHouse-Server-Display-Name")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            && let Ok(mut names) = self.server_names.lock()
+        {
+            names.insert(url.to_string(), name.to_string());
         }
+        let body = response.text().await.map_err(describe)?;
+        Ok((status, body))
     }
+}
 
-    fn setting_refused(&self) {
-        self.settings_ok.store(false, Ordering::Relaxed);
+/// A server's refusal, in words: a refused login names the user (never the password), the
+/// rest keep ClickHouse's first line. ClickHouse answers a wrong password with 403 and
+/// `Code: 516 … (AUTHENTICATION_FAILED)`, a missing one with 401.
+fn http_error(status: reqwest::StatusCode, body: &str, login: &Credentials) -> String {
+    let refused_login = status == reqwest::StatusCode::UNAUTHORIZED
+        || [
+            "Authentication failed",
+            "AUTHENTICATION_FAILED",
+            "UNKNOWN_USER",
+            "REQUIRED_PASSWORD",
+            "WRONG_PASSWORD",
+        ]
+        .iter()
+        .any(|marker| body.contains(marker));
+    if refused_login {
+        return format!(
+            "login refused for user {} — check this server's user and password",
+            login.user
+        );
     }
+    format!("HTTP {}: {}", status.as_u16(), first_line(body))
 }
 
 /// ClickHouse's ways of saying a column does not exist on this version.
@@ -728,26 +766,40 @@ fn same_host(a: &str, b: &str) -> bool {
     first(a) == first(b)
 }
 
+/// What is known about the seeds besides their answers, for telling which row of the cluster
+/// a seed is when it could not say so itself.
+#[derive(Debug, Default)]
+pub struct SeedClues {
+    /// Seed URL → the addresses the seed's host name resolves to here.
+    pub addresses: HashMap<String, Vec<String>>,
+    /// Seed URL → the name its server gave in `X-ClickHouse-Server-Display-Name`.
+    pub names: HashMap<String, String>,
+}
+
 /// Fold what the seeds said about their cluster into the targets (§6.2).
 ///
 /// Every seed is matched to the row of `system.clusters` that is the seed itself — by
-/// `is_local` first, then by its own host name, then (for an answer without either) by the
-/// seed's host or address appearing in the row. A matched row only adds its shard, replica
-/// and cluster name to the seed's target, so one server is never polled twice under two
-/// names. A seed typed as a bare address takes the cluster's name, which reads better; one
-/// typed as a name keeps it. Rows that match no seed are the rest of the cluster and become
-/// targets of their own, reached by name when `resolvable` says it resolves here and by the
-/// listed address otherwise.
+/// `is_local` first, then by the name its server gave (in its answer or, when it refused the
+/// query, in a header), then by an earlier round's binding, then (for an answer without
+/// either) by the seed's host or address appearing in the row. A matched row only adds its
+/// shard, replica and cluster name to the seed's target, so one server is never polled twice
+/// under two names. A seed typed as a bare address takes the cluster's name, which reads
+/// better; one typed as a name keeps it. Rows that match no seed are the rest of the cluster
+/// and become targets of their own, reached by name when `resolvable` says it resolves here
+/// and by the listed address otherwise, logging in with `default_login` — never with a seed's
+/// own login, so one server's password is not sent to another.
 pub fn merge_discovered(
     targets: &mut Vec<NodeTarget>,
     answers: &[SeedAnswer],
     http_port: u16,
     resolvable: &dyn Fn(&str) -> bool,
-    seed_addresses: &HashMap<String, Vec<String>>,
+    clues: &SeedClues,
+    default_login: Option<&Credentials>,
 ) {
-    // Which seed each cluster host is, most certain first: the seed said so (`is_local`); an
-    // earlier round bound it (the target already carries the cluster's name as its host);
-    // the seed's URL names the host or its address; the seed's name resolves to its address.
+    // Which seed each cluster host is, most certain first: the seed said so (`is_local`); the
+    // seed's server gave the host's name, and no other row has it; an earlier round bound it
+    // (the target already carries the cluster's name as its host); the seed's URL names the
+    // host or its address; the seed's name resolves to its address.
     let mut bound: HashMap<String, String> = HashMap::new();
     for answer in answers {
         for host in answer.hosts.iter().filter(|h| h.is_self) {
@@ -759,7 +811,26 @@ pub fn merge_discovered(
         .filter(|t| t.seed)
         .map(|t| (t.url.clone(), t.host.clone()))
         .collect();
+    let mut listed: Vec<&ClusterHost> = Vec::new();
     for host in answers.iter().flat_map(|a| a.hosts.iter()) {
+        if !listed.iter().any(|h| h.host_name == host.host_name) {
+            listed.push(host);
+        }
+    }
+    for (url, _) in &seeds {
+        let Some(name) = clues.names.get(url) else { continue };
+        if bound.values().any(|u| u == url) {
+            continue;
+        }
+        let matching: Vec<&&ClusterHost> = listed
+            .iter()
+            .filter(|h| !bound.contains_key(&h.host_name) && same_host(name, &h.host_name))
+            .collect();
+        if let [host] = matching.as_slice() {
+            bound.insert(host.host_name.clone(), url.clone());
+        }
+    }
+    for host in &listed {
         if bound.contains_key(&host.host_name) {
             continue;
         }
@@ -776,7 +847,8 @@ pub fn merge_discovered(
             seeds.iter().find(|(url, _)| {
                 !taken(url)
                     && !host.host_address.is_empty()
-                    && seed_addresses
+                    && clues
+                        .addresses
                         .get(url)
                         .is_some_and(|found| found.iter().any(|a| a == &host.host_address))
             })
@@ -786,11 +858,15 @@ pub fn merge_discovered(
         }
     }
 
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for host in answers.iter().flat_map(|a| a.hosts.iter()) {
-        if !seen.insert(host.host_name.clone()) {
-            continue;
-        }
+    // A seed that neither answered nor was recognised may be any of the rows no seed claimed.
+    // Those rows still become targets when they can be polled — if one is that seed under its
+    // cluster name, its numbers show — but not when there is no login for them: such a row
+    // would have no numbers, only advice to add a host that may already be a seed.
+    let unaccounted = seeds
+        .iter()
+        .any(|(url, _)| !bound.values().any(|u| u == url) && !answers.iter().any(|a| &a.url == url));
+
+    for host in &listed {
         match bound.get(&host.host_name) {
             Some(url) => {
                 // A target an earlier round created for this host under its cluster name is
@@ -811,6 +887,7 @@ pub fn merge_discovered(
                     target.shard = host.shard;
                     target.replica = host.replica;
                 }
+                None if default_login.is_none() && unaccounted => {}
                 None => {
                     let reach = if resolvable(&host.host_name) || host.host_address.is_empty() {
                         host.host_name.clone()
@@ -827,6 +904,9 @@ pub fn merge_discovered(
                         shard: host.shard,
                         replica: host.replica,
                         seed: false,
+                        // With a login per server and no shared one, there is none to use:
+                        // the host says so (`NO_LOGIN`) instead of being polled.
+                        credentials: default_login.cloned(),
                     });
                 }
             },
@@ -996,6 +1076,29 @@ mod tests {
             shard: 0,
             replica: 0,
             seed: true,
+            credentials: None,
+        }
+    }
+
+    fn config(seeds: &[&str], login: Option<(&str, &str)>) -> ClickHouseConfig {
+        ClickHouseConfig {
+            seeds: seeds
+                .iter()
+                .map(|seed| crate::config::parse_seed(seed, 8123).unwrap())
+                .collect(),
+            cluster: "c".into(),
+            default_login: login.map(|(user, password)| Credentials {
+                user: user.into(),
+                password: password.into(),
+            }),
+            http_port: 8123,
+        }
+    }
+
+    fn login(user: &str, password: &str) -> Credentials {
+        Credentials {
+            user: user.into(),
+            password: password.into(),
         }
     }
 
@@ -1009,7 +1112,7 @@ mod tests {
         assert_eq!(hosts.len(), 2);
         let mut targets = Vec::new();
         let answers = [SeedAnswer { url: "http://seed:8123".into(), hosts }];
-        merge_discovered(&mut targets, &answers, 8123, &|_| true, &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &SeedClues::default(), None);
         assert_eq!(names(&targets), vec!["pay-ch-node-1", "pay-ch-node-2"]);
         assert_eq!(targets[0].url, "http://pay-ch-node-1:8123");
         assert_eq!(targets[0].port, 9000, "the native port is what system.clusters reports");
@@ -1023,7 +1126,7 @@ mod tests {
         let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"127.0.0.1","host_address":"127.0.0.1","port":9000}
 "#;
         let answers = [SeedAnswer { url: "http://127.0.0.1:8124".into(), hosts: parse_clusters(body).unwrap() }];
-        merge_discovered(&mut targets, &answers, 8123, &|_| true, &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &SeedClues::default(), None);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].url, "http://127.0.0.1:8124");
     }
@@ -1055,7 +1158,7 @@ mod tests {
             SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&rows(1)).unwrap() },
             SeedAnswer { url: "http://clickhouse2.paysera.net:8123".into(), hosts: parse_clusters(&rows(2)).unwrap() },
         ];
-        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
 
         assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
         assert_eq!(targets[0].host, "pay-ch-node-1.paysera.lan", "the cluster's name, for the drawer");
@@ -1073,7 +1176,7 @@ mod tests {
         let hosts = parse_clusters(body).unwrap();
         assert!(hosts[0].is_self && !hosts[1].is_self);
         let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts }];
-        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
         assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "pay-ch-node-2.paysera.lan"]);
         // The other node's name does not resolve here, so it is reached by its address.
         assert_eq!(targets[1].url, "http://10.0.0.12:8123");
@@ -1091,12 +1194,13 @@ mod tests {
                 shard: 1,
                 replica: 1,
                 seed: false,
+                credentials: None,
             },
         ];
         let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
 "#;
         let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
-        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
         assert_eq!(names(&targets), vec!["clickhouse1.paysera.net"]);
     }
 
@@ -1107,7 +1211,7 @@ mod tests {
 {"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000,"is_local":0}
 "#;
         let answers = [SeedAnswer { url: "http://172.18.0.3:8123".into(), hosts: parse_clusters(body).unwrap() }];
-        merge_discovered(&mut targets, &answers, 8123, &|name| name == "ch-b", &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|name| name == "ch-b", &SeedClues::default(), None);
         assert_eq!(names(&targets), vec!["ch-a", "ch-b"], "not 172.18.0.3 and ch-a for one server");
         assert_eq!(targets[0].url, "http://172.18.0.3:8123", "still reached through its seed");
         assert_eq!((targets[0].shard, targets[0].replica), (1, 1));
@@ -1131,7 +1235,8 @@ mod tests {
             ("http://clickhouse2.paysera.net:8123".to_string(), vec!["10.0.0.12".to_string()]),
         ]
         .into();
-        merge_discovered(&mut targets, &answers, 8123, &|_| false, &addresses);
+        let clues = SeedClues { addresses, ..Default::default() };
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &clues, None);
         assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
         assert_eq!(targets[1].host, "pay-ch-node-2.paysera.lan");
     }
@@ -1156,10 +1261,10 @@ mod tests {
             SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() },
             SeedAnswer { url: "http://clickhouse2.paysera.net:8123".into(), hosts: parse_clusters(&both(2)).unwrap() },
         ];
-        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
         // Round two: clickhouse2 is down and DNS says nothing useful.
         let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() }];
-        merge_discovered(&mut targets, &answers, 8123, &|_| false, &HashMap::new());
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
         assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
     }
 
@@ -1185,13 +1290,7 @@ mod tests {
 
     #[test]
     fn seeds_are_nodes_even_without_a_cluster() {
-        let config = ClickHouseConfig {
-            seeds: vec!["http://127.0.0.1:8123".into(), "http://ch-b:8124".into()],
-            cluster: "ch_paysera".into(),
-            user: "monitor".into(),
-            password: "secret".into(),
-            http_port: 8123,
-        };
+        let config = config(&["http://127.0.0.1:8123", "http://ch-b:8124"], Some(("monitor", "secret")));
         let source = ClickHouseSource::new(&config).unwrap();
         assert_eq!(source.targets().len(), 2);
         // Sorted by name, so the fleet's order does not depend on the order of CH_SEED_URLS.
@@ -1203,17 +1302,10 @@ mod tests {
 
     #[test]
     fn two_ports_on_one_host_are_two_nodes() {
-        let config = ClickHouseConfig {
-            seeds: vec![
-                "http://127.0.0.1:8123".into(),
-                "http://127.0.0.1:8124".into(),
-                "http://127.0.0.1:8124".into(),
-            ],
-            cluster: "ch_paysera".into(),
-            user: "monitor".into(),
-            password: "p".into(),
-            http_port: 8123,
-        };
+        let config = config(
+            &["http://127.0.0.1:8123", "http://127.0.0.1:8124", "http://127.0.0.1:8124"],
+            Some(("monitor", "p")),
+        );
         let source = ClickHouseSource::new(&config).unwrap();
         let names: Vec<&str> = source.targets().iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["127.0.0.1:8123", "127.0.0.1:8124"], "the same URL twice is one");
@@ -1233,35 +1325,336 @@ mod tests {
 
     #[test]
     fn errors_never_contain_the_password() {
-        let config = ClickHouseConfig {
-            seeds: vec!["http://127.0.0.1:1".into()],
-            cluster: "c".into(),
-            user: "monitor".into(),
-            password: "hunter2".into(),
-            http_port: 8123,
-        };
+        let config = config(
+            &["http://127.0.0.1:1", "http://mon2:Zq9-seed@127.0.0.1:2"],
+            Some(("monitor", "Zq9-shared")),
+        );
         let source = ClickHouseSource::new(&config).unwrap();
-        assert!(!format!("{:?}", source.targets()).contains("hunter2"));
-        assert!(!first_line("Code: 516. oops").contains("hunter2"));
+        let shown = format!("{:?}", source.targets());
+        assert!(!shown.contains("Zq9"), "{shown}");
+        assert!(shown.contains("mon2") && shown.contains("monitor"), "the users are fine to show: {shown}");
+        assert!(source.targets().iter().all(|t| !t.url.contains('@')), "a URL never carries the login");
+        assert!(!first_line("Code: 516. oops").contains("Zq9"));
     }
 
     #[test]
-    fn the_settings_flag_is_remembered_after_one_refusal() {
-        let mut config = ClickHouseConfig {
-            seeds: vec!["http://127.0.0.1:8123".into()],
-            cluster: "c".into(),
-            user: "monitor".into(),
-            password: "p".into(),
-            http_port: 8123,
-        };
-        config.cluster = "c".into();
-        let source = ClickHouseSource::new(&config).unwrap();
-        assert!(source.settings_ok.load(Ordering::Relaxed));
-        source.setting_refused();
-        assert!(
-            !source.settings_ok.load(Ordering::Relaxed),
-            "one 400 is enough for the whole session"
+    fn a_refused_login_names_the_user_and_never_the_password() {
+        let mon2 = login("mon2", "Zq9-seed");
+        let body = "Code: 516. DB::Exception: mon2: Authentication failed: password is incorrect, or there is no user with such name. (AUTHENTICATION_FAILED) (version 24.10.4.191 (official build))";
+        let said = http_error(reqwest::StatusCode::FORBIDDEN, body, &mon2);
+        assert_eq!(said, "login refused for user mon2 — check this server's user and password");
+        assert_eq!(http_error(reqwest::StatusCode::UNAUTHORIZED, "", &mon2), said, "no password at all");
+        let other = http_error(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "Code: 241. DB::Exception: Memory limit (total) exceeded\nmore",
+            &mon2,
         );
+        assert_eq!(other, "HTTP 500: Code: 241. DB::Exception: Memory limit (total) exceeded");
+    }
+
+    #[test]
+    fn each_seed_logs_in_as_its_own_user() {
+        let source = ClickHouseSource::new(&config(
+            &["http://alice:pa@ch-a:8123", "http://ch-b:8123", "http://bob:pb@ch-a:8123"],
+            Some(("monitor", "shared")),
+        ))
+        .unwrap();
+        let users: Vec<(&str, &str)> = source
+            .targets()
+            .iter()
+            .map(|t| (t.name.as_str(), t.credentials.as_ref().unwrap().user.as_str()))
+            .collect();
+        // ch-b has no login of its own; ch-a typed twice is one node, with the first login.
+        assert_eq!(users, [("ch-a", "alice"), ("ch-b", "monitor")]);
+    }
+
+    #[test]
+    fn a_host_only_discovery_knows_never_borrows_a_seeds_login() {
+        let alice = || {
+            vec![NodeTarget {
+                credentials: Some(login("alice", "pa")),
+                ..seed("http://ch-a:8123")
+            }]
+        };
+        let body = r#"{"cluster":"c","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"10.0.0.1","port":9000,"is_local":1}
+{"cluster":"c","shard_num":1,"replica_num":2,"host_name":"ch-c","host_address":"10.0.0.3","port":9000,"is_local":0}
+"#;
+        let answers = [SeedAnswer { url: "http://ch-a:8123".into(), hosts: parse_clusters(body).unwrap() }];
+
+        let mut targets = alice();
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &SeedClues::default(), None);
+        assert_eq!(names(&targets), ["ch-a", "ch-c"]);
+        assert_eq!(targets[0].credentials, Some(login("alice", "pa")), "a seed keeps its own");
+        assert_eq!(targets[1].credentials, None, "ch-c is not sent alice's password");
+
+        let shared = login("monitor", "p");
+        let mut targets = alice();
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &SeedClues::default(), Some(&shared));
+        assert_eq!(targets[1].credentials.as_ref(), Some(&shared), "the shared login is for exactly this");
+        assert_eq!(targets[0].credentials, Some(login("alice", "pa")));
+    }
+
+    /// clickhouse2's password is wrong, so it refuses the discovery query — but ClickHouse
+    /// names itself in a header even then.
+    #[test]
+    fn a_seed_that_refuses_the_login_is_recognised_by_the_name_it_gives() {
+        let mut targets = vec![
+            seed("http://clickhouse1.paysera.net:8123"),
+            seed("http://clickhouse2.paysera.net:8123"),
+        ];
+        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
+{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":0}
+"#;
+        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        let clues = SeedClues {
+            names: [("http://clickhouse2.paysera.net:8123".to_string(), "pay-ch-node-2".to_string())].into(),
+            ..Default::default()
+        };
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &clues, Some(&login("monitor", "p")));
+        assert_eq!(names(&targets), ["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
+        assert_eq!(targets[1].host, "pay-ch-node-2.paysera.lan");
+        assert_eq!((targets[1].shard, targets[1].replica), (1, 2));
+    }
+
+    #[test]
+    fn a_name_two_rows_could_have_binds_neither() {
+        let mut targets = vec![seed("http://lb.example:8123")];
+        let body = r#"{"cluster":"c","shard_num":1,"replica_num":1,"host_name":"ch1.dc1","host_address":"10.0.0.1","port":9000,"is_local":0}
+{"cluster":"c","shard_num":2,"replica_num":1,"host_name":"ch1.dc2","host_address":"10.0.1.1","port":9000,"is_local":0}
+"#;
+        let answers = [SeedAnswer { url: "http://other:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        let clues = SeedClues {
+            names: [("http://lb.example:8123".to_string(), "ch1".to_string())].into(),
+            ..Default::default()
+        };
+        merge_discovered(&mut targets, &answers, 8123, &|_| true, &clues, Some(&login("monitor", "p")));
+        assert_eq!(names(&targets), ["ch1.dc1", "ch1.dc2", "lb.example"], "neither row is the seed");
+        assert_eq!(targets[2].host, "lb.example");
+    }
+
+    /// Every seed brings its own login and clickhouse2 neither answered nor was recognised: the
+    /// row no seed claimed may be clickhouse2 itself, and there is no login to find out with.
+    #[test]
+    fn no_row_without_a_login_is_added_while_a_seed_is_unaccounted_for() {
+        let own = |url: &str, user: &str| NodeTarget {
+            credentials: Some(login(user, "p")),
+            ..seed(url)
+        };
+        let fleet = || vec![own("http://127.0.0.1:8123", "monitor"), own("http://127.0.0.1:8124", "r_redash")];
+        let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000,"is_local":1}
+{"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000,"is_local":0}
+"#;
+        let answers = [SeedAnswer { url: "http://127.0.0.1:8123".into(), hosts: parse_clusters(body).unwrap() }];
+
+        let mut targets = fleet();
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
+        assert_eq!(targets.len(), 2, "no ch-b row telling on call to add a host they already have");
+
+        // With a shared login the row is polled, so it can show what it is.
+        let mut targets = fleet();
+        let shared = login("monitor", "p");
+        merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), Some(&shared));
+        assert_eq!(targets.len(), 3);
+
+        // And once both seeds have answered, ch-b is clickhouse2 and nothing is added.
+        let both = [
+            SeedAnswer { url: "http://127.0.0.1:8123".into(), hosts: parse_clusters(body).unwrap() },
+            SeedAnswer {
+                url: "http://127.0.0.1:8124".into(),
+                hosts: parse_clusters(&body.replace(r#""is_local":1"#, r#""is_local":2"#).replace(r#""is_local":0"#, r#""is_local":1"#).replace(r#""is_local":2"#, r#""is_local":0"#)).unwrap(),
+            },
+        ];
+        let mut targets = fleet();
+        merge_discovered(&mut targets, &both, 8123, &|_| false, &SeedClues::default(), None);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[1].host, "ch-b");
+    }
+
+    type Seen = std::sync::Arc<Mutex<Vec<(String, String, String)>>>;
+
+    /// Enough of a ClickHouse for `poll` and `discover`, on a free local port: each request is
+    /// answered by `answer(user, key, query string, sql)`, every answer names the server
+    /// `name` the way ClickHouse does, and the login and query string of every request are
+    /// kept for the test to look at.
+    fn fake_clickhouse(name: &'static str, answer: fn(&str, &str, &str, &str) -> (u16, String)) -> (String, Seen) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let seen: Seen = Default::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                reader.read_line(&mut request).ok();
+                let query = request.split_whitespace().nth(1).unwrap_or_default().to_string();
+                let (mut user, mut key, mut length) = (String::new(), String::new(), 0);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':') {
+                        let value = value.trim().to_string();
+                        match name.trim().to_ascii_lowercase().as_str() {
+                            "x-clickhouse-user" => user = value,
+                            "x-clickhouse-key" => key = value,
+                            "content-length" => length = value.parse().unwrap_or(0),
+                            _ => {}
+                        }
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).ok();
+                let (status, text) = answer(&user, &key, &query, &String::from_utf8_lossy(&body));
+                log.lock().unwrap().push((user, key, query));
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\nX-ClickHouse-Server-Display-Name: {name}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                    text.len()
+                );
+                stream.write_all(response.as_bytes()).ok();
+            }
+        });
+        (url, seen)
+    }
+
+    const FAKE_CAPACITY: &str = r#"{"server_memory_total_bytes":1000,"server_memory_used_bytes":10,"server_cpu_percent":1,"server_cpu_cores":2,"server_cpu_time_us":1,"active_queries":0,"replica_lag_s":null,"active_parts":1,"max_memory_usage":0,"version":"24.10.4.191","uptime_s":7}"#;
+
+    fn refuse(user: &str) -> (u16, String) {
+        (
+            403,
+            format!("Code: 516. DB::Exception: {user}: Authentication failed: password is incorrect, or there is no user with such name. (AUTHENTICATION_FAILED)"),
+        )
+    }
+
+    fn capacity_or_nothing(sql: &str) -> (u16, String) {
+        let body = if sql.contains("server_memory_total_bytes") { FAKE_CAPACITY } else { "" };
+        (200, body.to_string())
+    }
+
+    /// Three servers, three logins: alice's own (a read-only user, so her server refuses the
+    /// session settings), the shared one for a seed without a login, and carol's with a wrong
+    /// password. Nobody's password goes to anybody else's server, and one server's refusals
+    /// change nothing for the others.
+    #[tokio::test]
+    async fn every_server_gets_its_own_login() {
+        let (a, seen_a) = fake_clickhouse("node-a", |user, key, query, sql| {
+            if (user, key) != ("alice", "pw-a") {
+                return refuse(user);
+            }
+            if query.contains("max_execution_time") {
+                let refusal = "Code: 164. DB::Exception: Cannot modify 'max_execution_time' setting in readonly mode. (READONLY)";
+                return (500, refusal.to_string());
+            }
+            capacity_or_nothing(sql)
+        });
+        let (b, seen_b) = fake_clickhouse("node-b", |user, key, _, sql| {
+            if (user, key) != ("monitor", "pw-shared") {
+                return refuse(user);
+            }
+            capacity_or_nothing(sql)
+        });
+        let (c, seen_c) = fake_clickhouse("node-c", |user, key, _, sql| {
+            if (user, key) != ("carol", "pw-c") {
+                return refuse(user);
+            }
+            capacity_or_nothing(sql)
+        });
+        let with_login = |url: &str, login: &str| url.replace("http://", &format!("http://{login}@"));
+        let seeds = [with_login(&a, "alice:pw-a"), b.clone(), with_login(&c, "carol:Zq9-wrong")];
+        let seeds: Vec<&str> = seeds.iter().map(String::as_str).collect();
+        let source = ClickHouseSource::new(&config(&seeds, Some(("monitor", "pw-shared")))).unwrap();
+
+        source.poll().await;
+        let fleet = source.poll().await;
+        let node = |url: &str| {
+            let name = url.trim_start_matches("http://");
+            fleet.nodes.iter().find(|n| n.name == name).unwrap()
+        };
+        assert!(node(&a).reachable && node(&b).reachable);
+        assert!(!node(&c).reachable);
+        let reason = node(&c).unreachable_reason.clone().unwrap();
+        assert_eq!(reason, "login refused for user carol — check this server's user and password");
+
+        let users = |seen: &Seen| -> Vec<String> {
+            let seen = seen.lock().unwrap();
+            let mut users: Vec<String> = seen.iter().map(|(user, key, _)| format!("{user}:{key}")).collect();
+            users.dedup();
+            users
+        };
+        assert_eq!(users(&seen_a), ["alice:pw-a"]);
+        assert_eq!(users(&seen_b), ["monitor:pw-shared"]);
+        assert_eq!(users(&seen_c), ["carol:Zq9-wrong"]);
+
+        // alice's server refused the settings once, and only her server stopped getting them.
+        let with_settings = |seen: &Seen| -> Vec<bool> {
+            seen.lock().unwrap().iter().map(|(_, _, query)| query.contains("max_execution_time")).collect()
+        };
+        assert_eq!(with_settings(&seen_a), [true, false, false, false, false]);
+        assert!(with_settings(&seen_b).iter().all(|sent| *sent), "{:?}", with_settings(&seen_b));
+    }
+
+    /// Every seed brought its own login and there is no shared one: a host only discovery
+    /// knows is not polled at all, and says how to give it a login.
+    #[tokio::test]
+    async fn a_host_without_a_login_is_not_contacted() {
+        let (a, _) = fake_clickhouse("node-a", |_, _, _, sql| capacity_or_nothing(sql));
+        let (d, seen_d) = fake_clickhouse("node-d", |_, _, _, sql| capacity_or_nothing(sql));
+        let seed_a = a.replace("http://", "http://alice:pw-a@");
+        let mut source = ClickHouseSource::new(&config(&[&seed_a], None)).unwrap();
+        source.targets.push(NodeTarget {
+            name: "ch-d".into(),
+            url: d.clone(),
+            host: "ch-d".into(),
+            port: 9000,
+            shard: 1,
+            replica: 2,
+            seed: false,
+            credentials: None,
+        });
+
+        let fleet = source.poll().await;
+        let ch_d = fleet.nodes.iter().find(|n| n.name == "ch-d").unwrap();
+        assert!(!ch_d.reachable);
+        assert_eq!(ch_d.unreachable_reason.as_deref(), Some(NO_LOGIN));
+        assert!(seen_d.lock().unwrap().is_empty(), "no request, so no password, went to ch-d");
+        assert!(fleet.nodes.iter().any(|n| n.reachable), "the seed is polled as usual");
+    }
+
+    /// The whole round on the wire: alice's server answers discovery and lists two nodes;
+    /// carol's refuses her (wrong) password but names itself, so it is node-b — and node-b is
+    /// not added a second time, with no login, under its cluster name.
+    #[tokio::test]
+    async fn discovery_recognises_a_seed_whose_login_is_refused() {
+        let (a, _) = fake_clickhouse("node-a", |user, key, _, sql| {
+            if (user, key) != ("alice", "pw-a") {
+                return refuse(user);
+            }
+            if sql.contains("system.clusters") {
+                let rows = r#"{"cluster":"c","shard_num":1,"replica_num":1,"host_name":"node-a","host_address":"10.255.0.1","port":9000,"is_local":1,"self_host":"node-a"}
+{"cluster":"c","shard_num":1,"replica_num":2,"host_name":"node-b","host_address":"10.255.0.2","port":9000,"is_local":0,"self_host":"node-a"}
+"#;
+                return (200, rows.to_string());
+            }
+            capacity_or_nothing(sql)
+        });
+        let (c, _) = fake_clickhouse("node-b", |user, key, _, sql| {
+            if (user, key) != ("carol", "pw-c") {
+                return refuse(user);
+            }
+            capacity_or_nothing(sql)
+        });
+        let seeds = [a.replace("http://", "http://alice:pw-a@"), c.replace("http://", "http://carol:Zq9-wrong@")];
+        let seeds: Vec<&str> = seeds.iter().map(String::as_str).collect();
+        let mut source = ClickHouseSource::new(&config(&seeds, None)).unwrap();
+
+        let errors = source.discover().await;
+        assert_eq!(errors, [format!("{c}: login refused for user carol — check this server's user and password")]);
+        let mut hosts: Vec<&str> = source.targets().iter().map(|t| t.host.as_str()).collect();
+        hosts.sort();
+        assert_eq!(hosts, ["node-a", "node-b"]);
+        assert!(source.targets().iter().all(|t| t.seed), "{:?}", source.targets());
     }
 
     #[test]

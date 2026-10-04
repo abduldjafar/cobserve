@@ -57,15 +57,59 @@ FAKE=1 cargo run --release            # a generated, moving fleet — no network
 ./dev/local-rig.sh up                 # two ClickHouse 24.10 nodes + Keeper in Docker
 eval "$(./dev/local-rig.sh env)" && cargo run --release
 
+cargo run --release -- --credential credentials.yaml     # the fleet, a login per server
+
 CH_SEED_URLS=http://ch-node-1:8123 CH_CLUSTER=ch_paysera \
-CH_USER=monitor CH_PASSWORD=… cargo run --release        # the fleet
+CH_USER=monitor CH_PASSWORD=… cargo run --release        # the fleet, one login for all
 ```
+
+### A login per server: `--credential`
+
+When the servers do not share a login, write each one's into a YAML file and name the file
+on the command line. [`credentials.example.yaml`](credentials.example.yaml) is the template:
+
+```yaml
+clickhouse:
+  cluster: ch_paysera
+  servers:
+    - url: http://clickhouse1.paysera.net:8123
+      user: monitor_ch1
+      password: "…"
+    - url: http://clickhouse2.paysera.net:8123
+      user: monitor_ch2
+      password: "…"
+```
+
+```sh
+cp credentials.example.yaml credentials.yaml     # gitignored; fill it in
+chmod 600 credentials.yaml
+pay_monitoring --credential credentials.yaml     # or: cargo run --release -- --credential credentials.yaml
+```
+
+- Each server logs in as its own user, and a password is only ever sent to its own server. A
+  host discovery finds that is not in the file uses `default_login` (or `CH_USER` /
+  `CH_PASSWORD`) when there is one; when there is not, it is shown as **not polled**, with a
+  note, rather than sent somebody else's password.
+- Passwords are read exactly as written — `:` `@` `/` `,` `%` and leading zeros included. Only
+  YAML's own rules apply: quote one that starts with a quote, `#`, `{`, `[`, `&`, `*`, `!`, `|`,
+  `>`, `%` or `@`, or holds ` #`.
+- What the file says wins over the environment; `CH_SEED_URLS` adds servers to its list. An
+  optional `redash:` section holds `url`, `api_key` and `redis_url`.
+- A wrong password shows on its node as *login refused for user monitor_ch2* — the user,
+  never the password. A file other users can read gets a warning in the footer. A mistake in
+  the file is reported with its key and line, never with the value in it.
+- Without a file, a login can also ride in the seed URL:
+  `CH_SEED_URLS=http://user:password@host:8123,…` — with `/`, `,` and `%` in a password
+  written `%2F`, `%2C` and `%25`.
+
+`./dev/local-rig.sh credentials` writes such a file for the local rig, whose two nodes each
+have a user the other one does not know.
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `CH_SEED_URLS` | comma-separated `http://host:8123` seeds; the rest is discovered from `system.clusters` | required |
-| `CH_CLUSTER` | cluster name for discovery | required |
-| `CH_USER` / `CH_PASSWORD` | a **read-only** ClickHouse user | required |
+| `CH_SEED_URLS` | comma-separated `http://host:8123` seeds, optionally `http://user:password@host:8123`; the rest is discovered from `system.clusters` | required, unless the `--credential` file lists servers |
+| `CH_CLUSTER` | cluster name for discovery | required (or `cluster:` in the file) |
+| `CH_USER` / `CH_PASSWORD` | a **read-only** ClickHouse user, for every server without a login of its own | required unless every server has its own |
 | `CH_HTTP_PORT` | HTTP port for discovered hosts | `8123` |
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — the strip says *not configured* |
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |

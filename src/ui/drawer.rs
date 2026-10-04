@@ -191,7 +191,8 @@ fn node_detail(view: &NodeView<'_>, app: &App, theme: &Theme, width: usize) -> D
     let mut lines = Vec::new();
     if !node.reachable {
         let mut cells = Cells::new();
-        cells.push("the last poll failed", theme.sev(Severity::Crit));
+        let lead = if node.down_word() == "unreachable" { "the last poll failed" } else { "not polled" };
+        cells.push(lead, theme.sev(Severity::Crit));
         if let Some(reason) = &node.unreachable_reason {
             cells.push(format!(": {reason}"), theme.text());
         }
