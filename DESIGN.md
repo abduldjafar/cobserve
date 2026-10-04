@@ -681,6 +681,16 @@ or from a slope over the last minutes of it.
   this was built from had five such jobs, 163 to 177 days old, under RUNNING). Each says why:
   *cancelled*, *over a day old*, or *no worker holds it*. One that ClickHouse still runs is
   marked so, and `⏎` goes to it.
+- **CLAUDE**, view 5 (`src/claude.rs`, `src/pty.rs`): the official `claude` command in a
+  pseudo-terminal, its screen emulated (`vt100`) and drawn under the header and the band, the
+  worst insight on the line between them. Signed in with the user's own plan; no API is called
+  from here, and `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of the
+  program's environment. Up to nine sessions on a bar of tabs, each its own program and
+  conversation, named by the user or by the title Claude sets; a session that rings while it is
+  not on screen is marked. Every PTY is sized to the pane, so switching never shows a layout
+  for another size. The terminal queries a full-screen program makes (cursor position, device
+  attributes, default colours) are answered; `ctrl+z` is held back, since nothing in the pane
+  could resume a suspended program.
 - **The job's SQL on view 2**: the cursor on a job opens its SQL under the row, as on view 1 —
   what ClickHouse runs when the stitch found it, the query as saved in Redash otherwise (an
   ad-hoc query outside ClickHouse has none: Redash's API keeps no text for it). `J` `K` scroll.
@@ -734,6 +744,14 @@ or from a slope over the last minutes of it.
   it.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
+- **§3 keys on view 5**: every key goes to Claude — `q`, the digits, `ctrl+c` — except `ctrl+\`,
+  which opens the session bar (`1`–`9`, `←` `→`, `n`, `r`, `x` twice, `esc`) and, pressed again,
+  goes back to the monitor. From the monitor, `5` or `ctrl+\` opens it. With bracketed paste on,
+  a paste is one event: into Claude as a paste, into `/` as text, and nowhere else — before, a
+  paste was a stream of keys, and a `q` in it quit.
+- **Read-only** still describes everything the monitor does. View 5 is the user's own Claude
+  Code with its own permissions, as it would be in another terminal tab; the monitor only draws
+  it and carries its keys.
 - **§2.8 view 2's layout**: the queues first, idle ones folded into one line; then RUNNING —
   the table already says how full the queue is, the running jobs are why — then WAITING (only
   when something waits), then STALE. No `failed/5m` column: the endpoint has no failure count,

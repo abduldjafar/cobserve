@@ -1,0 +1,36 @@
+╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────── ● LIVE 2s · 05:33:16 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
+│ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
+│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
+│ ─ ✖ clickhouse3  memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more   ·  5 more on view 1 ───────────── │
+│  1 billing   2 Review the ETL DAG ●                                                                                  │
+│ ✻ Claude Code  ~/work/billing                                                                                        │
+│                                                                                                                      │
+│ > make the invoice export stream its rows instead of building one big Vec                                            │
+│                                                                                                                      │
+│ ● I'll read the exporter first.                                                                                      │
+│                                                                                                                      │
+│ ● Read(src/export/invoice.rs)                                                                                        │
+│   └  214 lines                                                                                                       │
+│                                                                                                                      │
+│ ● Update(src/export/invoice.rs)                                                                                      │
+│   └  18 lines added, 31 removed                                                                                      │
+│                                                                                                                      │
+│ ✻ Running the tests… (esc to interrupt)                                                                              │
+│                                                                                                                      │
+│ ╭──────────                                                                                                          │
+│ │ >                                                                                                                  │
+│ ╰──────────                                                                                                          │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│  ctrl+\  sessions · monitor   every other key goes to Claude                            ✳ Stream the invoice export  │
+╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

@@ -3,6 +3,7 @@
 //! Everything the UI draws lives here or in the model; sources push `Event`s in and the loop
 //! applies them. Nothing in this file knows that ClickHouse or Redash exist.
 
+use crate::claude::{Mode, PaneState, Sessions};
 use crate::history::{self, History};
 use crate::insight::{self, Insight, Subject};
 use crate::model::{fleet_totals, mark_new_nodes, FleetSnapshot, FleetView, Job, JobState, QueueStatus};
@@ -45,6 +46,8 @@ pub enum View {
     Map,
     /// What changed, newest first (`tape.rs`).
     Tape,
+    /// Claude Code in a pane, the monitor's band above it (`claude.rs`).
+    Claude,
 }
 
 impl View {
@@ -54,19 +57,21 @@ impl View {
             View::Queue => "QUEUE",
             View::Map => "MAP",
             View::Tape => "TAPE",
+            View::Claude => "CLAUDE",
         }
     }
 
-    /// The tab order of §1, which is also the `1` … `4` keymap.
-    pub const ALL: [View; 4] = [View::Nodes, View::Queue, View::Map, View::Tape];
+    /// The tab order of §1, which is also the `1` … `5` keymap.
+    pub const ALL: [View; 5] = [View::Nodes, View::Queue, View::Map, View::Tape, View::Claude];
 
-    /// `1` … `4`, the number that selects this view.
+    /// `1` … `5`, the number that selects this view.
     pub fn number(self) -> u8 {
         match self {
             View::Nodes => 1,
             View::Queue => 2,
             View::Map => 3,
             View::Tape => 4,
+            View::Claude => 5,
         }
     }
 
@@ -76,6 +81,7 @@ impl View {
             2 => Some(View::Queue),
             3 => Some(View::Map),
             4 => Some(View::Tape),
+            5 => Some(View::Claude),
             _ => None,
         }
     }
@@ -146,6 +152,12 @@ pub enum Event {
     /// A source could not start at all (bad credentials, no seed reachable). Shown in the
     /// strip and the drawer; never fatal.
     Notice(String),
+    /// What the `claude` of a session printed (`pty.rs`), by session id.
+    Pane(u64, Vec<u8>),
+    /// The `claude` of a session ended, and how.
+    PaneExited(u64, String),
+    /// Text pasted into the terminal (bracketed paste).
+    Paste(String),
     Quit,
 }
 
@@ -201,6 +213,8 @@ pub struct App {
     /// Wall time the last snapshot arrived: data older than a few polls is called stale.
     last_snapshot_wall: Option<SystemTime>,
     pub viewport: Viewport,
+    /// View 5: Claude Code sessions.
+    pub claude: Sessions,
 }
 
 impl Default for App {
@@ -241,6 +255,7 @@ impl App {
             poll_interval: Duration::from_millis(2000),
             last_snapshot_wall: None,
             viewport: Viewport::default(),
+            claude: Sessions::default(),
         }
     }
 
@@ -269,9 +284,135 @@ impl App {
                     _ => self.notice = Some((message, now)),
                 }
             }
+            Event::Pane(id, bytes) => {
+                let on_screen = self.view == View::Claude && self.claude.current().is_some_and(|s| s.id == id);
+                if let Some(session) = self.claude.by_id_mut(id) {
+                    session.pane.feed(&bytes, on_screen);
+                }
+            }
+            Event::PaneExited(id, how) => {
+                if let Some(session) = self.claude.by_id_mut(id) {
+                    session.pane.state = PaneState::Exited(how);
+                }
+            }
+            Event::Paste(text) => {
+                let line = text.lines().next().unwrap_or_default();
+                if self.view == View::Claude {
+                    match &mut self.claude.mode {
+                        Mode::Naming(name) => {
+                            let room = crate::claude::NAME_MAX.saturating_sub(name.chars().count());
+                            name.extend(line.chars().take(room));
+                        }
+                        Mode::Typing => {
+                            if let Some(session) = self.claude.current_mut().filter(|s| s.pane.is_running()) {
+                                session.pane.paste(&text);
+                            }
+                        }
+                        Mode::Bar => {}
+                    }
+                } else if let Some(input) = self.filter_input.as_mut() {
+                    input.push_str(line);
+                    self.tree.filter = input.clone();
+                }
+            }
             Event::Quit => self.quit = true,
         }
         self.sync_view_state();
+    }
+
+    /// View 5, with a session started on the first visit — never a second one over a running
+    /// one. The monitor (`ctrl+\` twice, or `m` on the bar) goes back to the view it came from.
+    pub fn open_claude(&mut self) {
+        if self.view != View::Claude {
+            self.claude.back_to = self.view;
+        }
+        self.view = View::Claude;
+        self.focus = Focus::Tree;
+        self.queue_selection = None;
+        self.claude.mode = Mode::Typing;
+        if self.claude.list.is_empty() {
+            self.claude.open_new();
+        } else {
+            let active = self.claude.active;
+            self.claude.select(active);
+        }
+    }
+
+    /// Start the session on screen again, or a first one when there is none.
+    fn start_claude(&mut self) {
+        let size = self.claude.want_size.get();
+        match self.claude.current_mut() {
+            Some(session) => session.pane.start(size),
+            None => {
+                self.claude.open_new();
+            }
+        }
+    }
+
+    /// The session bar's commands, after `ctrl+\`.
+    fn on_bar_key(&mut self, key: KeyEvent) {
+        let closing = std::mem::take(&mut self.claude.closing);
+        match key.code {
+            KeyCode::Char(c @ '1'..='9') => {
+                self.claude.select(c as usize - '1' as usize);
+                self.claude.mode = Mode::Typing;
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => self.claude.step(false),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => self.claude.step(true),
+            KeyCode::Char('n') | KeyCode::Char('c') => {
+                if self.claude.open_new().is_none() {
+                    self.notice = Some((
+                        format!("{} sessions is as many as the bar numbers — close one with x", crate::claude::MAX_SESSIONS),
+                        SystemTime::now(),
+                    ));
+                }
+                self.claude.mode = Mode::Typing;
+            }
+            KeyCode::Char('r') => {
+                if let Some(name) = self.claude.current().map(|s| s.name.clone().unwrap_or_default()) {
+                    self.claude.mode = Mode::Naming(name);
+                }
+            }
+            // Twice: a conversation is not ended by one stray key.
+            KeyCode::Char('x') if self.claude.current().is_some() => {
+                if closing {
+                    self.claude.close_current();
+                    self.claude.mode = Mode::Typing;
+                } else {
+                    self.claude.closing = true;
+                }
+            }
+            KeyCode::Char('m') => {
+                self.claude.mode = Mode::Typing;
+                self.view = self.claude.back_to;
+            }
+            KeyCode::Esc | KeyCode::Enter => self.claude.mode = Mode::Typing,
+            _ => {}
+        }
+    }
+
+    /// Typing a session's new name.
+    fn on_naming_key(&mut self, key: KeyEvent) {
+        let Mode::Naming(name) = &mut self.claude.mode else {
+            return;
+        };
+        match key.code {
+            KeyCode::Enter => {
+                let name = name.clone();
+                self.claude.rename_current(&name);
+                self.claude.mode = Mode::Typing;
+            }
+            KeyCode::Esc => self.claude.mode = Mode::Typing,
+            KeyCode::Backspace => {
+                name.pop();
+            }
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL) && name.chars().count() < crate::claude::NAME_MAX =>
+            {
+                name.push(c);
+            }
+            _ => {}
+        }
     }
 
     // -- data ------------------------------------------------------------
@@ -724,6 +865,51 @@ impl App {
             return;
         }
 
+        // ctrl+\ opens Claude from the monitor; on view 5 it opens the session bar, and once more
+        // goes back to the monitor.
+        if crate::claude::is_switch_key(&key) {
+            match (self.view, &self.claude.mode) {
+                (View::Claude, Mode::Bar) => {
+                    self.claude.mode = Mode::Typing;
+                    self.view = self.claude.back_to;
+                }
+                (View::Claude, _) => {
+                    self.claude.mode = Mode::Bar;
+                    self.claude.closing = false;
+                }
+                _ => self.open_claude(),
+            }
+            self.sync_view_state();
+            return;
+        }
+        if self.view == View::Claude {
+            match self.claude.mode {
+                Mode::Naming(_) => return self.on_naming_key(key),
+                Mode::Bar => {
+                    self.on_bar_key(key);
+                    self.sync_view_state();
+                    return;
+                }
+                Mode::Typing => {}
+            }
+            // With Claude running, every other key is Claude's — q, the digits and ctrl+c
+            // included: it is a terminal, and a terminal does not keep keys for itself.
+            if let Some(session) = self.claude.current_mut().filter(|s| s.pane.is_running()) {
+                if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('z') | KeyCode::Char('Z')) {
+                    // Suspended, Claude would freeze: the pane has no shell around it to say `fg`.
+                    self.notice = Some(("ctrl+z is not passed on — nothing here could bring Claude back".to_string(), SystemTime::now()));
+                    return;
+                }
+                session.pane.key(&key);
+                return;
+            }
+            if key.code == KeyCode::Enter {
+                self.start_claude();
+                self.sync_view_state();
+                return;
+            }
+        }
+
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         // Keys that mean the same thing everywhere.
         match key.code {
@@ -733,6 +919,11 @@ impl App {
             }
             KeyCode::Char('q') => {
                 self.quit = true;
+                return;
+            }
+            KeyCode::Char('5') => {
+                self.open_claude();
+                self.sync_view_state();
                 return;
             }
             KeyCode::Char(c @ '1'..='4') => {
@@ -765,6 +956,8 @@ impl App {
             View::Queue => self.on_queue_key(key),
             View::Map => self.on_map_key(key.code),
             View::Tape => self.on_tape_key(key.code),
+            // Nothing running: ⏎ starts it (above); nothing else to do here.
+            View::Claude => {}
         }
         self.sync_view_state();
     }
@@ -1618,6 +1811,139 @@ mod tests {
         assert!(!names_node(Some("clickhouse1"), "clickhouse10.example.net"));
         assert!(!names_node(Some("ClickHouse BI"), "clickhouse-bi"));
         assert!(!names_node(None, "clickhouse3"));
+    }
+
+    fn ctrl(c: char) -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
+    }
+
+    /// The session on screen.
+    fn pane(app: &mut App) -> &mut crate::claude::ClaudePane {
+        &mut app.claude.current_mut().expect("a session").pane
+    }
+
+    #[test]
+    fn five_opens_claude_and_asks_for_it_to_start() {
+        let mut app = app_with_fake();
+        app.update(key(KeyCode::Char('2')));
+        app.update(key(KeyCode::Char('5')));
+        assert_eq!(app.view, View::Claude);
+        assert_eq!(app.claude.list.len(), 1, "the first visit opens a session");
+        assert_eq!(pane(&mut app).state, PaneState::Starting);
+        assert_eq!(app.claude.back_to, View::Queue);
+        // ctrl+\ opens the bar, and once more goes back where it came from.
+        pane(&mut app).state = PaneState::Running;
+        app.update(ctrl('\\'));
+        assert_eq!((app.view, &app.claude.mode), (View::Claude, &Mode::Bar));
+        app.update(ctrl('4'));
+        assert_eq!(app.view, View::Queue, "crossterm's name for ctrl+\\ works too");
+        app.update(ctrl('\\'));
+        assert_eq!(app.view, View::Claude, "and from the monitor it opens Claude again");
+        assert_eq!(app.claude.mode, Mode::Typing);
+        assert_eq!(app.claude.list.len(), 1, "a running session is not started twice");
+    }
+
+    #[test]
+    fn on_view_five_every_key_but_the_switch_is_claudes() {
+        let mut app = app_with_fake();
+        app.open_claude();
+        pane(&mut app).state = PaneState::Running;
+        app.update(key(KeyCode::Char('q')));
+        app.update(ctrl('c'));
+        app.update(key(KeyCode::Char('1')));
+        app.update(key(KeyCode::Enter));
+        assert!(!app.quit, "q and ctrl+c are Claude's here");
+        assert_eq!(app.view, View::Claude, "and so are the digits");
+        assert_eq!(pane(&mut app).take_outbox(), b"q\x031\r");
+        app.update(ctrl('z'));
+        assert!(pane(&mut app).take_outbox().is_empty(), "suspended, it could never come back");
+        assert!(app.notice().is_some_and(|n| n.contains("ctrl+z")));
+        app.update(Event::Paste("two\nlines".into()));
+        assert_eq!(pane(&mut app).take_outbox(), b"two\rlines");
+    }
+
+    #[test]
+    fn the_bar_opens_switches_renames_and_closes_sessions() {
+        let mut app = app_with_fake();
+        app.open_claude();
+        pane(&mut app).state = PaneState::Running;
+        let first = app.claude.current().unwrap().id;
+
+        // ctrl+\ n: a second session, on screen.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('n')));
+        assert_eq!((app.claude.list.len(), app.claude.active), (2, 1));
+        assert_eq!(app.claude.mode, Mode::Typing, "straight back to typing, into the new one");
+
+        // ctrl+\ r: rename it.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('r')));
+        for c in "infrx".chars() {
+            app.update(key(KeyCode::Char(c)));
+        }
+        app.update(key(KeyCode::Backspace));
+        app.update(key(KeyCode::Char('a')));
+        app.update(key(KeyCode::Enter));
+        assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
+        assert!(pane(&mut app).take_outbox().is_empty(), "the name was not typed into Claude");
+
+        // ctrl+\ 1: back to the first.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('1')));
+        assert_eq!(app.claude.current().unwrap().id, first);
+
+        // ctrl+\ x x: closed — once is not enough.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('x')));
+        assert_eq!(app.claude.list.len(), 2, "one x only asks");
+        assert!(app.claude.closing);
+        app.update(key(KeyCode::Char('x')));
+        assert_eq!(app.claude.list.len(), 1);
+        assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
+
+        // A rename can be given up, and esc leaves the bar for Claude.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('r')));
+        app.update(key(KeyCode::Char('z')));
+        app.update(key(KeyCode::Esc));
+        assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
+        assert_eq!(app.claude.mode, Mode::Typing);
+        // m on the bar is the monitor.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('m')));
+        assert_eq!(app.view, View::Nodes);
+    }
+
+    #[test]
+    fn after_claude_ends_the_view_is_the_monitor_s_again() {
+        let mut app = app_with_fake();
+        app.open_claude();
+        let id = app.claude.current().unwrap().id;
+        app.update(Event::PaneExited(id, "it exited".into()));
+        assert_eq!(pane(&mut app).state, PaneState::Exited("it exited".into()));
+        app.update(key(KeyCode::Enter));
+        assert_eq!(pane(&mut app).state, PaneState::Starting, "⏎ starts it again");
+        pane(&mut app).state = PaneState::Failed("claude is not installed".into());
+        app.update(key(KeyCode::Char('1')));
+        assert_eq!(app.view, View::Nodes, "with nothing running, the keys are the monitor's");
+        app.update(key(KeyCode::Char('q')));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn a_bell_from_a_session_not_on_screen_marks_it() {
+        let mut app = app_with_fake();
+        app.open_claude();
+        pane(&mut app).state = PaneState::Running;
+        let first = app.claude.current().unwrap().id;
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('n')));
+        app.update(Event::Pane(first, b"all done\x07".to_vec()));
+        assert!(app.claude.list[0].pane.attention, "rang behind the session on screen");
+        assert!(app.claude.calling());
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('1')));
+        assert!(!app.claude.calling(), "seen once it is on screen");
     }
 
     #[test]

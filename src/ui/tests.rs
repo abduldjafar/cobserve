@@ -206,6 +206,100 @@ fn j_and_k_scroll_the_sql_under_a_job() {
     assert!(!next.contains("lines 2–"), "{next}");
 }
 
+fn ctrl(c: char) -> Event {
+    Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
+}
+
+/// The session on screen as `main.rs` leaves it once its program runs, and what it printed.
+fn run_session(app: &mut App, output: &[u8]) -> u64 {
+    let session = app.claude.current_mut().expect("a session");
+    session.pane.state = crate::claude::PaneState::Running;
+    session.pane.resize(29, 116);
+    let id = session.id;
+    app.update(Event::Pane(id, output.to_vec()));
+    id
+}
+
+/// View 5 with a program that has printed something, as the pane would after its first output.
+fn app_with_claude(output: &[u8]) -> App {
+    let mut app = app_after(3);
+    app.update(key(KeyCode::Char('5')));
+    run_session(&mut app, output);
+    app
+}
+
+#[test]
+fn sessions_are_tabs_that_can_be_renamed() {
+    let mut app = app_with_claude(b"the first session\r\n");
+    let first = app.claude.current().unwrap().id;
+    // ctrl+\ n: a second one; ctrl+\ r: named.
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('n')));
+    run_session(&mut app, b"the second session\r\n");
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('r')));
+    for c in "infra".chars() {
+        app.update(key(KeyCode::Char(c)));
+    }
+    let typing = render(&app, 120, 36);
+    assert!(typing.contains("infra▏"), "the tab is the input while the name is typed: {typing}");
+    assert!(typing.contains("keep the name"), "{typing}");
+    app.update(key(KeyCode::Enter));
+    // The first one rings while the second is on screen.
+    app.update(Event::Pane(first, b"\x07".to_vec()));
+
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains(" 1 claude 1 ● ") && screen.contains(" 2 infra "), "{screen}");
+    assert!(screen.contains("the second session") && !screen.contains("the first session"), "only the session on screen: {screen}");
+    let lines: Vec<&str> = screen.lines().collect();
+    assert!(lines[4].contains("2 infra"), "the bar is right under the band: {}", lines[4]);
+
+    app.update(ctrl('\\'));
+    let bar = render(&app, 120, 36);
+    assert!(bar.contains("which one?") && bar.contains("rename") && bar.contains("close"), "{bar}");
+    app.update(key(KeyCode::Char('x')));
+    let closing = render(&app, 120, 36);
+    assert!(closing.contains("x again closes “infra”"), "{closing}");
+}
+
+#[test]
+fn claude_runs_in_view_five_under_the_monitor() {
+    let app = app_with_claude(b"\x1b]0;\xe2\x9c\xb3 Tidy the README\x07\x1b[1mWelcome to Claude Code\x1b[m\r\n\r\n> fix the failing test\r\n");
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("Welcome to Claude Code"), "the program's screen: {screen}");
+    assert!(screen.contains("> fix the failing test"), "{screen}");
+    let lines: Vec<&str> = screen.lines().collect();
+    assert!(lines[1].contains("FLEET") && lines[2].contains("REDASH"), "the band stays: {screen}");
+    assert!(lines[3].contains("✖ clickhouse3"), "the worst of the fleet under the band: {}", lines[3]);
+    assert!(lines[0].contains("5 CLAUDE"), "a tab of its own: {}", lines[0]);
+    assert!(screen.contains("ctrl+\\") && screen.contains("every other key goes to Claude"), "{screen}");
+    assert!(screen.contains("✳ Tidy the README"), "Claude's task, from its title: {screen}");
+    assert!(!screen.contains("─ job ·") && !screen.contains("INSIGHTS"), "no drawer, no insights: {screen}");
+}
+
+#[test]
+fn claude_not_installed_says_how_to_get_it() {
+    let mut app = app_after(3);
+    app.update(key(KeyCode::Char('5')));
+    app.claude.current_mut().unwrap().pane.state = crate::claude::PaneState::Failed(
+        "claude is not installed here (not on PATH) — install Claude Code, then sign in once with /login and your Pro or Max account".into(),
+    );
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("not installed"), "{screen}");
+    assert!(screen.contains("no API key"), "it runs on the plan: {screen}");
+    assert!(screen.contains("start Claude"), "⏎ is offered: {screen}");
+}
+
+#[test]
+fn a_claude_that_ended_says_so_and_offers_to_start_again() {
+    let mut app = app_with_claude(b"bye\r\n");
+    let id = app.claude.current().unwrap().id;
+    app.update(Event::PaneExited(id, "it exited".into()));
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("bye"), "its last screen stays: {screen}");
+    assert!(screen.contains("claude — it exited") && screen.contains("start it again"), "{screen}");
+}
+
 /// The Redash on the screenshot this view was rebuilt from: nothing waiting, one worker on
 /// `queries` and that one idle, a scheduled refresh running — and RQ's started list holding
 /// leftovers from months ago, which the old view listed as RUNNING for 177 days.
@@ -755,6 +849,21 @@ fn html_with(buf: &Buffer, title: &str, theme: &crate::theme::Theme) -> String {
     out
 }
 
+/// A sample screen for view 5's screenshot: what a session in the pane looks like, written by
+/// hand — the real one is whatever Claude Code draws.
+const CLAUDE_DEMO: &[u8] = b"\x1b]0;\xe2\x9c\xb3 Stream the invoice export\x07\
+\x1b[38;2;215;119;87m\xe2\x9c\xbb\x1b[m \x1b[1mClaude Code\x1b[m  \x1b[2m~/work/billing\x1b[m\r\n\r\n\
+\x1b[2m>\x1b[m make the invoice export stream its rows instead of building one big Vec\r\n\r\n\
+\x1b[38;2;215;119;87m\xe2\x97\x8f\x1b[m I'll read the exporter first.\r\n\r\n\
+\x1b[32m\xe2\x97\x8f\x1b[m \x1b[1mRead\x1b[m(src/export/invoice.rs)\r\n\
+\x20\x20\x1b[2m\xe2\x94\x94  214 lines\x1b[m\r\n\r\n\
+\x1b[32m\xe2\x97\x8f\x1b[m \x1b[1mUpdate\x1b[m(src/export/invoice.rs)\r\n\
+\x20\x20\x1b[2m\xe2\x94\x94  18 lines added, 31 removed\x1b[m\r\n\r\n\
+\x1b[38;2;215;119;87m\xe2\x9c\xbb\x1b[m Running the tests\xe2\x80\xa6 \x1b[2m(esc to interrupt)\x1b[m\r\n\r\n\
+\x1b[2m\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n\
+\x1b[2m\xe2\x94\x82\x1b[m > \r\n\
+\x1b[2m\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n";
+
 #[test]
 #[ignore]
 fn export_screens() {
@@ -812,6 +921,20 @@ fn export_screens() {
     let mut map = app_after(118);
     map.update(key(KeyCode::Char('3')));
     save("120x36-map", &map, 120, 36);
+
+    // Two sessions: one named and on screen, one that rang while it was not.
+    let mut claude = app_after(118);
+    claude.update(key(KeyCode::Char('5')));
+    let billing = run_session(&mut claude, CLAUDE_DEMO);
+    claude.claude.rename_current("billing");
+    claude.update(ctrl('\\'));
+    claude.update(key(KeyCode::Char('n')));
+    run_session(&mut claude, b"\x1b]0;\xe2\x9c\xb3 Review the ETL DAG\x07\x07");
+    claude.update(ctrl('\\'));
+    claude.update(key(KeyCode::Char('1')));
+    assert_eq!(claude.claude.current().unwrap().id, billing);
+    claude.claude.list[1].pane.attention = true;
+    save("120x36-claude", &claude, 120, 36);
 
     // Long enough for clickhouse5 to join, ch6 to drop out and come back, and a kill.
     let mut tape = app_after(118);

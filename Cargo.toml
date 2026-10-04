@@ -21,6 +21,9 @@ unicode-width = "0.2"
 # The --credential file. serde_yaml's maintained fork; asked for a string, it hands over a
 # YAML scalar as the text it is, so `password: 007` stays "007".
 serde_norway = "0.9"
+portable-pty = "0.9"
+vt100 = "0.16"
+shell-words = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

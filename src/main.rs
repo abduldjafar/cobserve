@@ -7,12 +7,14 @@
 
 mod app;
 mod attrib;
+mod claude;
 mod config;
 mod fake;
 mod fmt;
 mod history;
 mod insight;
 mod model;
+mod pty;
 mod severity;
 mod sources;
 mod sqltext;
@@ -25,6 +27,7 @@ use app::{App, Event};
 use config::Config;
 use crossterm::event::{Event as TermEvent, KeyEventKind};
 use ratatui::DefaultTerminal;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -66,11 +69,19 @@ async fn main() -> color_eyre::Result<()> {
         }
     };
     install_panic_hook();
+    // Pasted text arrives as one event, so a paste into Claude's pane is a paste and not a
+    // stream of keys, each newline an Enter.
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
 
-    let result = run(&mut terminal, config).await;
+    let result = run(&mut terminal, config, args.claude).await;
 
-    ratatui::restore();
+    restore_terminal();
     result
+}
+
+fn restore_terminal() {
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+    ratatui::restore();
 }
 
 /// §12: the hook has to leave raw mode and the alternate screen, or a crash leaves the user's
@@ -79,15 +90,21 @@ fn install_panic_hook() {
     let previous = std::panic::take_hook();
     let _ = color_eyre::install();
     std::panic::set_hook(Box::new(move |info| {
-        ratatui::restore();
+        restore_terminal();
         previous(info);
     }));
 }
 
-async fn run(terminal: &mut DefaultTerminal, config: Config) -> color_eyre::Result<()> {
+async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
     app.poll_interval = config.poll;
+    app.claude.command = config.claude_command.clone();
+    if open_claude {
+        app.open_claude();
+    }
+    // View 5's programs, one per session. Dropping one ends it — on quit, all of them.
+    let mut panes: HashMap<u64, pty::PtyProcess> = HashMap::new();
 
     spawn_sources(&config, tx.clone());
     // Anything a source could not even start with belongs on screen, not in a log file.
@@ -107,21 +124,88 @@ async fn run(terminal: &mut DefaultTerminal, config: Config) -> color_eyre::Resu
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;
+        // After the frame: the panes now know the size they are drawn at.
+        drive_panes(&mut app, &mut panes, &tx);
 
         tokio::select! {
             event = rx.recv() => match event {
-                Some(event) => app.update(event),
+                Some(event) => {
+                    app.update(event);
+                    // Whatever else is already waiting goes in before the next frame: Claude's
+                    // output comes in many small pieces, and a frame for each is wasted work.
+                    for _ in 0..512 {
+                        match rx.try_recv() {
+                            Ok(event) => app.update(event),
+                            Err(_) => break,
+                        }
+                    }
+                }
                 // Every source is gone; nothing left to wait for.
                 None => app.update(Event::Quit),
             },
             _ = tick.tick() => app.update(Event::Tick),
         }
+        // Keys for Claude go out now, not a frame later.
+        send_owed(&mut app, &mut panes);
 
         if app.quit {
             break;
         }
     }
     Ok(())
+}
+
+/// View 5's programs: each started when its session asks for it, all sized to what was drawn
+/// (a session switched to is then the right size already), sent what is owed to them, and let
+/// go of once they ended or their session was closed.
+fn drive_panes(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>, tx: &mpsc::UnboundedSender<Event>) {
+    use claude::PaneState;
+    let (rows, cols) = app.claude.want_size.get();
+    let command = app.claude.command.clone();
+    for session in &mut app.claude.list {
+        match session.pane.state {
+            PaneState::Starting => {
+                // An earlier program of this session, if any, ends here.
+                panes.remove(&session.id);
+                match pty::PtyProcess::spawn(session.id, &command, rows, cols, tx.clone()) {
+                    Ok(process) => {
+                        session.pane.resize(rows, cols);
+                        session.pane.state = PaneState::Running;
+                        panes.insert(session.id, process);
+                    }
+                    Err(why) => session.pane.state = PaneState::Failed(why),
+                }
+            }
+            PaneState::Running => {
+                if let Some(process) = panes.get_mut(&session.id)
+                    && (rows, cols) != process.size()
+                    && rows > 0
+                    && cols > 0
+                {
+                    process.resize(rows, cols);
+                    session.pane.resize(rows, cols);
+                }
+            }
+            PaneState::Idle | PaneState::Exited(_) | PaneState::Failed(_) => {
+                panes.remove(&session.id);
+            }
+        }
+    }
+    // A closed session's program ends with it.
+    panes.retain(|id, _| app.claude.list.iter().any(|s| s.id == *id));
+    send_owed(app, panes);
+}
+
+/// Keys, pastes and answers owed to each program.
+fn send_owed(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>) {
+    for session in &mut app.claude.list {
+        if let Some(process) = panes.get_mut(&session.id) {
+            let owed = session.pane.take_outbox();
+            if !owed.is_empty() {
+                process.write(&owed);
+            }
+        }
+    }
 }
 
 /// What is wrong before a single request is made, if anything. Shown in the footer area
@@ -145,7 +229,18 @@ fn spawn_key_reader(tx: mpsc::UnboundedSender<Event>) {
                     return;
                 }
             }
-            // Resizes redraw on the next event; a mouse report is not a key press.
+            Ok(TermEvent::Paste(text)) => {
+                if tx.send(Event::Paste(text)).is_err() {
+                    return;
+                }
+            }
+            // A new size is drawn straight away: Claude's pane follows it.
+            Ok(TermEvent::Resize(..)) => {
+                if tx.send(Event::Tick).is_err() {
+                    return;
+                }
+            }
+            // A mouse report is not a key press, nor is a key released.
             Ok(_) => {}
             Err(_) => {
                 let _ = tx.send(Event::Quit);
