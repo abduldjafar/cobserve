@@ -79,26 +79,45 @@ pub struct Config {
     pub email_domain: Option<String>,
     /// Worth saying, not worth refusing to start over — shown in the footer.
     pub warnings: Vec<String>,
+    /// What view 5 runs: `CLAUDE_CMD`, split like a shell would — `claude` by default.
+    pub claude_command: Vec<String>,
 }
 
 pub const USAGE: &str = "\
-Usage: pay_monitoring [--credential FILE]
+Usage: pay_monitoring [--credential FILE] [--claude]
 
   --credential FILE   the ClickHouse servers with a login for each (and optionally the
                       cluster and Redash) in YAML — see credentials.example.yaml. What the
                       file says wins over the environment.
+  --claude            open on view 5: Claude Code in a pane, the monitor above it
   -h, --help          this text
   -V, --version       the version
 
 Everything else comes from the environment (DESIGN.md §9): CH_SEED_URLS, CH_CLUSTER,
 CH_USER, CH_PASSWORD, CH_HTTP_PORT, REDASH_URL, REDASH_ADMIN_API_KEY, REDIS_URL,
-EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, and FAKE=1 for a generated fleet.
+EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, and CLAUDE_CMD for
+what view 5 runs (default: claude).
 ";
 
-/// The command line. It only says where the credential file is; the rest is environment.
+/// `CLAUDE_CMD` as a command and its arguments, quotes as a shell reads them; `claude` when it
+/// is not set.
+fn claude_command(raw: Option<String>) -> Result<Vec<String>, ConfigError> {
+    let Some(raw) = raw.filter(|r| !r.trim().is_empty()) else {
+        return Ok(vec!["claude".to_string()]);
+    };
+    match shell_words::split(&raw) {
+        Ok(words) if !words.is_empty() => Ok(words),
+        _ => Err(ConfigError::Bad("CLAUDE_CMD", "is not a command a shell could read (an unclosed quote?)".to_string())),
+    }
+}
+
+/// The command line. It says where the credential file is and which view to open on; the rest
+/// is environment.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Args {
     pub credential: Option<PathBuf>,
+    /// Open on view 5, with Claude started.
+    pub claude: bool,
     pub help: bool,
     pub version: bool,
 }
@@ -111,6 +130,7 @@ impl Args {
             match arg.as_str() {
                 "-h" | "--help" => parsed.help = true,
                 "-V" | "--version" => parsed.version = true,
+                "--claude" => parsed.claude = true,
                 "-c" | "--credential" | "--credentials" => {
                     let path = args.next().filter(|p| !p.is_empty()).ok_or_else(|| {
                         ConfigError::Usage(format!("{arg} needs a file, e.g. {arg} credentials.yaml"))
@@ -525,6 +545,7 @@ impl Config {
             email_domain: pick(redash.and_then(|r| r.email_domain.as_ref()), "EMAIL_DOMAIN")
                 .or_else(|| fake.then(|| crate::fake::DOMAIN.to_string())),
             warnings: Vec::new(),
+            claude_command: claude_command(env.get("CLAUDE_CMD"))?,
         })
     }
 }
@@ -810,6 +831,8 @@ redash:
         }
         assert!(parse(&["--help"]).unwrap().help);
         assert!(parse(&["-V"]).unwrap().version);
+        let both = parse(&["--claude", "--credential", "c.yaml"]).unwrap();
+        assert!(both.claude && both.credential.is_some(), "--claude opens on view 5");
 
         let err = parse(&["--credential"]).unwrap_err().to_string();
         assert!(err.contains("needs a file") && err.contains("Usage:"), "{err}");
@@ -817,6 +840,18 @@ redash:
         assert!(err.contains("unknown option --credentail"), "a flag is repeated back: {err}");
         let err = parse(&["Zq9-secret"]).unwrap_err().to_string();
         assert!(!err.contains("Zq9"), "anything else might be a password: {err}");
+    }
+
+    #[test]
+    fn claude_cmd_is_split_like_a_shell_would() {
+        assert_eq!(claude_command(None).unwrap(), ["claude"]);
+        assert_eq!(claude_command(Some("  ".into())).unwrap(), ["claude"]);
+        assert_eq!(
+            claude_command(Some("claude --model opus --add-dir '/srv/my repo'".into())).unwrap(),
+            ["claude", "--model", "opus", "--add-dir", "/srv/my repo"]
+        );
+        let err = claude_command(Some("claude 'Zq9".into())).unwrap_err().to_string();
+        assert!(err.contains("CLAUDE_CMD") && !err.contains("Zq9"), "the value is not repeated: {err}");
     }
 
     #[test]

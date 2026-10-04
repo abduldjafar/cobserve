@@ -18,6 +18,7 @@ on top of it and are listed in `DESIGN.md` §13.
 | **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL. |
 | **MAP** | `3` | The whole fleet as tiles framed in their severity colour, with bars and history. A forty-node fleet on one screen. |
 | **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
+| **CLAUDE** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — in as many named sessions as you need, for any work at all, while the fleet and the Redash queue stay in sight above it. |
 
 ![Query detail](docs/screenshots/140x40-query.png)
 
@@ -70,6 +71,42 @@ and SQL) and `/api/data_sources` for what it runs on (name and type).
   waiting jobs.
 
 ![Redash with leftovers in its started list](docs/screenshots/120x36-queue-leftovers.png)
+
+### Claude in the monitor
+
+View 5 runs the official `claude` command in a terminal inside the monitor: the header, the
+FLEET and REDASH lines and the worst thing in the fleet stay on top, Claude Code gets the rest.
+It is the same Claude Code as in a terminal tab of its own — any project, any question, its own
+permission prompts — signed in with your **Pro or Max plan**. Nothing here uses an API key:
+
+- `ANTHROPIC_API_KEY` is taken out of its environment, so Claude Code bills the plan you signed
+  in with even when your shell has a key set; so are the monitor's own credentials
+  (`CH_PASSWORD`, `CH_SEED_URLS`, `REDASH_ADMIN_API_KEY`, `REDIS_URL`).
+- It runs in the directory the monitor was started from — start it in the project you want to
+  work on. Claude can read files there, so keep the credential file somewhere else.
+- Install Claude Code and sign in once (`claude`, then `/login`). `CLAUDE_CMD` runs something
+  else, or the same with arguments: `CLAUDE_CMD="claude --model opus"`. `--claude` opens on
+  view 5.
+
+Several sessions run side by side, each its own `claude` with its own conversation, on a bar of
+tabs like the header's. A session goes by the name you give it, or by what Claude says it is
+working on. One that rings while you are elsewhere is marked `●` on its tab and on `5 CLAUDE`.
+
+| On view 5 | |
+|---|---|
+| any key | goes to Claude — `q`, the digits and `ctrl+c` too |
+| `ctrl+\` | the session bar; pressed again, back to the monitor |
+| then `1`…`9` | that session |
+| then `←` `→` | the previous or the next one |
+| then `n` | a new session |
+| then `r` | rename the one on screen (`⏎` keeps it, an empty name gives the default back) |
+| then `x` `x` | close it — `claude --resume` finds the conversation later |
+| then `esc` | back to Claude |
+
+From any other view `5` or `ctrl+\` comes back. `ctrl+z` is not passed on: there is no shell
+around Claude to bring it back.
+
+![Claude in view 5](docs/screenshots/120x36-claude.png)
 
 ### Reading the screen
 
@@ -150,6 +187,7 @@ have a user the other one does not know.
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — the strip says *not configured* |
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |
 | `EMAIL_DOMAIN` | your organisation's e-mail domain: people there are shown by name alone (`grigol.gankava`), everyone else by the whole address | unset — every address whole |
+| `CLAUDE_CMD` | what view 5 runs, with its arguments | `claude` |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `THEME` | `dark`, `light` or `mono` | `dark` |
 | `NO_COLOR` | any value: no colour at all (glyphs still carry severity) | unset |
@@ -172,7 +210,8 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `u` | pivot node ↔ user: who is burning the fleet |
 | `s` | sort: pressure, memory, CPU, name |
 | `/` | filter by node, user, person, SQL or query id · `esc` clears |
-| `1 2 3 4` | views |
+| `1 2 3 4 5` | views |
+| `ctrl+\` | Claude (view 5); there, the session bar — see *Claude in the monitor* |
 | `p` | pause (the numbers stop, the clock does not) |
 | `?` | help · `q` quit |
 

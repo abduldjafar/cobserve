@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────────────────────────── ● LIVE 2s · 04:26:04 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────────────────── ● LIVE 2s · 05:33:16 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄   QUERIES 15 · 4 ✕   │
 │ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                  [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
@@ -34,7 +34,7 @@
 │  ▲ Redash #8585   running 2× · j.petrova                                                                                                 │
 │ ─ c3e59c27 · j.petrova @ clickhouse-bi · Redash #8585 ────────────────────────────────────────────────────────────────────────────────── │
 │ ⏱ 6m40s ✕ runaway   MEM 21.2 GiB = 88% of its 24.0 GiB limit ████████▉    CPU 1.90 cores                                                 │
-│ READ 62.3 GiB / 3.0B rows @ 159.5 MiB/s   PROGRESS ███████████▍ 95% of ~3.2B rows · ETA ~20s · started 04:23:20 UTC · Select             │
+│ READ 62.3 GiB / 3.0B rows @ 159.5 MiB/s   PROGRESS ███████████▍ 95% of ~3.2B rows · ETA ~20s · started 05:30:32 UTC · Select             │
 │                                                                                                                                          │
 │  ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help   q  quit              │
 ╰───────────────────────────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

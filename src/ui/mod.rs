@@ -18,6 +18,7 @@
 //! Colour comes from `theme.rs`; this module asks for roles, never for colours.
 
 mod band;
+mod claude;
 mod drawer;
 mod map;
 mod nodes;
@@ -91,7 +92,8 @@ fn areas(content: Rect, view: View, insights_len: usize, body_need: usize) -> Ar
     } else {
         0
     };
-    let drawer_height = if h >= DRAWER_TITLE_ONLY { 1 + drawer_body } else { 0 };
+    // View 5 gives Claude every row the band leaves; its rows say all there is to say.
+    let drawer_height = if view != View::Claude && h >= DRAWER_TITLE_ONLY { 1 + drawer_body } else { 0 };
     bottom = bottom.saturating_sub(drawer_height);
     let drawer = row(bottom, drawer_height);
 
@@ -157,16 +159,20 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
 
     band::draw(frame, app, theme, a.band);
     if a.band_rule.height > 0 {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled("─".repeat(a.band_rule.width as usize), theme.rule()))),
-            a.band_rule,
-        );
+        let line = if app.view == View::Claude {
+            // On view 5 the rule carries the worst thing in the fleet.
+            claude::watch_line(&insights, theme, a.band_rule.width as usize)
+        } else {
+            Line::from(Span::styled("─".repeat(a.band_rule.width as usize), theme.rule()))
+        };
+        frame.render_widget(Paragraph::new(line), a.band_rule);
     }
     match app.view {
         View::Nodes => nodes::draw_tree(frame, app, theme, a.body, area.width),
         View::Queue => queue::draw(frame, app, theme, a.body),
         View::Map => map::draw(frame, app, theme, a.body),
         View::Tape => tape::draw(frame, app, theme, a.body),
+        View::Claude => claude::draw(frame, app, theme, a.body),
     }
     if a.insights.height > 0 {
         nodes::draw_insights(frame, app, theme, a.insights, &insights);
@@ -227,13 +233,18 @@ fn header_right(app: &App, theme: &Theme, width: u16) -> Line<'static> {
     if width >= 80 {
         for view in View::ALL {
             spans.push(Span::raw(" "));
+            // A Claude session rang while another view was open: it is done, or it asks.
+            let calling = view == View::Claude && app.claude.calling() && app.view != View::Claude;
+            let mark = if calling { "●" } else { "" };
             let label = if width >= 110 {
-                format!(" {} {} ", view.number(), view.title())
+                format!(" {} {}{mark} ", view.number(), view.title())
             } else {
-                format!(" {}{} ", view.number(), &view.title()[..1])
+                format!(" {}{}{mark} ", view.number(), &view.title()[..1])
             };
             if view == app.view {
                 spans.push(Span::styled(label, theme.tab_active()));
+            } else if calling {
+                spans.push(Span::styled(label, theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)));
             } else {
                 spans.push(Span::styled(label, theme.muted()));
             }
@@ -345,6 +356,40 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("?", "help"),
             ("q", "quit"),
         ],
+        View::Claude if matches!(app.claude.mode, crate::claude::Mode::Naming(_)) => &[
+            ("⏎", "keep the name"),
+            ("esc", "cancel"),
+        ],
+        View::Claude if app.claude.mode == crate::claude::Mode::Bar => &[
+            ("1-9", "switch"),
+            ("←→", "next"),
+            ("n", "new"),
+            ("r", "rename"),
+            ("x", "close"),
+            ("ctrl+\\", "monitor"),
+            ("esc", "back to Claude"),
+        ],
+        View::Claude if app.claude.is_running() => {
+            // Every other key is Claude's; the one that is not opens the bar.
+            cells.spans(keycap("ctrl+\\", "sessions · monitor", theme));
+            cells.push("   every other key goes to Claude", theme.muted());
+            if let Some(title) = app.claude.current().and_then(|s| s.pane.title.as_ref()) {
+                let room = width.saturating_sub(cells.width() + 2);
+                if room > 8 {
+                    let title = fmt::truncate(title, room);
+                    cells.pad_to(width.saturating_sub(fmt::width(&title) + 1));
+                    cells.push(title, theme.text2());
+                }
+            }
+            return cells.line(width, Style::default());
+        }
+        View::Claude => &[
+            ("⏎", "start Claude"),
+            ("ctrl+\\", "sessions"),
+            ("1", "nodes"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
     };
     for (i, (key, label)) in keys.iter().enumerate() {
         let mut piece = Cells::new();
@@ -372,7 +417,8 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("u", "pivot node ↔ user: who is burning the fleet"),
     ("s", "sort: pressure, memory, CPU, name"),
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
-    ("1 2 3 4", "views: nodes · queue · map · tape"),
+    ("1 2 3 4 5", "views: nodes · queue · map · tape · claude"),
+    ("ctrl+\\", "Claude (view 5) · there: the sessions bar (1-9 n r x), again: the monitor"),
     ("p", "pause: the numbers stop, the clock does not"),
     ("q  ctrl-c", "quit"),
 ];

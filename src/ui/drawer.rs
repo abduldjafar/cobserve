@@ -27,6 +27,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         View::Queue => queue(app, theme, width),
         View::Map => map(app, theme, width),
         View::Tape => tape(app, theme, width),
+        // View 5 has no drawer (the layout gives it none); nothing to say if asked.
+        View::Claude => (title("claude", theme), Vec::new()),
     };
     frame.render_widget(
         Paragraph::new(rule(width, title, theme)),

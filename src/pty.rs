@@ -1,0 +1,197 @@
+//! The process behind view 5: `claude` in a pseudo-terminal (DESIGN.md §13).
+//!
+//! One per session of view 5, started from `main.rs` when the session asks for it. Its output
+//! goes down the event channel as `Event::Pane` and its end as `Event::PaneExited`, both with
+//! the session's id, from two threads of its own — reading a PTY blocks, and the loop must not.
+//! Dropping the process ends it (SIGHUP, as a closed terminal window would).
+
+use crate::app::Event;
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use std::io::{Read, Write};
+use tokio::sync::mpsc::UnboundedSender;
+
+/// What the program does not get from the monitor's environment.
+///
+/// `ANTHROPIC_API_KEY` first: with it set, Claude Code bills the API instead of the plan the
+/// user signed in with, and this pane is there to use the plan. Then the monitor's own
+/// credentials (§9) — a seed URL can carry a password — which have no business in an agent's
+/// environment, where one `env` would print them.
+pub const NOT_PASSED_ON: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "CH_PASSWORD",
+    "CH_SEED_URLS",
+    "REDASH_ADMIN_API_KEY",
+    "REDIS_URL",
+];
+
+pub struct PtyProcess {
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    killer: Box<dyn ChildKiller + Send + Sync>,
+    size: (u16, u16),
+}
+
+impl PtyProcess {
+    /// Start `command` in a PTY of `rows` × `cols`, in the directory the monitor was started
+    /// from — that is the project Claude works on. Its events carry `session`.
+    pub fn spawn(session: u64, command: &[String], rows: u16, cols: u16, tx: UnboundedSender<Event>) -> Result<Self, String> {
+        let program = command.first().ok_or("CLAUDE_CMD is empty")?;
+        if find_program(program).is_none() {
+            return Err(format!(
+                "{program} is not installed here (not on PATH) — install Claude Code, then sign in once with /login and your Pro or Max account"
+            ));
+        }
+        let size = PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 };
+        let pair = native_pty_system().openpty(size).map_err(|e| format!("no pseudo-terminal: {e}"))?;
+        let child = pair
+            .slave
+            .spawn_command(command_for(command))
+            .map_err(|e| format!("{program} did not start: {e}"))?;
+        // The program holds the only other end now: when it exits, reading sees the end.
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let killer = child.clone_killer();
+
+        let output = tx.clone();
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 16 * 1024];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => {
+                        if output.send(Event::Pane(session, buffer[..n].to_vec())).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        let mut child = child;
+        std::thread::spawn(move || {
+            let how = match child.wait() {
+                Ok(status) if status.success() => "it exited".to_string(),
+                Ok(status) => match status.signal() {
+                    Some(signal) => format!("it ended on {signal}"),
+                    None => format!("it exited with status {}", status.exit_code()),
+                },
+                Err(e) => format!("it could not be waited for: {e}"),
+            };
+            let _ = tx.send(Event::PaneExited(session, how));
+        });
+
+        Ok(Self { master: pair.master, writer, killer, size: (rows, cols) })
+    }
+
+    pub fn write(&mut self, bytes: &[u8]) {
+        // A program that has just ended cannot be written to; its end is reported on its own.
+        let _ = self.writer.write_all(bytes).and_then(|()| self.writer.flush());
+    }
+
+    pub fn size(&self) -> (u16, u16) {
+        self.size
+    }
+
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        let size = PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 };
+        if self.master.resize(size).is_ok() {
+            self.size = (rows, cols);
+        }
+    }
+}
+
+impl Drop for PtyProcess {
+    fn drop(&mut self) {
+        let _ = self.killer.kill();
+    }
+}
+
+/// The command, in the monitor's working directory, with a terminal it can believe and
+/// without what [`NOT_PASSED_ON`] lists.
+fn command_for(command: &[String]) -> CommandBuilder {
+    let mut builder = CommandBuilder::new(&command[0]);
+    builder.args(&command[1..]);
+    // Without this the PTY starts the program in the home directory.
+    if let Ok(dir) = std::env::current_dir() {
+        builder.cwd(dir);
+    }
+    scrub(&mut builder);
+    builder.env("TERM", "xterm-256color");
+    builder.env("COLORTERM", "truecolor");
+    builder
+}
+
+fn scrub(builder: &mut CommandBuilder) {
+    for name in NOT_PASSED_ON {
+        builder.env_remove(name);
+    }
+}
+
+/// Where `program` would be run from: itself when it names a path, else the first match on
+/// `PATH`.
+fn find_program(program: &str) -> Option<std::path::PathBuf> {
+    let candidate = std::path::Path::new(program);
+    if candidate.components().count() > 1 {
+        return candidate.is_file().then(|| candidate.to_path_buf());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|path| path.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn neither_an_api_key_nor_the_monitors_credentials_are_passed_on() {
+        let mut builder = CommandBuilder::new("claude");
+        builder.env("ANTHROPIC_API_KEY", "sk-test");
+        builder.env("CH_SEED_URLS", "http://monitor:secret@ch1:8123");
+        builder.env("PATH", "/usr/bin");
+        scrub(&mut builder);
+        assert!(builder.get_env("ANTHROPIC_API_KEY").is_none(), "the plan, not the API");
+        assert!(builder.get_env("CH_SEED_URLS").is_none());
+        assert!(builder.get_env("PATH").is_some(), "everything else is");
+    }
+
+    #[test]
+    fn a_program_that_is_not_installed_says_so() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let error = PtyProcess::spawn(1, &["no-such-claude-here".into()], 24, 80, tx).err().unwrap();
+        assert!(error.contains("not installed"), "{error}");
+        assert!(find_program("sh").is_some());
+    }
+
+    /// What the program printed, and how it ended if it did, until `done` says enough or a
+    /// few seconds pass. Its end can arrive before its last output: they come from two threads.
+    fn collect(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Event>, done: impl Fn(&str, Option<&str>) -> bool) -> (String, Option<String>) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (mut seen, mut ended) = (String::new(), None);
+        while Instant::now() < deadline && !done(&seen, ended.as_deref()) {
+            match rx.try_recv() {
+                Ok(Event::Pane(_, bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                Ok(Event::PaneExited(_, how)) => ended = Some(how),
+                Ok(_) => {}
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        (seen, ended)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_runs_in_the_pty_and_answers_its_keys() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let script = r#"printf 'size %s\n' "$(stty size)"; printf 'key=[%s] ' "${ANTHROPIC_API_KEY-unset}"; printf 'ready> '; read line; printf 'got:%s\n' "$line""#;
+        let mut process = PtyProcess::spawn(7, &["sh".into(), "-c".into(), script.into()], 30, 100, tx).expect("sh starts");
+        let (seen, _) = collect(&mut rx, |seen, _| seen.contains("ready>"));
+        assert!(seen.contains("size 30 100"), "the PTY has the pane's size: {seen}");
+        assert!(seen.contains("key=[unset]"), "{seen}");
+        process.write(b"hello\r");
+        let (seen, ended) = collect(&mut rx, |seen, ended| seen.contains("got:hello") && ended.is_some());
+        assert!(seen.contains("got:hello"), "{seen}");
+        assert_eq!(ended.as_deref(), Some("it exited"), "and its end is reported");
+    }
+}
