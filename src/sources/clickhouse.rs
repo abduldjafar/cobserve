@@ -387,12 +387,13 @@ impl ClickHouseSource {
         let seed_targets: Vec<NodeTarget> = self.targets.iter().filter(|t| t.seed).cloned().collect();
         for seed in seed_targets {
             let url = seed.url.clone();
+            // Named as the screen names it: the strip has no room for a scheme and a port.
             match self.post(&seed, &sql).await {
                 Ok(body) => match parse_clusters(&body) {
                     Ok(hosts) => answers.push(SeedAnswer { url, hosts }),
-                    Err(e) => errors.push(format!("{url}: {e}")),
+                    Err(e) => errors.push(format!("{}: {e}", seed.name)),
                 },
-                Err(e) => errors.push(format!("{url}: {e}")),
+                Err(e) => errors.push(format!("{}: {e}", seed.name)),
             }
         }
 
@@ -1710,7 +1711,8 @@ mod tests {
         let mut source = ClickHouseSource::new(&config(&seeds, None)).unwrap();
 
         let errors = source.discover().await;
-        assert_eq!(errors, [format!("{c}: login refused — user carol: check its password on this server")]);
+        let carol = c.trim_start_matches("http://");
+        assert_eq!(errors, [format!("{carol}: login refused — user carol: check its password on this server")]);
         let mut hosts: Vec<&str> = source.targets().iter().map(|t| t.host.as_str()).collect();
         hosts.sort();
         assert_eq!(hosts, ["node-a", "node-b"]);

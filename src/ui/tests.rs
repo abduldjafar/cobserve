@@ -259,11 +259,20 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     assert!(!row("6 ✳ infra").is_empty(), "the second, by its name: {screen}");
     assert!(screen.contains("the second session") && !screen.contains("the first session"), "only the session on screen: {screen}");
     assert!(screen.contains("+  new session"), "{screen}");
-    assert!(screen.contains("5-9 session") && screen.contains("F1-F9"), "the keys, for when the mouse is not at hand: {screen}");
+    // The keys are the footer's, said once, and pressing ctrl+\ moves none of them.
+    let footer = |screen: &str| screen.lines().rev().nth(1).unwrap_or_default().to_string();
+    let typing = footer(&screen);
+    assert!(typing.contains("ctrl+\\  then   1-4  views   5-9  sessions   n  new   r  rename   x  close"), "{typing}");
+    assert!(typing.contains("F1-F9  any tab"), "for a terminal that keeps ctrl+\\: {typing}");
+    assert_eq!(screen.matches("5-9").count(), 1, "not in the list too: {screen}");
 
     app.update(ctrl('\\'));
     let bar = render(&app, 140, 40);
-    assert!(bar.contains("which one?") && bar.contains("rename") && bar.contains("close"), "{bar}");
+    assert!(bar.contains("which one?"), "{bar}");
+    let lit = footer(&bar);
+    let at = |line: &str, text: &str| line.find(text).unwrap_or_else(|| panic!("{text} in {line}"));
+    assert_eq!(at(&lit, "1-4  views"), at(&typing, "1-4  views"), "{lit}");
+    assert!(lit.contains("x  close   ctrl+\\  monitor   esc  back to Claude"), "the way back: {lit}");
     app.update(key(KeyCode::Char('x')));
     let closing = render(&app, 140, 40);
     assert!(closing.contains("x again closes it"), "{closing}");
@@ -303,8 +312,11 @@ fn claude_runs_in_view_five_under_the_monitor() {
     assert!(lines[1].contains("FLEET") && lines[2].contains("REDASH"), "the band stays: {screen}");
     assert!(lines[3].contains("✖ clickhouse3"), "the worst of the fleet under the band: {}", lines[3]);
     assert!(lines[0].contains("5 CLAUDE"), "a tab of its own: {}", lines[0]);
-    assert!(screen.contains("ctrl+\\") && screen.contains("every other key goes to Claude"), "{screen}");
-    assert!(screen.contains("✳ Tidy the README"), "Claude's task, from its title: {screen}");
+    assert!(screen.contains("✳ Tidy the README"), "Claude's task, from its title, in the list: {screen}");
+    let footer = lines[lines.len() - 2];
+    assert!(footer.contains("ctrl+\\  then") && !footer.contains("Tidy the README"), "keys only: {footer}");
+    let wide = render(&app, 160, 40);
+    assert!(wide.lines().rev().nth(1).unwrap().contains("any tab   every other key goes to Claude"), "{wide}");
     assert!(!screen.contains("─ job ·") && !screen.contains("INSIGHTS"), "no drawer, no insights: {screen}");
 }
 
@@ -319,6 +331,21 @@ fn claude_not_installed_says_how_to_get_it() {
     assert!(screen.contains("not installed"), "{screen}");
     assert!(screen.contains("no API key"), "it runs on the plan: {screen}");
     assert!(screen.contains("start Claude"), "⏎ is offered: {screen}");
+}
+
+#[test]
+fn a_notice_on_the_border_makes_room_and_never_runs_into_the_counts() {
+    let mut app = app_after(3);
+    let said = "discovery via clickhouse-events.example.net: no access — r_reports_daily needs SELECT on system.clusters";
+    app.update(Event::Notice(said.into()));
+    let bottom = |width: u16| render(&app, width, 30).lines().last().unwrap_or_default().to_string();
+    let wide = bottom(200);
+    assert!(wide.contains(said) && wide.contains("nodes polled"), "room for both: {wide}");
+    let mid = bottom(130);
+    assert!(mid.contains(said) && !mid.contains("nodes polled"), "the counts make way: {mid}");
+    let narrow = bottom(90);
+    assert!(narrow.contains("no access — r_reports") && narrow.contains("… ─"), "cut, and says so: {narrow}");
+    assert!(narrow.contains("─ read-only"), "never run together: {narrow}");
 }
 
 #[test]

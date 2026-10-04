@@ -112,8 +112,8 @@ fn mark(session: &Session) -> &'static str {
 }
 
 /// The sessions as a list, like a terminal's tabs: number, name — or what Claude says it is
-/// on — and under it the branch and the directory it works in. A `+` opens another; the keys
-/// are at the bottom, for when the mouse is not at hand.
+/// on — and under it the directory it works in and its branch. A `+` opens another; the keys
+/// are the footer's, as on every view.
 fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let sessions = &app.claude;
     let width = area.width as usize;
@@ -202,27 +202,6 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         }
         _ => {}
     }
-
-    // The keys, at the bottom, when there is room for them.
-    let keys: [(&str, &str); 5] = [
-        (" ctrl+\\", " then"),
-        ("  1-4", " view · 5-9 session"),
-        ("  n r x", " new · name · close"),
-        (" ctrl+\\ ctrl+\\", " monitor"),
-        (" F1-F9", " or a click: any tab"),
-    ];
-    let height = area.height as usize;
-    if lines.len() + keys.len() < height {
-        while lines.len() + keys.len() < height {
-            lines.push(Line::from(""));
-        }
-        for (key, what) in keys {
-            let mut cells = Cells::new();
-            cells.push(key, theme.muted());
-            cells.push(what, theme.faint());
-            lines.push(cells.line(width, Style::default()));
-        }
-    }
     drop(hits);
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -272,7 +251,6 @@ fn session_bar(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
         _ => {
             cells.push(" + ", theme.keycap());
             hits.push((Rect::new(x, area.y, 3, 1), Hit::NewSession));
-            cells.push("  ctrl+\\ then 1-4 views · 5-9 sessions · n new · r rename · x close", theme.faint());
         }
     }
     let lit = sessions.mode == Mode::Bar;

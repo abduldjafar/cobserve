@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────── ● LIVE 2s · 08:18:17 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────── ● LIVE 2s · 08:44:34 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
 │ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
 │ ─ ✖ clickhouse3  memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more   ·  5 more on view 1 ───────────── │
@@ -27,10 +27,10 @@
 │                           │                                                                                          │
 │                           │                                                                                          │
 │                           │                                                                                          │
-│  ctrl+\ then              │                                                                                          │
-│   1-4 view · 5-9 session  │                                                                                          │
-│   n r x new · name · close│                                                                                          │
-│  ctrl+\ ctrl+\ monitor    │                                                                                          │
-│  F1-F9 or a click: any tab│                                                                                          │
-│  ctrl+\  then 1-4 views · 5-9 sessions   every other key goes to Claude                 ✳ Stream the invoice export  │
+│                           │                                                                                          │
+│                           │                                                                                          │
+│                           │                                                                                          │
+│                           │                                                                                          │
+│                           │                                                                                          │
+│  ctrl+\  then   1-4  views   5-9  sessions   n  new   r  rename   x  close   F1-F9  any tab                          │
 ╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯
