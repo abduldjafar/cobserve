@@ -129,14 +129,25 @@ fn scrub(builder: &mut CommandBuilder) {
 /// A session's directory as typed — `~` for home, relative to the monitor's own — as a path
 /// that exists.
 pub fn resolve_dir(typed: &str) -> Result<PathBuf, String> {
+    let path = expand(typed);
+    if path.is_dir() { Ok(path) } else { Err(format!("no such directory: {}", typed.trim())) }
+}
+
+/// A directory as typed, made absolute — `~` is home, anything relative is from here — without
+/// asking the disk whether it is there.
+pub fn expand(typed: &str) -> PathBuf {
     let typed = typed.trim();
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let path = match (typed.strip_prefix('~'), home) {
         (Some(rest), Some(home)) => home.join(rest.trim_start_matches('/')),
         _ => PathBuf::from(typed),
     };
-    let path = if path.is_relative() { std::env::current_dir().map_err(|e| e.to_string())?.join(path) } else { path };
-    if path.is_dir() { Ok(path) } else { Err(format!("no such directory: {typed}")) }
+    let path = match std::env::current_dir() {
+        Ok(here) if path.is_relative() => here.join(path),
+        _ => path,
+    };
+    // `./x` and a trailing `/.` are the same folder without them.
+    path.components().collect()
 }
 
 /// `~/work/cobserve` for a path under home: how a directory is shown, and typed.

@@ -44,6 +44,7 @@ struct Palette {
     faint: (u8, u8, u8),
     accent: (u8, u8, u8),
     person: (u8, u8, u8),
+    claude: (u8, u8, u8),
     ok: (u8, u8, u8),
     warn: (u8, u8, u8),
     crit: (u8, u8, u8),
@@ -66,6 +67,7 @@ const DARK: Palette = Palette {
     faint: (82, 91, 107),
     accent: (110, 182, 255),
     person: (201, 167, 255),
+    claude: (217, 119, 87),
     ok: (88, 199, 128),
     warn: (236, 183, 64),
     crit: (250, 108, 98),
@@ -88,6 +90,7 @@ const LIGHT: Palette = Palette {
     faint: (152, 160, 171),
     accent: (9, 105, 218),
     person: (128, 76, 222),
+    claude: (190, 88, 52),
     ok: (26, 127, 55),
     warn: (166, 110, 0),
     crit: (207, 34, 46),
@@ -113,6 +116,8 @@ pub struct Theme {
     pub faint: Color,
     pub accent: Color,
     pub person: Color,
+    /// Claude Code's own orange, for its sessions.
+    pub claude: Color,
     pub ok: Color,
     pub warn: Color,
     pub crit: Color,
@@ -148,6 +153,7 @@ impl Theme {
                     faint: c(p.faint),
                     accent: c(p.accent),
                     person: c(p.person),
+                    claude: c(p.claude),
                     ok: c(p.ok),
                     warn: c(p.warn),
                     crit: c(p.crit),
@@ -172,6 +178,7 @@ impl Theme {
                 faint: Color::DarkGray,
                 accent: Color::LightBlue,
                 person: Color::LightMagenta,
+                claude: Color::LightRed,
                 ok: Color::Green,
                 warn: Color::Yellow,
                 crit: Color::Red,
@@ -194,6 +201,7 @@ impl Theme {
                 faint: Color::Reset,
                 accent: Color::Reset,
                 person: Color::Reset,
+                claude: Color::Reset,
                 ok: Color::Reset,
                 warn: Color::Reset,
                 crit: Color::Reset,
@@ -250,6 +258,11 @@ impl Theme {
 
     pub fn person(&self) -> Style {
         Style::default().fg(self.person)
+    }
+
+    /// Claude Code's mark on its sessions.
+    pub fn claude(&self) -> Style {
+        Style::default().fg(self.claude).add_modifier(Modifier::BOLD)
     }
 
     pub fn border(&self) -> Style {

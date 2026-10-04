@@ -11,6 +11,7 @@ mod claude;
 mod config;
 mod fake;
 mod fmt;
+mod folders;
 mod history;
 mod insight;
 mod model;
@@ -28,6 +29,8 @@ use config::Config;
 use crossterm::event::{Event as TermEvent, KeyEventKind};
 use ratatui::DefaultTerminal;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -119,6 +122,8 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
     let mut panes: HashMap<u64, pty::PtyProcess> = HashMap::new();
     // When the sessions' branches were last read: Claude, or you, can change them.
     let mut branches_read = std::time::Instant::now();
+    // The folder picker's latest lookup: an older one still running sees it and stops.
+    let latest_lookup = Arc::new(AtomicU64::new(0));
 
     spawn_sources(&config, tx.clone());
     // Anything a source could not even start with belongs on screen, not in a log file.
@@ -140,6 +145,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
         terminal.draw(|frame| ui::draw(frame, &app))?;
         // After the frame: the panes now know the size they are drawn at.
         drive_panes(&mut app, &mut panes, &tx);
+        drive_picker(&mut app, &latest_lookup, &tx);
         if branches_read.elapsed() >= Duration::from_secs(5) {
             branches_read = std::time::Instant::now();
             for session in &mut app.claude.list {
@@ -224,6 +230,25 @@ fn drive_panes(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>, tx: &mp
     // A closed session's program ends with it.
     panes.retain(|id, _| app.claude.list.iter().any(|s| s.id == *id));
     send_owed(app, panes);
+}
+
+/// What the folder picker wants read, on a thread of its own: a folder's folders come back at
+/// once, a search as it goes. A newer lookup, or the picker closing, makes an older one stop.
+fn drive_picker(app: &mut App, latest: &Arc<AtomicU64>, tx: &mpsc::UnboundedSender<Event>) {
+    let claude::Mode::Opening(picker) = &mut app.claude.mode else {
+        latest.store(0, Ordering::SeqCst);
+        return;
+    };
+    let Some(lookup) = picker.lookup() else {
+        return;
+    };
+    latest.store(lookup.generation, Ordering::SeqCst);
+    let (latest, tx) = (Arc::clone(latest), tx.clone());
+    std::thread::spawn(move || {
+        folders::look(&lookup, &latest, &|found| {
+            let _ = tx.send(Event::Folders(found));
+        });
+    });
 }
 
 /// Keys, pastes and answers owed to each program.

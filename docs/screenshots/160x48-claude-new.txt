@@ -2,24 +2,22 @@
 │ FLEET  9 nodes · 1 hot   MEM █████▏         36.4% 280/768 GiB ▄▄▄▄▄▅▅▅▅▅▅▅▅▅▄▄   CPU ████           28.7% 55/192 cores ▅▄▄▄▄▄▄▄▅▄▅▄▄▄▄▄   QUERIES 15 · 4 ✕   │
 │ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue │
 │ ─ ✖ clickhouse3  memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more   ·  5 more on view 1 ───────────────────────────────────────────────────── │
-│  SESSIONS                         │ ✻ Claude Code  ~/work/billing                                                                                            │
-│ ╭───────────────────────────────╮ │                                                                                                                          │
-│ │ ✻  billing export           5 │ │ > make the invoice export stream its rows instead of building one big Vec                                                │
-│ │    ~/work/billing  ⎇ main     │ │                                                                                                                          │
-│ ╰───────────────────────────────╯ │ ● I'll read the exporter first.                                                                                          │
-│   ✻  late partitions        ● 6   │                                                                                                                          │
-│      ~/work/pipelines  ⎇ fix-l…   │ ● Read(src/export/invoice.rs)                                                                                            │
-│                                   │   └  214 lines                                                                                                           │
-│   ✻  weekly totals            7   │                                                                                                                          │
-│      ~/work/reports  ⎇ add-wee…   │ ● Update(src/export/invoice.rs)                                                                                          │
-│                                   │   └  18 lines added, 31 removed                                                                                          │
-│   +  new session                  │                                                                                                                          │
-│                                   │ ✻ Running the tests… (esc to interrupt)                                                                                  │
+│  SESSIONS                         │ ✻ New session  ·  where should Claude work?                                                                    ✕ cancel  │
 │                                   │                                                                                                                          │
-│                                   │ ────────────────────────────────────────────────────────────────────────────────                                         │
-│                                   │ ❯                                                                                                                        │
-│                                   │ ────────────────────────────────────────────────────────────────────────────────                                         │
-│                                   │                                                                                                                          │
+│   ✻  billing export           5   │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│      ~/work/billing  ⎇ main       │ │ ⌕  ▏search the folders below here, or type a path                                                          7 folders │ │
+│                                   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│   ✻  late partitions        ● 6   │  ~ › work                                                                                                                │
+│      ~/work/pipelines  ⎇ fix-l…   │                                                                                                                          │
+│                                   │    ⏎  Open the session here                                                                                              │
+│   ✻  weekly totals            7   │   ↰  ..  up to ~                                                                                                         │
+│      ~/work/reports  ⎇ add-wee…   │   ▸  billing                                                                                                     ⎇ main  │
+│ ╭───────────────────────────────╮ │   ▸  dotfiles                                                                                                  ⎇ master  │
+│ │ +  new session                │ │   ▸  infra-notes                                                                                                         │
+│ │    choose its folder →        │ │ ▌ ▸  pipelines                                                                                    ⎇ fix-late-partitions  │
+│ ╰───────────────────────────────╯ │   ▸  reports                                                                                        ⎇ add-weekly-totals  │
+│                                   │   ▸  sandbox                                                                                                             │
+│                                   │   ▸  website                                                                                                 ⎇ redesign  │
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
@@ -44,5 +42,7 @@
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
-│  ctrl+\  then   1-4  views   5-9  sessions   n  new   r  rename   x  close   F1-F9  any tab   every other key goes to Claude                                 │
+│                                   │                                                                                                                          │
+│                                   │                                                                                                                          │
+│  ↑↓  choose   ⏎  open the session there   →  go in   ←  up   esc  cancel   type to search · a click on a folder goes into it                                 │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

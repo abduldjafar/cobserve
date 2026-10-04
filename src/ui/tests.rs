@@ -223,6 +223,7 @@ fn run_session(app: &mut App, output: &[u8]) -> u64 {
 /// View 5 with a program that has printed something, as the pane would after its first output.
 fn app_with_claude(output: &[u8]) -> App {
     let mut app = app_after(3);
+    app.claude.default_dir = "~/work/cobserve".into();
     app.update(key(KeyCode::Char('5')));
     run_session(&mut app, output);
     app
@@ -232,11 +233,11 @@ fn app_with_claude(output: &[u8]) -> App {
 fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     let mut app = app_with_claude(b"the first session\r\n");
     let first = app.claude.current().unwrap().id;
-    // ctrl+\ n asks where; ⏎ opens it where the first works.
+    // ctrl+\ n asks where, starting where the first works; ⏎ opens it there.
     app.update(ctrl('\\'));
     app.update(key(KeyCode::Char('n')));
     let asking = render(&app, 140, 40);
-    assert!(asking.contains("new session, in:") && asking.contains("where should it work"), "{asking}");
+    assert!(asking.contains("New session") && asking.contains("Open the session here"), "{asking}");
     app.update(key(KeyCode::Enter));
     run_session(&mut app, b"the second session\r\n");
     // ctrl+\ r: named.
@@ -255,8 +256,9 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     let screen = render(&app, 140, 40);
     assert!(screen.contains("SESSIONS"), "{screen}");
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
-    assert!(row("5 ✳ claude").contains('●'), "the first, which rang: {screen}");
-    assert!(!row("6 ✳ infra").is_empty(), "the second, by its name: {screen}");
+    assert!(row("✻  cobserve").contains("● 5"), "the first, by its folder, which rang: {screen}");
+    assert!(row("✻  infra").contains('6'), "the second, by its name: {screen}");
+    assert!(row("~/work/cobserve").contains('│'), "the one on screen is framed: {screen}");
     assert!(screen.contains("the second session") && !screen.contains("the first session"), "only the session on screen: {screen}");
     assert!(screen.contains("+  new session"), "{screen}");
     // The keys are the footer's, said once, and pressing ctrl+\ moves none of them.
@@ -278,12 +280,112 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     assert!(closing.contains("x again closes it"), "{closing}");
 }
 
+/// A click where the last frame drew `hit`.
+fn click_on(app: &mut App, hit: crate::app::Hit) {
+    let at = app.viewport.hits.borrow().iter().find(|(_, h)| *h == hit).map(|(r, _)| *r);
+    let at = at.unwrap_or_else(|| panic!("{hit:?} is not on screen"));
+    app.update(Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: at.x + at.width / 2,
+        row: at.y,
+        modifiers: KeyModifiers::NONE,
+    }));
+}
+
+/// The picker's lookup answered with `folders` (name, branch) in the folder it is in, `hit` the
+/// part of each name a search matched.
+fn answer_picker(app: &mut App, branch: Option<&str>, folders: &[(&str, Option<&str>)], hit: Option<(usize, usize)>) {
+    let crate::claude::Mode::Opening(picker) = &mut app.claude.mode else {
+        panic!("not picking");
+    };
+    let lookup = picker.lookup().expect("a lookup");
+    let folders = folders
+        .iter()
+        .map(|(name, branch)| crate::folders::Folder {
+            path: lookup.dir.join(name),
+            shown: name.to_string(),
+            hit,
+            branch: branch.map(String::from),
+        })
+        .collect();
+    let found = crate::folders::Found {
+        generation: lookup.generation,
+        dir: Some(lookup.dir.clone()),
+        branch: branch.map(String::from),
+        folders,
+        done: true,
+        ..Default::default()
+    };
+    app.update(Event::Folders(found));
+}
+
+#[test]
+fn a_new_session_s_folder_is_picked_with_clicks_like_in_an_explorer() {
+    use crate::app::Hit;
+    use crate::claude::{Mode, PickRow};
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+    let mut app = app_with_claude(b"one\r\n");
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('n')));
+    answer_picker(&mut app, Some("main"), &[("docs", None), ("src", None), ("tools", Some("dev"))], None);
+    let screen = render(&app, 140, 40);
+    for text in ["New session", "where should Claude work?", "✕ cancel", "⌕", "search the folders below here", "3 folders"] {
+        assert!(screen.contains(text), "{text}: {screen}");
+    }
+    let row = |screen: &str, text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
+    assert!(row(&screen, "~ › work › cobserve").contains("⎇ main"), "where it is, and its branch: {screen}");
+    assert!(row(&screen, "Open the session here").contains('▌'), "the cursor starts on it: {screen}");
+    assert!(row(&screen, "↰  ..").contains("up to ~/work"), "{screen}");
+    assert!(row(&screen, "▸  tools").contains("⎇ dev"), "a repository, with its branch: {screen}");
+    assert!(screen.contains("choose its folder →"), "the new session's card, framed: {screen}");
+
+    // A click on a folder goes into it; one on a step of the path goes back up to it.
+    click_on(&mut app, Hit::Pick(PickRow::Folder(0)));
+    let Mode::Opening(picker) = &app.claude.mode else { panic!() };
+    assert_eq!(picker.dir, home.join("work/cobserve/docs"));
+    answer_picker(&mut app, None, &[], None);
+    let inside = render(&app, 140, 40);
+    assert!(inside.contains("~ › work › cobserve › docs") && inside.contains("no folders in here"), "{inside}");
+    click_on(&mut app, Hit::Crumb(1));
+    let Mode::Opening(picker) = &app.claude.mode else { panic!() };
+    assert_eq!(picker.dir, home.join("work"));
+    answer_picker(&mut app, None, &[("cobserve", Some("main")), ("pipelines", None)], None);
+
+    // Typed, it searches below; what it found is listed with what matched.
+    for c in "pipe".chars() {
+        app.update(key(KeyCode::Char(c)));
+    }
+    answer_picker(&mut app, None, &[("pipelines", None)], Some((0, 4)));
+    let found = render(&app, 140, 40);
+    assert!(found.contains("pipe▏") && found.contains("1 found") && !found.contains("Open the session here"), "{found}");
+    assert!(row(&found, "▸  pipelines").contains('▌'), "the best match under the cursor: {found}");
+    assert!(found.lines().rev().nth(1).unwrap().contains("clear the search"), "esc clears it first: {found}");
+
+    // ⏎ opens the session in the folder under the cursor, and it is on screen.
+    app.update(key(KeyCode::Enter));
+    assert_eq!(app.claude.mode, Mode::Typing);
+    assert_eq!((app.claude.list.len(), app.claude.current().unwrap().dir.as_str()), (2, "~/work/pipelines"));
+
+    // A click on the first row opens it in the folder looked at; ✕ gives up.
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('n')));
+    answer_picker(&mut app, None, &[], None);
+    render(&app, 140, 40);
+    click_on(&mut app, Hit::Cancel);
+    assert_eq!((app.claude.mode.clone(), app.claude.list.len()), (Mode::Typing, 2));
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('n')));
+    render(&app, 140, 40);
+    click_on(&mut app, Hit::Pick(PickRow::Here));
+    assert_eq!((app.claude.list.len(), app.claude.current().unwrap().dir.as_str()), (3, "~/work/pipelines"));
+}
+
 #[test]
 fn a_narrow_terminal_puts_the_sessions_on_a_bar() {
     let app = app_with_claude(b"one\r\n");
     let screen = render(&app, 96, 30);
     let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[4].contains(" 5 claude ") && lines[4].contains(" + "), "{}", lines[4]);
+    assert!(lines[4].contains(" 5 cobserve ") && lines[4].contains(" + "), "{}", lines[4]);
     assert!(!screen.contains("SESSIONS"), "{screen}");
 }
 
@@ -312,7 +414,7 @@ fn claude_runs_in_view_five_under_the_monitor() {
     assert!(lines[1].contains("FLEET") && lines[2].contains("REDASH"), "the band stays: {screen}");
     assert!(lines[3].contains("✖ clickhouse3"), "the worst of the fleet under the band: {}", lines[3]);
     assert!(lines[0].contains("5 CLAUDE"), "a tab of its own: {}", lines[0]);
-    assert!(screen.contains("✳ Tidy the README"), "Claude's task, from its title, in the list: {screen}");
+    assert!(screen.contains("✻  Tidy the README"), "Claude's task, from its title, in the list: {screen}");
     let footer = lines[lines.len() - 2];
     assert!(footer.contains("ctrl+\\  then") && !footer.contains("Tidy the README"), "keys only: {footer}");
     let wide = render(&app, 160, 40);
@@ -1003,13 +1105,7 @@ fn export_screens() {
         ("~/work/pipelines", &b"\x1b]0;\xe2\x9c\xb3 late partitions\x07"[..]),
         ("~/work/reports", &b"\x1b]0;\xe2\x9c\xb3 weekly totals\x07"[..]),
     ] {
-        claude.update(ctrl('\\'));
-        claude.update(key(KeyCode::Char('n')));
-        claude.update(ctrl('u'));
-        for c in dir.chars() {
-            claude.update(key(KeyCode::Char(c)));
-        }
-        claude.update(key(KeyCode::Enter));
+        claude.claude.open_new(dir);
         run_session(&mut claude, title);
     }
     claude.update(ctrl('\\'));
@@ -1021,6 +1117,25 @@ fn export_screens() {
     claude.claude.list[1].pane.attention = true;
     save("120x36-claude", &claude, 120, 36);
     save("160x48-claude", &claude, 160, 48);
+
+    // A fourth one's folder being picked, a folder up from billing, among the other projects.
+    claude.update(ctrl('\\'));
+    claude.update(key(KeyCode::Char('n')));
+    claude.update(key(KeyCode::Left));
+    let projects = [
+        ("billing", Some("main")),
+        ("dotfiles", Some("master")),
+        ("infra-notes", None),
+        ("pipelines", Some("fix-late-partitions")),
+        ("reports", Some("add-weekly-totals")),
+        ("sandbox", None),
+        ("website", Some("redesign")),
+    ];
+    answer_picker(&mut claude, None, &projects, None);
+    for _ in 0..5 {
+        claude.update(key(KeyCode::Down));
+    }
+    save("160x48-claude-new", &claude, 160, 48);
 
     // Long enough for clickhouse5 to join, ch6 to drop out and come back, and a kill.
     let mut tape = app_after(118);

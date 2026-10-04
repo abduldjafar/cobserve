@@ -89,23 +89,31 @@ permission prompts — signed in with your **Pro or Max plan**. Nothing here use
   view 5.
 
 Up to five sessions run side by side, each its own `claude` with its own conversation, listed
-beside it like a terminal's tabs: the session's number, its name — the one you gave it, or
-what Claude says it is working on — and under it the directory and its git branch. A session
-that rings while you are elsewhere is marked `●` there and on `5 CLAUDE`; one that ended, `✕`.
-The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the sessions.
+beside it like a terminal's tabs, the one on screen framed: its name — the one you gave it,
+what Claude says it is working on, or else its folder — and number, and under them the folder
+and its git branch. A session that rings while you are elsewhere is marked `●` there and on
+`5 CLAUDE`; one that ended, `✕`. The sessions are numbered on from the views: `1`–`4` are the
+monitor, `5`–`9` the sessions.
+
+A new session's folder is picked as in a file explorer, no typing needed: it starts in the
+folder the session on screen works in, a click on a folder goes into it, a click on a step of
+the path above (`~ › work › cobserve`) goes back up to it, and **Open the session here** (or
+`⏎`) starts Claude there. Typing searches the folders below by name — up to six levels down,
+nearest first, `node_modules` and the like left out — and a path (`~/`, `/`, `../`) is
+completed like a shell does. A repository shows its branch.
 
 | On view 5 | |
 |---|---|
 | any key | goes to Claude — `q`, the digits and `ctrl+c` too |
 | `ctrl+\` then `1`…`4` | that view of the monitor |
 | `ctrl+\` then `5`…`9` | that session |
-| `ctrl+\` then `n` | a new session: type where it works (it starts from the current one's directory; `ctrl+u` clears, `⏎` opens) |
+| `ctrl+\` then `n` | a new session: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `esc` clears the search or gives up |
 | `ctrl+\` then `r` | rename the one on screen (an empty name gives the default back) |
 | `ctrl+\` then `x` `x` | close it — `claude --resume` finds the conversation later |
 | `ctrl+\` then `esc` | back to Claude |
 | `ctrl+\` `ctrl+\` | back to the monitor, where you came from |
 | `F1`…`F9` | the same tabs from anywhere, without `ctrl+\` |
-| a click | a tab in the header, a session, the `+` |
+| a click | a tab in the header, a session, **+ new session**, a folder |
 | the wheel | over Claude, its page up and down; elsewhere, the cursor |
 
 From the monitor, `5`…`9` or `ctrl+\` go to Claude. `ctrl+z` is not passed on: there is no
@@ -114,6 +122,8 @@ modifier — Shift in most, ⌥ in iTerm2 and Terminal — and `MOUSE=0` leaves 
 terminal altogether.
 
 ![Claude in view 5](docs/screenshots/160x48-claude.png)
+
+![A new session's folder, picked with clicks](docs/screenshots/160x48-claude-new.png)
 
 ### Reading the screen
 
