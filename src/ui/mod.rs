@@ -137,13 +137,20 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         Severity::None
     };
 
+    // A notice on the bottom border comes before the counts beside it: they make way for it,
+    // and what is still too long is cut with … rather than run into them.
+    let mut right = bottom_right(app, theme, true);
+    let room = |right: &Line<'_>| (area.width as usize).saturating_sub(2 + right.width() + 2);
+    if app.notice().is_some_and(|n| fmt::width(n) + 4 > room(&right)) {
+        right = bottom_right(app, theme, false);
+    }
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(theme.border())
         .title_top(header_left(app, theme, status, area.width))
         .title_top(header_right(app, theme, area.width).right_aligned())
-        .title_bottom(bottom_left(app, theme))
-        .title_bottom(bottom_right(app, theme).right_aligned());
+        .title_bottom(bottom_left(app, theme, room(&right)))
+        .title_bottom(right.right_aligned());
     let inner = block.inner(area);
     frame.render_widget(block, area);
     tab_hits(frame, app, area);
@@ -277,19 +284,21 @@ fn header_right(app: &App, theme: &Theme, width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
-fn bottom_left(app: &App, theme: &Theme) -> Line<'static> {
+/// The latest notice, in `room` cells.
+fn bottom_left(app: &App, theme: &Theme, room: usize) -> Line<'static> {
     match app.notice() {
-        Some(notice) => Line::from(vec![
+        Some(notice) if room > 8 => Line::from(vec![
             Span::styled(" ▲ ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{notice} "), theme.sev(Severity::Warn)),
+            Span::styled(format!("{} ", fmt::truncate(notice, room - 4)), theme.sev(Severity::Warn)),
         ]),
-        None => Line::from(""),
+        _ => Line::from(""),
     }
 }
 
-fn bottom_right(app: &App, theme: &Theme) -> Line<'static> {
+/// How many nodes answered and how fast, when `counts`, and that nothing here writes.
+fn bottom_right(app: &App, theme: &Theme, counts: bool) -> Line<'static> {
     let mut spans = Vec::new();
-    if let Some(snapshot) = app.snapshot() {
+    if let Some(snapshot) = app.snapshot().filter(|_| counts) {
         let polled = snapshot.nodes.len();
         let slowest = snapshot.nodes.iter().filter_map(|n| n.poll_ms).max();
         let mut text = format!(" {} polled", fmt::plural(polled, "node", "nodes"));
@@ -298,6 +307,8 @@ fn bottom_right(app: &App, theme: &Theme) -> Line<'static> {
         }
         spans.push(Span::styled(text, theme.faint()));
         spans.push(Span::styled(" · ", theme.faint()));
+    } else {
+        spans.push(Span::raw(" "));
     }
     spans.push(Span::styled("read-only ", theme.faint()));
     Line::from(spans)
@@ -332,6 +343,8 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         Footer::Keys => {}
     }
 
+    // What follows the keys, when there is room for it.
+    let mut tail = None;
     let keys: &[(&str, &str)] = match app.view {
         View::Nodes if app.focus == Focus::Insights => &[
             ("↑↓", "choose"),
@@ -388,28 +401,34 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("esc", "cancel"),
             ("ctrl+u", "clear"),
         ],
-        View::Claude if app.claude.mode == crate::claude::Mode::Bar => &[
-            ("1-4", "views"),
-            ("5-9", "sessions"),
-            ("n", "new"),
-            ("r", "rename"),
-            ("x", "close"),
-            ("ctrl+\\", "monitor"),
-            ("esc", "back to Claude"),
-        ],
+        View::Claude if app.claude.mode == crate::claude::Mode::Bar => {
+            // The bar Claude runs under, its ctrl+\ lit and the way back at its end: nothing
+            // else moves.
+            cells.push(" ctrl+\\ ", theme.tab_active());
+            cells.push(" then", theme.muted());
+            &[
+                ("1-4", "views"),
+                ("5-9", "sessions"),
+                ("n", "new"),
+                ("r", "rename"),
+                ("x", "close"),
+                ("ctrl+\\", "monitor"),
+                ("esc", "back to Claude"),
+            ]
+        }
         View::Claude if app.claude.is_running() => {
-            // Every other key is Claude's; the one that is not opens the bar.
-            cells.spans(keycap("ctrl+\\", "then 1-4 views · 5-9 sessions", theme));
-            cells.push("   every other key goes to Claude", theme.muted());
-            if let Some(title) = app.claude.current().and_then(|s| s.pane.title.as_ref()) {
-                let room = width.saturating_sub(cells.width() + 2);
-                if room > 8 {
-                    let title = fmt::truncate(title, room);
-                    cells.pad_to(width.saturating_sub(fmt::width(&title) + 1));
-                    cells.push(title, theme.text2());
-                }
-            }
-            return cells.line(width, Style::default());
+            // Every other key is Claude's; the one that is not leads the bar.
+            cells.push(" ctrl+\\ ", theme.keycap());
+            cells.push(" then", theme.muted());
+            tail = Some("every other key goes to Claude");
+            &[
+                ("1-4", "views"),
+                ("5-9", "sessions"),
+                ("n", "new"),
+                ("r", "rename"),
+                ("x", "close"),
+                ("F1-F9", "any tab"),
+            ]
         }
         View::Claude => &[
             ("⏎", "start Claude"),
@@ -419,9 +438,9 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("q", "quit"),
         ],
     };
-    for (i, (key, label)) in keys.iter().enumerate() {
+    for (key, label) in keys {
         let mut piece = Cells::new();
-        if i > 0 {
+        if cells.width() > 0 {
             piece.push("  ", Style::default());
         }
         piece.spans(keycap(key, label, theme));
@@ -430,6 +449,11 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             break;
         }
         cells.spans(piece.into_spans());
+    }
+    if let Some(tail) = tail.map(|t| format!("   {t}"))
+        && cells.width() + fmt::width(&tail) <= width
+    {
+        cells.push(tail, theme.muted());
     }
     cells.line(width, Style::default())
 }

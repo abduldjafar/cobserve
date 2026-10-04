@@ -322,7 +322,7 @@ fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
                 biased;
                 _ = discovery.tick() => {
                     for error in source.discover().await {
-                        let _ = tx.send(Event::Notice(format!("discovery: {error}")));
+                        let _ = tx.send(Event::Notice(format!("discovery via {error}")));
                     }
                 }
                 _ = polling.tick() => {
