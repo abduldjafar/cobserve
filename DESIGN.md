@@ -683,7 +683,7 @@ or from a slope over the last minutes of it.
   marked so, and `⏎` goes to it.
 - **SESSIONS**, view 5 (`src/claude.rs`, `src/pty.rs`): a program in a pseudo-terminal — the
   official `claude`, `opencode`, or the user's shell — its screen emulated (`vt100`) and drawn
-  under the header and the band, the worst insight on the line between them. Each signed in
+  under the header and the band, every node on the line between them. Each signed in
   its own way, Claude with the user's own plan; no API is called from here, and
   `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of every program's
   environment. Up to five sessions, numbered 5 to 9 after the views' 1 to 4, each its own
@@ -692,9 +692,10 @@ or from a slope over the last minutes of it.
   that is only the program's name, else the folder),
   directory and git branch (read from `.git/HEAD`, a worktree's `.git` file followed, every few
   seconds) — on a narrow terminal a bar of tabs over it; a session that rings while it is not
-  on screen is marked. Under the sessions, the fleet: a line a node in view 1's order, its
-  state and its memory and CPU (§5's numbers, §7's colours; gauges as wide as the list
-  allows), drawn only when its title and two nodes fit, and a click opens the node on view 1. A new session's folder is chosen in a picker shaped like a file
+  on screen is marked. The line under the band holds the fleet: every node in a few words,
+  those in trouble first saying what makes it so (down, memory, CPU or lag, §7's colours),
+  the rest in view 1's order with the busier of their memory and CPU, as many as the width
+  holds; a click opens the node on view 1. A new session's folder is chosen in a picker shaped like a file
   explorer (`folders.rs`): clickable path, the folders here, a click goes in, a search below by
   name (breadth-first, six levels, bounded in folders read and in time, package and build
   folders skipped, on a thread of its own and dropped when a newer one starts) or a typed path

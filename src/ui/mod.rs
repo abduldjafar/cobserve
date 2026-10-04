@@ -170,8 +170,8 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     band::draw(frame, app, theme, a.band);
     if a.band_rule.height > 0 {
         let line = if app.view == View::Claude {
-            // On view 5 the rule carries the worst thing in the fleet.
-            claude::watch_line(&insights, theme, a.band_rule.width as usize)
+            // On view 5 the rule carries every node, in a few words.
+            claude::fleet_line(app, theme, a.band_rule)
         } else {
             Line::from(Span::styled("─".repeat(a.band_rule.width as usize), theme.rule()))
         };

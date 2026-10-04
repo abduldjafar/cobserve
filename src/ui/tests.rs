@@ -417,27 +417,26 @@ fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
 }
 
 #[test]
-fn the_nodes_are_listed_under_the_sessions_and_a_click_opens_one() {
+fn every_node_is_on_the_line_under_the_band_and_a_click_opens_one() {
     use crate::app::Hit;
     let mut app = app_with_claude(b"one\r\n");
     let screen = render(&app, 160, 48);
-    let lines: Vec<&str> = screen.lines().collect();
-    let at = lines.iter().position(|l| l.starts_with("│  NODES")).expect("the list's title");
-    assert!(lines[at].contains("mem") && lines[at].contains("cpu"), "{}", lines[at]);
-    let row = |name: &str| lines.iter().find(|l| l.contains(&format!(" {name} "))).map(|l| l.to_string()).unwrap_or_default();
-    assert!(row("clickhouse3").contains('✖') && row("clickhouse3").contains('%'), "the worst first, marked: {screen}");
-    assert!(lines[at + 1].contains("clickhouse3"), "in view 1's order: {screen}");
-    assert!(row("ch9").contains('●'), "a quiet one: {screen}");
-    assert!(lines[at - 1].trim_matches(['│', ' ']).is_empty(), "a blank line clear of the sessions: {screen}");
+    let line = screen.lines().nth(3).unwrap().to_string();
+    // The worst first, marked and saying what; the rest quiet, with the busier of the two.
+    assert!(line.contains("─ ✖ clickhouse3 cpu ") || line.contains("─ ✖ clickhouse3 mem "), "{line}");
+    let at = |name: &str| line.find(name).unwrap_or_else(|| panic!("{name} in {line}"));
+    assert!(at("clickhouse3") < at("clickhouse-bi") && at("clickhouse-bi") < at("ch9"), "view 1's order: {line}");
+    assert!(line.contains("▲ clickhouse7 lag "), "amber for its lag, so the lag is what it says: {line}");
+    assert!(line.contains(" · ch9 mem ") || line.contains(" · ch9 cpu "), "a quiet one, unmarked: {line}");
+    assert!(!screen.lines().any(|l| l.starts_with("│  NODES")), "the list beside is the sessions' alone: {screen}");
 
-    // A node that does not answer says why instead of numbers.
+    // A node that does not answer says why.
     let mut down = app.snapshot().unwrap().clone();
-    down.nodes[1] = crate::model::NodeSnapshot::unreachable(&down.nodes[1].name.clone(), "connection refused");
     let name = down.nodes[1].name.clone();
+    down.nodes[1] = crate::model::NodeSnapshot::unreachable(&name, "connection refused");
     app.update(Event::Snapshot(Box::new(down)));
-    let screen = render(&app, 160, 48);
-    let line = screen.lines().find(|l| l.contains(&format!("↯ {name}"))).unwrap_or_default().to_string();
-    assert!(line.contains("unreachable"), "{screen}");
+    let line = render(&app, 160, 48).lines().nth(3).unwrap().to_string();
+    assert!(line.contains(&format!("✖ {name} unreachable")), "{line}");
 
     // A click on one opens it on view 1; the session goes on where it was.
     let index = app.viewport.listed_nodes.borrow().iter().position(|n| n == &name).expect("listed");
@@ -445,12 +444,11 @@ fn the_nodes_are_listed_under_the_sessions_and_a_click_opens_one() {
     assert_eq!(app.view, View::Nodes);
     assert_eq!(app.selected(), Some(&crate::tree::RowId::Node(name)));
 
-    // Tight, it shows what fits and says what does not.
+    // Narrow, as many as fit and how many more.
     app.update(key(KeyCode::Char('5')));
-    let short = render(&app, 160, 24);
-    assert!(short.contains("more on view 1"), "{short}");
-    let tiny = render(&app, 160, 14);
-    assert!(!tiny.lines().any(|l| l.starts_with("│  NODES")), "no room, no list: {tiny}");
+    let narrow = render(&app, 100, 30);
+    let line = narrow.lines().nth(3).unwrap();
+    assert!(line.contains(" more ─"), "how many did not fit: {line}");
 }
 
 #[test]

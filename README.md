@@ -75,8 +75,8 @@ and SQL) and `/api/data_sources` for what it runs on (name and type).
 ### Claude, OpenCode and a terminal in the monitor
 
 View 5 runs programs in a terminal inside the monitor — the official `claude`, `opencode`, or
-your own shell: the header, the FLEET and REDASH lines and the worst thing in the fleet stay on
-top, the session gets the rest. Each is the same as in a terminal tab of its own — any
+your own shell: the header, the FLEET and REDASH lines and a line with every node stay on top,
+the session gets the rest. Each is the same as in a terminal tab of its own — any
 project, any question, its own permission prompts.
 
 - **Claude** is Claude Code signed in with your **Pro or Max plan**: install it and sign in once
@@ -101,11 +101,11 @@ that rings while you are elsewhere is marked `●` there and on `5 SESSIONS`; on
 `✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the
 sessions.
 
-Under them, at the bottom of the list, the fleet stays in sight: a line a node in view 1's
-order — its state, its name, and what it uses of its memory and CPU (with bars when the list
-is wide enough, a one-cell gauge when not), red and amber as on view 1. A node that does not
-answer says why instead. A click on one opens it on view 1; when there are more nodes than
-room, the last line says how many more there are.
+The fleet stays in sight on the line under the band, every node in a few words: those in
+trouble first, marked and saying what makes it so — `✖ clickhouse3 cpu 93%`, `▲ clickhouse7
+lag 12s`, `✖ clickhouse5 no access` — then the rest quiet, with the busier of their memory and
+CPU (`clickhouse-bi mem 42%`). As many as the width holds, then how many more; a click on one
+opens it on view 1.
 
 A new session's folder is picked as in a file explorer, no typing needed: it starts in the
 folder the session on screen works in, a click on a folder goes into it, a click on a step of

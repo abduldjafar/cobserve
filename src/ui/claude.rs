@@ -6,13 +6,11 @@
 //! band names the worst thing in the fleet right now — so a node going red is seen without
 //! leaving the conversation.
 
-use super::widgets::{bar, fit, rule, tone_spans, Cells};
+use super::widgets::{fit, rule, Cells};
 use crate::app::{App, Hit};
 use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, MAX_SESSIONS};
 use crate::fmt;
 use crate::folders::Folder;
-use crate::history::spark_glyph;
-use crate::insight::Insight;
 use crate::severity::{self, Severity};
 use crate::theme::Theme;
 use ratatui::layout::Rect;
@@ -30,7 +28,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     let area = if area.width >= SIDEBAR_FROM {
-        let side = (area.width * 22 / 100).clamp(26, 40);
+        let side = (area.width * 22 / 100).clamp(26, 36);
         sidebar(frame, app, theme, Rect::new(area.x, area.y, side, area.height));
         let rule: Vec<Line<'static>> = (0..area.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
         frame.render_widget(Paragraph::new(rule), Rect::new(area.x + side, area.y, 1, area.height));
@@ -245,141 +243,8 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         lines.push(full.line(width, Style::default()));
     }
 
-    // The fleet at the bottom of the list, a blank line clear of the sessions.
-    let used = lines.len() as u16 + 1;
+    drop(hits);
     frame.render_widget(Paragraph::new(lines), area);
-    if area.height > used {
-        let free = Rect::new(area.x, area.y + used, width as u16, area.height - used);
-        nodes_panel(frame, app, theme, free, &mut hits);
-    } else {
-        app.viewport.listed_nodes.borrow_mut().clear();
-    }
-}
-
-/// A node as the list under the sessions shows it.
-struct Listed {
-    name: String,
-    label: String,
-    level: Severity,
-    mem: Option<f64>,
-    cpu: Option<f64>,
-    down: Option<&'static str>,
-}
-
-/// The fleet under the sessions, a line a node in view 1's order: its state, its name and
-/// what it uses of its memory and CPU — the bars as wide as the list leaves room for — so the
-/// monitor is in sight without leaving the session. A node that does not answer says why;
-/// a click opens the node on view 1. Drawn at the bottom of `area`, and only when its title
-/// and two nodes fit: below that it would be clutter.
-fn nodes_panel(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, hits: &mut Vec<(Rect, Hit)>) {
-    let listed: Vec<Listed> = app
-        .with_view(|view| {
-            let mut nodes: Vec<&crate::model::NodeView<'_>> = view.nodes.iter().collect();
-            nodes.sort_by(|a, b| crate::model::compare_nodes(a, b, app.tree.sort));
-            let names: Vec<&str> = nodes.iter().map(|n| n.node.name.as_str()).collect();
-            // The domain every node shares says nothing in a list this narrow.
-            let domain = crate::insight::shared_domain(&names);
-            nodes
-                .iter()
-                .map(|node| {
-                    let name = node.node.name.clone();
-                    let label = domain.as_deref().and_then(|d| name.strip_suffix(d)).unwrap_or(&name).to_string();
-                    Listed {
-                        label,
-                        level: super::nodes::severity_of(node),
-                        mem: node.mem_pct,
-                        cpu: node.cpu_pct,
-                        down: (!node.node.reachable).then(|| node.node.down_word()),
-                        name,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let height = area.height as usize;
-    if listed.is_empty() || height < 3 {
-        app.viewport.listed_nodes.borrow_mut().clear();
-        return;
-    }
-    // Every node when they fit; else as many as do, the worst first, and how many are left.
-    let shown = if listed.len() < height { listed.len() } else { height - 2 };
-    let more = listed.len() - shown;
-    let rows = 1 + shown + usize::from(more > 0);
-    let top = area.y + area.height - rows as u16;
-
-    // The columns: the name as long as the longest, then the gauges in what is left — bars
-    // when four cells or more fit, else one cell that rises with the value, else the number.
-    let width = area.width as usize;
-    let name_width = listed.iter().take(shown).map(|n| fmt::width(&n.label)).max().unwrap_or(0).min(20);
-    let rest = width.saturating_sub(4);
-    let gauge = [6, 5, 4, 1].into_iter().find(|g| name_width + 2 * (g + 5) + 2 <= rest).unwrap_or(0);
-    let metric = if gauge > 0 { gauge + 5 } else { 4 };
-    let name_room = rest.saturating_sub(2 * metric + 2).max(1);
-    let metrics_at = 3 + name_room + 1;
-
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut head = Cells::new();
-    head.push(" NODES", theme.section());
-    for (label, end) in [("mem", metrics_at + metric), ("cpu", metrics_at + 2 * metric + 2)] {
-        if head.width() + 1 > end.saturating_sub(3) {
-            head.push(" ", Style::default());
-        }
-        head.pad_to(end.saturating_sub(3));
-        head.push(label, theme.faint());
-    }
-    lines.push(head.line(width, Style::default()));
-
-    let mut names = Vec::with_capacity(shown);
-    for (index, node) in listed.iter().take(shown).enumerate() {
-        let (glyph, style) = match node.down {
-            Some(_) => ("↯", theme.sev(Severity::Crit).add_modifier(Modifier::BOLD)),
-            None if node.level.is_problem() => (node.level.glyph(), theme.sev(node.level).add_modifier(Modifier::BOLD)),
-            None => ("●", theme.sev(Severity::Ok)),
-        };
-        let mut cells = Cells::new();
-        cells.push(" ", Style::default());
-        cells.push(glyph, style);
-        cells.push(" ", Style::default());
-        let loud = node.down.is_some() || node.level.is_problem();
-        cells.cell(&fmt::truncate(&node.label, name_room), name_room, if loud { theme.strong() } else { theme.text() });
-        cells.push(" ", Style::default());
-        match node.down {
-            Some(word) => {
-                cells.push(word, theme.sev(Severity::Crit));
-            }
-            None => {
-                for (k, pct) in [node.mem, node.cpu].into_iter().enumerate() {
-                    if k > 0 {
-                        cells.push("  ", Style::default());
-                    }
-                    let level = severity::node(pct);
-                    match gauge {
-                        0 => {}
-                        1 => {
-                            let rises = pct.map_or(' ', |v| spark_glyph(v.clamp(0.0, 100.0), 0.0, 100.0));
-                            cells.push(format!("{rises} "), Style::default().fg(theme.bar_fill(level)));
-                        }
-                        cells_of_bar => {
-                            cells.spans(bar(pct, cells_of_bar, theme.bar_fill(level), theme));
-                            cells.push(" ", Style::default());
-                        }
-                    }
-                    let style = if level.is_problem() { theme.sev(level).add_modifier(Modifier::BOLD) } else { theme.text2() };
-                    cells.cell_right(&pct.map_or_else(|| "—".to_string(), fmt::pct0), 4, style);
-                }
-            }
-        }
-        lines.push(cells.line(width, Style::default()));
-        hits.push((Rect::new(area.x, top + 1 + index as u16, area.width, 1), Hit::Node(index)));
-        names.push(node.name.clone());
-    }
-    if more > 0 {
-        let y = top + rows as u16 - 1;
-        lines.push(Line::from(Span::styled(format!("   +{more} more on view 1"), theme.faint())));
-        hits.push((Rect::new(area.x, y, area.width, 1), Hit::View(crate::app::View::Nodes)));
-    }
-    *app.viewport.listed_nodes.borrow_mut() = names;
-    frame.render_widget(Paragraph::new(lines), Rect::new(area.x, top, area.width, rows as u16));
 }
 
 /// The top or the bottom of the framed card.
@@ -796,24 +661,115 @@ fn style_of(cell: &vt100::Cell, live: bool) -> Style {
     style
 }
 
-/// The line under the band on view 5: the worst thing in the fleet right now, or that there
-/// is nothing — the monitor, in one line.
-pub fn watch_line(insights: &[Insight], theme: &Theme, width: usize) -> Line<'static> {
-    let problems: Vec<&Insight> = insights.iter().filter(|i| i.level.is_problem()).collect();
-    let Some(worst) = problems.first() else {
-        let quiet = insights.first().map_or_else(Vec::new, |i| tone_spans(&i.parts, theme));
-        let mut title = vec![Span::styled("✔ ", theme.sev(Severity::Ok).add_modifier(Modifier::BOLD))];
-        title.extend(quiet.into_iter().map(|s| Span::styled(s.content, theme.muted())));
-        return rule(width, title, theme);
-    };
-    let mut title = vec![
-        Span::styled(format!("{} ", worst.level.glyph()), theme.sev(worst.level).add_modifier(Modifier::BOLD)),
-        Span::styled(worst.label.clone(), theme.strong()),
-        Span::raw("  "),
-    ];
-    title.extend(tone_spans(&worst.parts, theme));
-    if problems.len() > 1 {
-        title.push(Span::styled(format!("   ·  {} more on view 1", problems.len() - 1), theme.muted()));
+/// The line under the band on view 5: every node in a few words — those in trouble first,
+/// marked and saying what makes it so (why it does not answer, its memory, its CPU, its
+/// replication lag), then the rest in view 1's order, quiet, with the busier of their memory
+/// and CPU — so the whole fleet is in sight from a session without a row more. As many as the
+/// width holds, then how many more; a click on one opens it on view 1.
+pub fn fleet_line(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
+    struct Node {
+        name: String,
+        label: String,
+        level: Severity,
+        down: Option<&'static str>,
+        /// What it says: `cpu 54%`, `lag 12s` — and how bad that is.
+        what: (&'static str, String, Severity),
     }
-    rule(width, title, theme)
+    let width = area.width as usize;
+    let nodes: Vec<Node> = app
+        .with_view(|view| {
+            let mut nodes: Vec<&crate::model::NodeView<'_>> = view.nodes.iter().collect();
+            nodes.sort_by(|a, b| crate::model::compare_nodes(a, b, app.tree.sort));
+            let names: Vec<&str> = nodes.iter().map(|n| n.node.name.as_str()).collect();
+            // The domain every node shares says nothing on a line this full.
+            let domain = crate::insight::shared_domain(&names);
+            nodes
+                .iter()
+                .map(|node| {
+                    let name = node.node.name.clone();
+                    let label = domain.as_deref().and_then(|d| name.strip_suffix(d)).unwrap_or(&name).to_string();
+                    let (resource, pct) = match (node.mem_pct, node.cpu_pct) {
+                        (Some(mem), Some(cpu)) if cpu > mem => ("cpu", Some(cpu)),
+                        (Some(mem), _) => ("mem", Some(mem)),
+                        (None, cpu) => ("cpu", cpu),
+                    };
+                    let busier = severity::node(pct);
+                    let lag = severity::lag(node.node.lag_s);
+                    // Behind on replication is worse than busy: then the lag is what it says.
+                    let what = if lag > busier {
+                        ("lag", fmt::dur(node.node.lag_s as f64), lag)
+                    } else {
+                        (resource, pct.map_or_else(|| "—".to_string(), fmt::pct0), busier)
+                    };
+                    Node {
+                        label,
+                        level: super::nodes::severity_of(node),
+                        down: (!node.node.reachable).then(|| node.node.down_word()),
+                        what,
+                        name,
+                    }
+                })
+                .collect::<Vec<Node>>()
+        })
+        .unwrap_or_default();
+    // Trouble first, worst first — a node that does not answer has no numbers to sort by.
+    let mut nodes = nodes;
+    nodes.sort_by_key(|node| std::cmp::Reverse(if node.down.is_some() { Severity::Crit } else { node.level }));
+    if nodes.is_empty() {
+        app.viewport.listed_nodes.borrow_mut().clear();
+        return rule(width, vec![Span::styled("waiting for the first snapshot…", theme.muted())], theme);
+    }
+
+    let mut hits = app.viewport.hits.borrow_mut();
+    let mut listed = Vec::with_capacity(nodes.len());
+    let separator = " · ";
+    let more = |left: usize| format!("{separator}+{left} more");
+    let mut cells = Cells::new();
+    cells.push("─ ", theme.rule());
+    for (index, node) in nodes.iter().enumerate() {
+        let mut piece = Cells::new();
+        let level = if node.down.is_some() { Severity::Crit } else { node.level };
+        if level.is_problem() {
+            piece.push(format!("{} ", level.glyph()), theme.sev(level).add_modifier(Modifier::BOLD));
+            piece.push(node.label.clone(), theme.strong());
+        } else {
+            piece.push(node.label.clone(), theme.text2());
+        }
+        piece.push(" ", Style::default());
+        match node.down {
+            Some(word) => {
+                piece.push(word, theme.sev(Severity::Crit));
+            }
+            None => {
+                let (what, value, hot) = &node.what;
+                piece.push(format!("{what} "), theme.faint());
+                let style = if hot.is_problem() { theme.sev(*hot).add_modifier(Modifier::BOLD) } else { theme.muted() };
+                piece.push(value.clone(), style);
+            }
+        }
+        // This one, and room after it to say how many are left if it is not the last.
+        let left = nodes.len() - index - 1;
+        let gap = if index > 0 { fmt::width(separator) } else { 0 };
+        let after = if left > 0 { fmt::width(&more(left)) } else { 0 };
+        if cells.width() + gap + piece.width() + after + 2 > width {
+            let x = area.x + cells.width() as u16;
+            let rest = more(nodes.len() - index);
+            hits.push((Rect::new(x, area.y, fmt::width(&rest) as u16, 1), Hit::View(crate::app::View::Nodes)));
+            cells.push(rest, theme.muted());
+            break;
+        }
+        if index > 0 {
+            cells.push(separator, theme.faint());
+        }
+        let x = area.x + cells.width() as u16;
+        hits.push((Rect::new(x, area.y, piece.width() as u16, 1), Hit::Node(listed.len())));
+        listed.push(node.name.clone());
+        cells.spans(piece.into_spans());
+    }
+    drop(hits);
+    *app.viewport.listed_nodes.borrow_mut() = listed;
+    cells.push(" ", Style::default());
+    let rest = width.saturating_sub(cells.width());
+    cells.push("─".repeat(rest), theme.rule());
+    cells.line_unpadded(width)
 }
