@@ -18,7 +18,7 @@ on top of it and are listed in `DESIGN.md` §13.
 | **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL. |
 | **MAP** | `3` | The whole fleet as tiles framed in their severity colour, with bars and history. A forty-node fleet on one screen. |
 | **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
-| **CLAUDE** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — in as many named sessions as you need, for any work at all, while the fleet and the Redash queue stay in sight above it. |
+| **SESSIONS** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, or your own shell, in as many named sessions as you need, for any work at all, while the fleet and the Redash queue stay in sight above them. |
 
 ![Query detail](docs/screenshots/140x40-query.png)
 
@@ -72,56 +72,65 @@ and SQL) and `/api/data_sources` for what it runs on (name and type).
 
 ![Redash with leftovers in its started list](docs/screenshots/120x36-queue-leftovers.png)
 
-### Claude in the monitor
+### Claude, OpenCode and a terminal in the monitor
 
-View 5 runs the official `claude` command in a terminal inside the monitor: the header, the
-FLEET and REDASH lines and the worst thing in the fleet stay on top, Claude Code gets the rest.
-It is the same Claude Code as in a terminal tab of its own — any project, any question, its own
-permission prompts — signed in with your **Pro or Max plan**. Nothing here uses an API key:
+View 5 runs programs in a terminal inside the monitor — the official `claude`, `opencode`, or
+your own shell: the header, the FLEET and REDASH lines and the worst thing in the fleet stay on
+top, the session gets the rest. Each is the same as in a terminal tab of its own — any
+project, any question, its own permission prompts.
 
-- `ANTHROPIC_API_KEY` is taken out of its environment, so Claude Code bills the plan you signed
-  in with even when your shell has a key set; so are the monitor's own credentials
-  (`CH_PASSWORD`, `CH_SEED_URLS`, `REDASH_ADMIN_API_KEY`, `REDIS_URL`).
-- Each session works in a directory of its own — the first in the one the monitor was started
-  from. Claude can read files there, so keep the credential file somewhere else.
-- Install Claude Code and sign in once (`claude`, then `/login`). `CLAUDE_CMD` runs something
-  else, or the same with arguments: `CLAUDE_CMD="claude --model opus"`. `--claude` opens on
-  view 5.
+- **Claude** is Claude Code signed in with your **Pro or Max plan**: install it and sign in once
+  (`claude`, then `/login`). `CLAUDE_CMD` runs something else, or the same with arguments:
+  `CLAUDE_CMD="claude --model opus"`.
+- **OpenCode** signs in its own way: install it (`curl -fsSL https://opencode.ai/install | bash`)
+  and sign in once with `opencode auth login`. `OPENCODE_CMD` changes the command.
+- **Terminal** is your login shell (`$SHELL`); `SHELL_CMD` runs another one.
+- Nothing here uses an API key: `ANTHROPIC_API_KEY` is taken out of every session's
+  environment, so Claude Code bills the plan you signed in with even when your shell has a
+  key set; so are the monitor's own credentials (`CH_PASSWORD`, `CH_SEED_URLS`,
+  `REDASH_ADMIN_API_KEY`, `REDIS_URL`).
+- Each session works in a folder of its own — the first in the one the monitor was started
+  from. What runs there can read files there, so keep the credential file somewhere else.
+  `--claude` opens on view 5.
 
-Up to five sessions run side by side, each its own `claude` with its own conversation, listed
-beside it like a terminal's tabs, the one on screen framed: its name — the one you gave it,
-what Claude says it is working on, or else its folder — and number, and under them the folder
-and its git branch. A session that rings while you are elsewhere is marked `●` there and on
-`5 CLAUDE`; one that ended, `✕`. The sessions are numbered on from the views: `1`–`4` are the
-monitor, `5`–`9` the sessions.
+Up to five sessions run side by side, each its own program with its own conversation, listed
+beside it like a terminal's tabs, the one on screen framed: what it runs (`✻` Claude, `▣`
+OpenCode, `❯` a terminal), its name — the one you gave it, what the program says it is working
+on, or else its folder — and number, and under them the folder and its git branch. A session
+that rings while you are elsewhere is marked `●` there and on `5 SESSIONS`; one that ended,
+`✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the
+sessions.
 
 A new session's folder is picked as in a file explorer, no typing needed: it starts in the
 folder the session on screen works in, a click on a folder goes into it, a click on a step of
 the path above (`~ › work › cobserve`) goes back up to it, and **Open the session here** (or
-`⏎`) starts Claude there. Typing searches the folders below by name — up to six levels down,
+`⏎`) starts it there. Above them, a click chooses what it runs — Claude, OpenCode, Terminal —
+or `shift+tab` does. Typing searches the folders below by name — up to six levels down,
 nearest first, `node_modules` and the like left out — and a path (`~/`, `/`, `../`) is
 completed like a shell does. A repository shows its branch.
 
 | On view 5 | |
 |---|---|
-| any key | goes to Claude — `q`, the digits and `ctrl+c` too |
+| any key | goes to the session — `q`, the digits and `ctrl+c` too |
 | `ctrl+\` then `1`…`4` | that view of the monitor |
 | `ctrl+\` then `5`…`9` | that session |
-| `ctrl+\` then `n` | a new session: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `esc` clears the search or gives up |
+| `ctrl+\` then `n` | a new session, of the kind on screen: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `shift+tab` changes what it runs, `esc` clears the search or gives up |
+| `ctrl+\` then `c` · `o` · `t` | a new Claude, OpenCode or terminal session, the same way |
 | `ctrl+\` then `r` | rename the one on screen (an empty name gives the default back) |
 | `ctrl+\` then `x` `x` | close it — `claude --resume` finds the conversation later |
-| `ctrl+\` then `esc` | back to Claude |
+| `ctrl+\` then `esc` | back to the session |
 | `ctrl+\` `ctrl+\` | back to the monitor, where you came from |
 | `F1`…`F9` | the same tabs from anywhere, without `ctrl+\` |
-| a click | a tab in the header, a session, **+ new session**, a folder |
-| the wheel | over Claude, its page up and down; elsewhere, the cursor |
+| a click | a tab in the header, a session, **+ new session**, a folder, what to run |
+| the wheel | over a session, its page up and down; elsewhere, the cursor |
 
-From the monitor, `5`…`9` or `ctrl+\` go to Claude. `ctrl+z` is not passed on: there is no
-shell around Claude to bring it back. With the mouse on, selecting text takes the terminal's
+From the monitor, `5`…`9` or `ctrl+\` go to the sessions. `ctrl+z` is not passed on to Claude
+or OpenCode — there is no shell around them to bring them back — but it is to a terminal,
+whose shell suspends its own jobs. With the mouse on, selecting text takes the terminal's
 modifier — Shift in most, ⌥ in iTerm2 and Terminal — and `MOUSE=0` leaves the mouse to the
 terminal altogether.
 
-![Claude in view 5](docs/screenshots/160x48-claude.png)
+![Claude, OpenCode and a terminal in view 5](docs/screenshots/160x48-claude.png)
 
 ![A new session's folder, picked with clicks](docs/screenshots/160x48-claude-new.png)
 
@@ -204,7 +213,9 @@ have a user the other one does not know.
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — the strip says *not configured* |
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |
 | `EMAIL_DOMAIN` | your organisation's e-mail domain: people there are shown by name alone (`grigol.gankava`), everyone else by the whole address | unset — every address whole |
-| `CLAUDE_CMD` | what view 5 runs, with its arguments | `claude` |
+| `CLAUDE_CMD` | what a Claude session runs, with its arguments | `claude` |
+| `OPENCODE_CMD` | what an OpenCode session runs | `opencode` |
+| `SHELL_CMD` | what a terminal session runs | `$SHELL`, else `/bin/sh` |
 | `MOUSE` | `0` leaves the mouse to the terminal: no clicks, but selection without a modifier | on |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `THEME` | `dark`, `light` or `mono` | `dark` |
@@ -228,10 +239,10 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `u` | pivot node ↔ user: who is burning the fleet |
 | `s` | sort: pressure, memory, CPU, name |
 | `/` | filter by node, user, person, SQL or query id · `esc` clears |
-| `1 2 3 4` | views · `5`…`9` Claude's sessions |
+| `1 2 3 4` | views · `5`…`9` the sessions |
 | `F1`…`F9` | the same, from anywhere — Claude's screen too |
-| `ctrl+\` | Claude (view 5); there, the key before a number — see *Claude in the monitor* |
-| a click · the wheel | a tab, a session · the cursor (on view 5, Claude's page up and down) |
+| `ctrl+\` | the sessions (view 5); there, the key before a number — see *Claude, OpenCode and a terminal in the monitor* |
+| a click · the wheel | a tab, a session · the cursor (on view 5, the session's page up and down) |
 | `p` | pause (the numbers stop, the clock does not) |
 | `?` | help · `q` quit |
 

@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────────────────────────────────────── ● LIVE 2s · 09:21:51 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────────────────────────────────────────────── ● LIVE 2s · 14:46:54 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
 │ FLEET  9 nodes · 1 hot   MEM █████▏         36.4% 280/768 GiB ▄▄▄▄▄▅▅▅▅▅▅▅▅▅▄▄   CPU ████           28.7% 55/192 cores ▅▄▄▄▄▄▄▄▅▄▅▄▄▄▄▄   QUERIES 15 · 4 ✕   │
 │ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue │
 │ ─ ✖ clickhouse3  memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more   ·  5 more on view 1 ───────────────────────────────────────────────────── │
@@ -7,16 +7,16 @@
 │ │ ✻  billing export           5 │ │ > make the invoice export stream its rows instead of building one big Vec                                                │
 │ │    ~/work/billing  ⎇ main     │ │                                                                                                                          │
 │ ╰───────────────────────────────╯ │ ● I'll read the exporter first.                                                                                          │
-│   ✻  late partitions        ● 6   │                                                                                                                          │
+│   ▣  late partitions        ● 6   │                                                                                                                          │
 │      ~/work/pipelines  ⎇ fix-l…   │ ● Read(src/export/invoice.rs)                                                                                            │
 │                                   │   └  214 lines                                                                                                           │
 │   ✻  weekly totals            7   │                                                                                                                          │
 │      ~/work/reports  ⎇ add-wee…   │ ● Update(src/export/invoice.rs)                                                                                          │
 │                                   │   └  18 lines added, 31 removed                                                                                          │
-│   +  new session                  │                                                                                                                          │
-│                                   │ ✻ Running the tests… (esc to interrupt)                                                                                  │
+│   ❯  make totals              8   │                                                                                                                          │
+│      ~/work/reports  ⎇ add-wee…   │ ✻ Running the tests… (esc to interrupt)                                                                                  │
 │                                   │                                                                                                                          │
-│                                   │ ────────────────────────────────────────────────────────────────────────────────                                         │
+│   +  new session                  │ ────────────────────────────────────────────────────────────────────────────────                                         │
 │                                   │ ❯                                                                                                                        │
 │                                   │ ────────────────────────────────────────────────────────────────────────────────                                         │
 │                                   │                                                                                                                          │

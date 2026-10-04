@@ -111,7 +111,11 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
     app.poll_interval = config.poll;
-    app.claude.command = config.claude_command.clone();
+    app.claude.commands = claude::Commands {
+        claude: config.claude_command.clone(),
+        opencode: config.opencode_command.clone(),
+        terminal: config.shell_command.clone(),
+    };
     if let Ok(dir) = std::env::current_dir() {
         app.claude.default_dir = pty::tilde(&dir);
     }
@@ -189,7 +193,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
 fn drive_panes(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>, tx: &mpsc::UnboundedSender<Event>) {
     use claude::PaneState;
     let (rows, cols) = app.claude.want_size.get();
-    let command = app.claude.command.clone();
+    let commands = app.claude.commands.clone();
     for session in &mut app.claude.list {
         match session.pane.state {
             PaneState::Starting => {
@@ -203,7 +207,7 @@ fn drive_panes(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>, tx: &mp
                     }
                 };
                 session.branch = pty::git_branch(&dir);
-                match pty::PtyProcess::spawn(session.id, &command, &dir, rows, cols, tx.clone()) {
+                match pty::PtyProcess::spawn(session.id, commands.of(session.kind), &dir, rows, cols, tx.clone()) {
                     Ok(process) => {
                         session.pane.resize(rows, cols);
                         session.pane.state = PaneState::Running;

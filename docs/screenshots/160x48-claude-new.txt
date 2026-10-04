@@ -1,25 +1,25 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────────────────────────────────────── ● LIVE 2s · 09:21:51 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────────────────────────────────────────────── ● LIVE 2s · 14:46:54 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
 │ FLEET  9 nodes · 1 hot   MEM █████▏         36.4% 280/768 GiB ▄▄▄▄▄▅▅▅▅▅▅▅▅▅▄▄   CPU ████           28.7% 55/192 cores ▅▄▄▄▄▄▄▄▅▄▅▄▄▄▄▄   QUERIES 15 · 4 ✕   │
 │ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue │
 │ ─ ✖ clickhouse3  memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more   ·  5 more on view 1 ───────────────────────────────────────────────────── │
-│  SESSIONS                         │ ✻ New session  ·  where should Claude work?                                                                    ✕ cancel  │
+│  SESSIONS                         │ ✻ New Claude session  ·  where should it work?                                                                 ✕ cancel  │
 │                                   │                                                                                                                          │
-│   ✻  billing export           5   │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
-│      ~/work/billing  ⎇ main       │ │ ⌕  ▏search the folders below here, or type a path                                                          7 folders │ │
-│                                   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│   ✻  late partitions        ● 6   │  ~ › work                                                                                                                │
-│      ~/work/pipelines  ⎇ fix-l…   │                                                                                                                          │
-│                                   │    ⏎  Open the session here                                                                                              │
-│   ✻  weekly totals            7   │   ↰  ..  up to ~                                                                                                         │
-│      ~/work/reports  ⎇ add-wee…   │   ▸  billing                                                                                                     ⎇ main  │
-│ ╭───────────────────────────────╮ │   ▸  dotfiles                                                                                                  ⎇ master  │
-│ │ +  new session                │ │   ▸  infra-notes                                                                                                         │
-│ │    choose its folder →        │ │ ▌ ▸  pipelines                                                                                    ⎇ fix-late-partitions  │
-│ ╰───────────────────────────────╯ │   ▸  reports                                                                                        ⎇ add-weekly-totals  │
-│                                   │   ▸  sandbox                                                                                                             │
+│   ✻  billing export           5   │  run   ✻ Claude    ▣ OpenCode    ❯ Terminal    shift+tab switches                                                        │
+│      ~/work/billing  ⎇ main       │                                                                                                                          │
+│                                   │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│   ▣  late partitions        ● 6   │ │ ⌕  ▏search the folders below here, or type a path                                                          7 folders │ │
+│      ~/work/pipelines  ⎇ fix-l…   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                   │  ~ › work                                                                                                                │
+│   ✻  weekly totals            7   │                                                                                                                          │
+│      ~/work/reports  ⎇ add-wee…   │    ⏎  Open the session here                                                                                              │
+│                                   │   ↰  ..  up to ~                                                                                                         │
+│   ❯  make totals              8   │   ▸  billing                                                                                                     ⎇ main  │
+│      ~/work/reports  ⎇ add-wee…   │   ▸  dotfiles                                                                                                  ⎇ master  │
+│ ╭───────────────────────────────╮ │   ▸  infra-notes                                                                                                         │
+│ │ +  new session                │ │ ▌ ▸  pipelines                                                                                    ⎇ fix-late-partitions  │
+│ │    choose its folder →        │ │   ▸  reports                                                                                        ⎇ add-weekly-totals  │
+│ ╰───────────────────────────────╯ │   ▸  sandbox                                                                                                             │
 │                                   │   ▸  website                                                                                                 ⎇ redesign  │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │

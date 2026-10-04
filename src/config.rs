@@ -79,8 +79,11 @@ pub struct Config {
     pub email_domain: Option<String>,
     /// Worth saying, not worth refusing to start over — shown in the footer.
     pub warnings: Vec<String>,
-    /// What view 5 runs: `CLAUDE_CMD`, split like a shell would — `claude` by default.
+    /// What view 5's sessions run, each split like a shell would: `CLAUDE_CMD` (`claude` by
+    /// default), `OPENCODE_CMD` (`opencode`), `SHELL_CMD` (`$SHELL`, else `/bin/sh`).
     pub claude_command: Vec<String>,
+    pub opencode_command: Vec<String>,
+    pub shell_command: Vec<String>,
     /// Clicks and the wheel (`MOUSE=0` turns them off, and with them the terminal's own
     /// selection comes back without a modifier key).
     pub mouse: bool,
@@ -98,19 +101,20 @@ Usage: pay_monitoring [--credential FILE] [--claude]
 
 Everything else comes from the environment (DESIGN.md §9): CH_SEED_URLS, CH_CLUSTER,
 CH_USER, CH_PASSWORD, CH_HTTP_PORT, REDASH_URL, REDASH_ADMIN_API_KEY, REDIS_URL,
-EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, CLAUDE_CMD for what
-view 5 runs (default: claude), and MOUSE=0 to leave the mouse to the terminal.
+EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, CLAUDE_CMD,
+OPENCODE_CMD and SHELL_CMD for what view 5's sessions run (default: claude, opencode, $SHELL),
+and MOUSE=0 to leave the mouse to the terminal.
 ";
 
-/// `CLAUDE_CMD` as a command and its arguments, quotes as a shell reads them; `claude` when it
+/// `variable` as a command and its arguments, quotes as a shell reads them; `default` when it
 /// is not set.
-fn claude_command(raw: Option<String>) -> Result<Vec<String>, ConfigError> {
+fn command(variable: &'static str, raw: Option<String>, default: &str) -> Result<Vec<String>, ConfigError> {
     let Some(raw) = raw.filter(|r| !r.trim().is_empty()) else {
-        return Ok(vec!["claude".to_string()]);
+        return Ok(vec![default.to_string()]);
     };
     match shell_words::split(&raw) {
         Ok(words) if !words.is_empty() => Ok(words),
-        _ => Err(ConfigError::Bad("CLAUDE_CMD", "is not a command a shell could read (an unclosed quote?)".to_string())),
+        _ => Err(ConfigError::Bad(variable, "is not a command a shell could read (an unclosed quote?)".to_string())),
     }
 }
 
@@ -548,7 +552,14 @@ impl Config {
             email_domain: pick(redash.and_then(|r| r.email_domain.as_ref()), "EMAIL_DOMAIN")
                 .or_else(|| fake.then(|| crate::fake::DOMAIN.to_string())),
             warnings: Vec::new(),
-            claude_command: claude_command(env.get("CLAUDE_CMD"))?,
+            claude_command: command("CLAUDE_CMD", env.get("CLAUDE_CMD"), "claude")?,
+            opencode_command: command("OPENCODE_CMD", env.get("OPENCODE_CMD"), "opencode")?,
+            // A terminal runs the shell the user logs in with.
+            shell_command: command(
+                "SHELL_CMD",
+                env.get("SHELL_CMD"),
+                env.get("SHELL").filter(|s| !s.trim().is_empty()).as_deref().unwrap_or("/bin/sh"),
+            )?,
             mouse: !matches!(
                 env.get("MOUSE").map(|m| m.trim().to_ascii_lowercase()).as_deref(),
                 Some("0" | "off" | "false" | "no")
@@ -850,15 +861,27 @@ redash:
     }
 
     #[test]
-    fn claude_cmd_is_split_like_a_shell_would() {
-        assert_eq!(claude_command(None).unwrap(), ["claude"]);
-        assert_eq!(claude_command(Some("  ".into())).unwrap(), ["claude"]);
+    fn a_session_s_command_is_split_like_a_shell_would() {
+        let claude = |raw: Option<&str>| command("CLAUDE_CMD", raw.map(String::from), "claude");
+        assert_eq!(claude(None).unwrap(), ["claude"]);
+        assert_eq!(claude(Some("  ")).unwrap(), ["claude"]);
         assert_eq!(
-            claude_command(Some("claude --model opus --add-dir '/srv/my repo'".into())).unwrap(),
+            claude(Some("claude --model opus --add-dir '/srv/my repo'")).unwrap(),
             ["claude", "--model", "opus", "--add-dir", "/srv/my repo"]
         );
-        let err = claude_command(Some("claude 'Zq9".into())).unwrap_err().to_string();
+        let err = claude(Some("claude 'Zq9")).unwrap_err().to_string();
         assert!(err.contains("CLAUDE_CMD") && !err.contains("Zq9"), "the value is not repeated: {err}");
+    }
+
+    #[test]
+    fn opencode_and_the_terminal_have_commands_of_their_own() {
+        let env = [("FAKE", "1"), ("SHELL", "/bin/zsh")];
+        let config = from(&env).unwrap();
+        assert_eq!((config.opencode_command, config.shell_command), (vec!["opencode".to_string()], vec!["/bin/zsh".to_string()]));
+        let config = from(&[env[0], ("OPENCODE_CMD", "opencode --model x/y"), ("SHELL_CMD", "bash -l")]).unwrap();
+        assert_eq!(config.opencode_command, ["opencode", "--model", "x/y"]);
+        assert_eq!(config.shell_command, ["bash", "-l"], "SHELL_CMD wins, and without SHELL…");
+        assert_eq!(from(&env[..1]).unwrap().shell_command, ["/bin/sh"], "…/bin/sh is there");
     }
 
     #[test]

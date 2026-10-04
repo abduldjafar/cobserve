@@ -237,7 +237,7 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     app.update(ctrl('\\'));
     app.update(key(KeyCode::Char('n')));
     let asking = render(&app, 140, 40);
-    assert!(asking.contains("New session") && asking.contains("Open the session here"), "{asking}");
+    assert!(asking.contains("New Claude session") && asking.contains("Open the session here"), "{asking}");
     app.update(key(KeyCode::Enter));
     run_session(&mut app, b"the second session\r\n");
     // ctrl+\ r: named.
@@ -329,7 +329,7 @@ fn a_new_session_s_folder_is_picked_with_clicks_like_in_an_explorer() {
     app.update(key(KeyCode::Char('n')));
     answer_picker(&mut app, Some("main"), &[("docs", None), ("src", None), ("tools", Some("dev"))], None);
     let screen = render(&app, 140, 40);
-    for text in ["New session", "where should Claude work?", "✕ cancel", "⌕", "search the folders below here", "3 folders"] {
+    for text in ["New Claude session", "where should it work?", "✕ cancel", "⌕", "search the folders below here", "3 folders"] {
         assert!(screen.contains(text), "{text}: {screen}");
     }
     let row = |screen: &str, text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
@@ -381,11 +381,47 @@ fn a_new_session_s_folder_is_picked_with_clicks_like_in_an_explorer() {
 }
 
 #[test]
+fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
+    use crate::app::Hit;
+    use crate::claude::{Kind, Mode, PaneState};
+    let mut app = app_with_claude(b"one\r\n");
+    app.claude.open_new("~/work/notes", Kind::OpenCode);
+    run_session(&mut app, b"opencode here\r\n");
+    app.claude.open_new("~/work/scripts", Kind::Terminal);
+    run_session(&mut app, b"$ ls\r\n");
+    let screen = render(&app, 160, 40);
+    let row = |screen: &str, text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
+    assert!(row(&screen, "✻  cobserve").contains('5'), "Claude's mark: {screen}");
+    assert!(row(&screen, "▣  notes").contains('6'), "OpenCode's: {screen}");
+    assert!(row(&screen, "❯  scripts").contains('7'), "a shell's: {screen}");
+    assert!(screen.lines().rev().nth(1).unwrap().contains("every other key goes to the shell"), "{screen}");
+
+    // The picker offers the three, the one it will open lit; a click changes it.
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('n')));
+    let picking = render(&app, 160, 40);
+    for text in ["New terminal", "✻ Claude", "▣ OpenCode", "❯ Terminal", "shift+tab switches"] {
+        assert!(picking.contains(text), "{text}: {picking}");
+    }
+    click_on(&mut app, Hit::Kind(Kind::OpenCode));
+    assert!(render(&app, 160, 40).contains("New OpenCode session"));
+    app.update(key(KeyCode::Esc));
+
+    // One that would not start says how to get it, for what it is.
+    app.claude.select(1);
+    app.claude.current_mut().unwrap().pane.state = PaneState::Failed("opencode is not installed here (not on PATH)".into());
+    let failed = render(&app, 160, 40);
+    assert!(failed.contains("opencode auth login") && failed.contains("OPENCODE_CMD"), "{failed}");
+    assert!(failed.lines().rev().nth(1).unwrap().contains("start OpenCode"), "{failed}");
+    assert_eq!(app.claude.mode, Mode::Typing);
+}
+
+#[test]
 fn a_narrow_terminal_puts_the_sessions_on_a_bar() {
     let app = app_with_claude(b"one\r\n");
     let screen = render(&app, 96, 30);
     let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[4].contains(" 5 cobserve ") && lines[4].contains(" + "), "{}", lines[4]);
+    assert!(lines[4].contains(" 5 ✻ cobserve ") && lines[4].contains(" + "), "{}", lines[4]);
     assert!(!screen.contains("SESSIONS"), "{screen}");
 }
 
@@ -413,7 +449,7 @@ fn claude_runs_in_view_five_under_the_monitor() {
     let lines: Vec<&str> = screen.lines().collect();
     assert!(lines[1].contains("FLEET") && lines[2].contains("REDASH"), "the band stays: {screen}");
     assert!(lines[3].contains("✖ clickhouse3"), "the worst of the fleet under the band: {}", lines[3]);
-    assert!(lines[0].contains("5 CLAUDE"), "a tab of its own: {}", lines[0]);
+    assert!(lines[0].contains("5 SESSIONS"), "a tab of its own: {}", lines[0]);
     assert!(screen.contains("✻  Tidy the README"), "Claude's task, from its title, in the list: {screen}");
     let footer = lines[lines.len() - 2];
     assert!(footer.contains("ctrl+\\  then") && !footer.contains("Tidy the README"), "keys only: {footer}");
@@ -1094,18 +1130,20 @@ fn export_screens() {
     map.update(key(KeyCode::Char('3')));
     save("120x36-map", &map, 120, 36);
 
-    // Three sessions in three projects: one named and on screen, one that rang while it was
-    // not, one that Claude itself named by its task.
+    // Four sessions in three projects: Claude named and on screen, OpenCode that rang while it
+    // was not, Claude named by its task, and a shell.
     let mut claude = app_after(118);
     claude.claude.default_dir = "~/work/billing".into();
     claude.update(key(KeyCode::Char('5')));
     let billing = run_session(&mut claude, CLAUDE_DEMO);
     claude.claude.rename_current("billing export");
-    for (dir, title) in [
-        ("~/work/pipelines", &b"\x1b]0;\xe2\x9c\xb3 late partitions\x07"[..]),
-        ("~/work/reports", &b"\x1b]0;\xe2\x9c\xb3 weekly totals\x07"[..]),
+    use crate::claude::Kind;
+    for (dir, kind, title) in [
+        ("~/work/pipelines", Kind::OpenCode, &b"\x1b]0;late partitions\x07"[..]),
+        ("~/work/reports", Kind::Claude, &b"\x1b]0;\xe2\x9c\xb3 weekly totals\x07"[..]),
+        ("~/work/reports", Kind::Terminal, &b"\x1b]0;make totals\x07"[..]),
     ] {
-        claude.claude.open_new(dir);
+        claude.claude.open_new(dir, kind);
         run_session(&mut claude, title);
     }
     claude.update(ctrl('\\'));
@@ -1114,6 +1152,7 @@ fn export_screens() {
     claude.claude.list[0].branch = Some("main".into());
     claude.claude.list[1].branch = Some("fix-late-partitions".into());
     claude.claude.list[2].branch = Some("add-weekly-totals".into());
+    claude.claude.list[3].branch = Some("add-weekly-totals".into());
     claude.claude.list[1].pane.attention = true;
     save("120x36-claude", &claude, 120, 36);
     save("160x48-claude", &claude, 160, 48);
