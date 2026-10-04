@@ -1,14 +1,14 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 02:16:19 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 03:19:00 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.8% 283/768 GiB          ▅   CPU ██▊        27.4% 53/192 cores          ▅  │
 │ REDASH  16 waiting        █ · oldest 1m55s ▲ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues  [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
 │  NODE · USER → PERSON            MEM ▼                       GiB  CPU ▼                    cores  QUERIES  LONGEST   │
-│ ▌▾ clickhouse3                ▅   91.7%↑ ████████████▉   58.7/64   99.0%↑ █████████████▉ 15.8/16     4 ✕2    4m55s ✕ │
-│  ├─ r_redash╭ keys · ? closes ─────────────────────────────────────────────────────────────────────────╮1    4m55s ✕ │
-│  ├─ r_redash│─ KEYS ─────────────────────────────────────────────────────────────────────────────────  │1    3m04s ✕ │
-│  ├─ airflow │   ↑ ↓  j k  move the cursor · PgUp PgDn Home End jump                                    │1      12s   │
-│  ├─ haris   │          ⏎  open / close · on an insight, a queue job, a tile or a tape line: go there   │1       4s   │
-│  └─ server ·│   ← →  h l  collapse / expand, vim-style                                                 │             │
+│ ▌▾ clickhous╭ keys · ? closes ─────────────────────────────────────────────────────────────────────────╮2    4m55s ✕ │
+│  ├─ r_redash│─ KEYS ─────────────────────────────────────────────────────────────────────────────────  │1    4m55s ✕ │
+│  ├─ r_redash│   ↑ ↓  j k  move the cursor · PgUp PgDn Home End jump                                    │1    3m04s ✕ │
+│  ├─ airflow │          ⏎  open / close · on an insight, a queue job, a tile or a tape line: go there   │1      12s   │
+│  ├─ haris   │   ← →  h l  collapse / expand, vim-style                                                 │1       4s   │
+│  └─ server ·│   J K  ⇧↑↓  scroll the SQL under the selected query                                      │             │
 │  ▸ clickhous│        tab  move between the tree and the insights                                       │2    3m04s ✕ │
 │ ▎▸ clickhous│      space  fold / unfold the healthy nodes                                              │1    5m20s ✕ │
 │  ▸ clickhous│          u  pivot node ↔ user: who is burning the fleet                                  │0        —   │
@@ -31,6 +31,6 @@
 │ ─ clickhouse3 · pay-ch-node-1:9000 ───────────────────────────────────────────────────────────────────────────────── │
 │ MEM 58.7/64 GiB  91.7%         ▅ ↑ +2.4%/min    CPU 15.8/16 cores  99.0%         ▇ ↑ +33.9%/min                      │
 │ memory: queries 45.6% + server 46.1% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 5.3 GiB = 0.2× a 24.0 GiB query  │
-│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 02:16:39 UTC                             │
+│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 03:19:20 UTC                             │
 │  ?  close   any other key goes back                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 1029 ms · read-only ╯

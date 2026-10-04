@@ -679,6 +679,10 @@ or from a slope over the last minutes of it.
 - **§7 marks** are `▲` (amber) and `✖` (red) instead of `⚠`, which several terminals draw as a
   two-cell emoji and so shift the row. Colour also marks structure (node names, persons, keys)
   — still never to tell two users apart, and red and amber still mean only severity.
+- **§2.4 the SQL is no longer in the drawer**: the cursor on a query opens its SQL right under
+  its row — Redash's comment gone, a one-line query broken before its clauses, wrapped to the
+  screen and coloured — on up to 45% of the tree's height, with a scrollbar and `J` `K` (or
+  shift ↑↓) when it is longer. The drawer keeps the query's numbers.
 - **§1 layout**: a fleet summary line above the queue strip, one column header above the tree
   instead of one under every open node, bars on node rows on the same scale as the user rows
   under them, insights between the tree and the drawer. The drawer and the §7 degradation order

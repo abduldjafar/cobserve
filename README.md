@@ -146,6 +146,7 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `↑ ↓` `j k` | move · `PgUp PgDn Home End` jump |
 | `⏎` | open / close a node or user · on an insight, a queue job, a tile or a tape line: go there |
 | `← →` `h l` | collapse / expand |
+| `J K` `shift ↑↓` | scroll the SQL of the selected query (it opens right under the query's row) |
 | `tab` | move between the tree and the insights |
 | `space` | fold / unfold the healthy nodes |
 | `u` | pivot node ↔ user: who is burning the fleet |
