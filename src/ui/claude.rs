@@ -2,11 +2,11 @@
 //! on it (a bar of tabs over it on a narrow terminal), drawn from its emulated terminal
 //! (`claude.rs`); and, while a new one is opened, the folder picker in the screen's place.
 //!
-//! Above them the header and the two band lines stay as on every view, and the line under the
-//! band names the worst thing in the fleet right now — so a node going red is seen without
-//! leaving the conversation.
+//! Above them the header and the two band lines stay as on every view, and under the band a
+//! card for every node says how it is — its memory and its CPU, the worst first — so a node
+//! going red is seen without leaving the conversation.
 
-use super::widgets::{fit, rule, Cells};
+use super::widgets::{fit, rule, thin_bar, Cells};
 use crate::app::{App, Hit};
 use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, MAX_SESSIONS};
 use crate::fmt;
@@ -23,12 +23,17 @@ use ratatui::Frame;
 /// it, a bar of tabs over the pane.
 const SIDEBAR_FROM: u16 = 100;
 
+/// Where the line beside the sessions runs, from the left of view 5's area; none when the
+/// terminal is too narrow for the list beside.
+pub fn divider_at(width: u16) -> Option<u16> {
+    (width >= SIDEBAR_FROM).then(|| (width * 22 / 100).clamp(26, 36))
+}
+
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let area = if area.width >= SIDEBAR_FROM {
-        let side = (area.width * 22 / 100).clamp(26, 36);
+    let area = if let Some(side) = divider_at(area.width) {
         sidebar(frame, app, theme, Rect::new(area.x, area.y, side, area.height));
         let rule: Vec<Line<'static>> = (0..area.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
         frame.render_widget(Paragraph::new(rule), Rect::new(area.x + side, area.y, 1, area.height));
@@ -661,109 +666,261 @@ fn style_of(cell: &vt100::Cell, live: bool) -> Style {
     style
 }
 
-/// The line under the band on view 5: every node in a few words — those in trouble first,
-/// marked and saying what makes it so (why it does not answer, its memory, its CPU, its
-/// replication lag), then the rest in view 1's order, quiet, with the busier of their memory
-/// and CPU — so the whole fleet is in sight from a session without a row more. As many as the
-/// width holds, then how many more; a click on one opens it on view 1.
-pub fn fleet_line(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
-    struct Node {
-        name: String,
-        label: String,
-        level: Severity,
-        down: Option<&'static str>,
-        /// What it says: `cpu 54%`, `lag 12s` — and how bad that is.
-        what: (&'static str, String, Severity),
-    }
-    let width = area.width as usize;
-    let nodes: Vec<Node> = app
+
+/// A node as view 5 shows it, above the sessions.
+struct Glance {
+    name: String,
+    /// The name less the domain every node shares.
+    label: String,
+    /// The worst of its memory, its CPU and its lag — `Crit` when it does not answer.
+    level: Severity,
+    mem: Option<f64>,
+    cpu: Option<f64>,
+    /// Its replication lag, when that is a problem, and how bad.
+    lag: Option<(String, Severity)>,
+    /// Why it does not answer (`unreachable`, `no access`), and what it said.
+    down: Option<(&'static str, Option<String>)>,
+}
+
+/// Every node, the worst first; within a level, view 1's order.
+fn glances(app: &App) -> Vec<Glance> {
+    let mut glances = app
         .with_view(|view| {
             let mut nodes: Vec<&crate::model::NodeView<'_>> = view.nodes.iter().collect();
             nodes.sort_by(|a, b| crate::model::compare_nodes(a, b, app.tree.sort));
             let names: Vec<&str> = nodes.iter().map(|n| n.node.name.as_str()).collect();
-            // The domain every node shares says nothing on a line this full.
+            // The domain every node shares says nothing in a space this small.
             let domain = crate::insight::shared_domain(&names);
             nodes
                 .iter()
                 .map(|node| {
                     let name = node.node.name.clone();
-                    let label = domain.as_deref().and_then(|d| name.strip_suffix(d)).unwrap_or(&name).to_string();
-                    let (resource, pct) = match (node.mem_pct, node.cpu_pct) {
-                        (Some(mem), Some(cpu)) if cpu > mem => ("cpu", Some(cpu)),
-                        (Some(mem), _) => ("mem", Some(mem)),
-                        (None, cpu) => ("cpu", cpu),
-                    };
-                    let busier = severity::node(pct);
                     let lag = severity::lag(node.node.lag_s);
-                    // Behind on replication is worse than busy: then the lag is what it says.
-                    let what = if lag > busier {
-                        ("lag", fmt::dur(node.node.lag_s as f64), lag)
-                    } else {
-                        (resource, pct.map_or_else(|| "—".to_string(), fmt::pct0), busier)
-                    };
-                    Node {
-                        label,
+                    Glance {
+                        label: domain.as_deref().and_then(|d| name.strip_suffix(d)).unwrap_or(&name).to_string(),
                         level: super::nodes::severity_of(node),
-                        down: (!node.node.reachable).then(|| node.node.down_word()),
-                        what,
+                        mem: node.mem_pct,
+                        cpu: node.cpu_pct,
+                        lag: lag.is_problem().then(|| (fmt::dur(node.node.lag_s as f64), lag)),
+                        down: (!node.node.reachable).then(|| (node.node.down_word(), node.node.down_detail().map(str::to_string))),
                         name,
                     }
                 })
-                .collect::<Vec<Node>>()
+                .collect::<Vec<Glance>>()
         })
         .unwrap_or_default();
-    // Trouble first, worst first — a node that does not answer has no numbers to sort by.
-    let mut nodes = nodes;
-    nodes.sort_by_key(|node| std::cmp::Reverse(if node.down.is_some() { Severity::Crit } else { node.level }));
-    if nodes.is_empty() {
-        app.viewport.listed_nodes.borrow_mut().clear();
-        return rule(width, vec![Span::styled("waiting for the first snapshot…", theme.muted())], theme);
+    glances.sort_by_key(|glance| std::cmp::Reverse(glance.level));
+    glances
+}
+
+/// A node's mark and the style of its name: `✖` or `▲` in its colour when it is in trouble,
+/// a green `●` when it is not.
+fn node_mark(level: Severity, theme: &Theme) -> (&'static str, Style, Style) {
+    if level.is_problem() {
+        (level.glyph(), theme.sev(level).add_modifier(Modifier::BOLD), theme.strong())
+    } else {
+        ("●", theme.sev(Severity::Ok), theme.text2())
+    }
+}
+
+/// A share as a number, quiet while it is fine and in its colour, bold, when it is not.
+fn share(value: Option<f64>, theme: &Theme) -> (String, Style) {
+    let level = severity::node(value);
+    let text = value.map_or_else(|| "—".to_string(), fmt::pct0);
+    let style = if level.is_problem() { theme.sev(level).add_modifier(Modifier::BOLD) } else { theme.text2() };
+    (text, style)
+}
+
+/// The cards' columns: the legend at the left, the room between two cards, and how narrow and
+/// how wide a card may be.
+const LEGEND: usize = 6;
+const GAP: usize = 2;
+const CARD_MIN: usize = 17;
+const CARD_MAX: usize = 26;
+
+/// Under the band on view 5, a card for every node — the worst first, then view 1's order —
+/// with how it is, and its memory and its CPU as thin bars, each with its share:
+///
+/// ```text
+///       ✖ clickhouse3          ▲ clickhouse7  lag 12s  ● clickhouse-bi        +6 more
+/// mem   ━━━━━━━━━━━━━━━━  93%  ━━━━━━━━━━╺━━━━━━  60%  ━━━━━━━━━━━╺━━━━  67%  ≤ 42%
+/// cpu   ━━━━━━━━━━━━━━━━  93%  ━━━━━━━╸━━━━━━━━━  44%  ━━━━━━━━━━━━╺━━━  72%  ≤ 29%
+/// ──────────────────────────┬──────────────────────────────────────────────────────────
+/// ```
+///
+/// The cards are all as wide as the widest of them needs — a name and its lag whole — and
+/// wider when there is room, so their bars can be compared at a glance. As many as fit, then
+/// one saying how many more and how high the rest go. A click on a card opens its node on
+/// view 1; the rule under the cards meets the line beside the sessions.
+pub fn fleet_strip(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    if area.height < 4 || area.width == 0 {
+        return;
+    }
+    let width = area.width as usize;
+    let glances = glances(app);
+    let mut rows: [Cells; 3] = Default::default();
+    for (row, legend) in rows.iter_mut().zip(["", "mem", "cpu"]) {
+        row.push(format!(" {legend}"), theme.faint());
+    }
+    if glances.is_empty() {
+        rows[1].pad_to(LEGEND);
+        rows[1].push("waiting for the first snapshot…", theme.muted());
+    }
+
+    // How many cards, and how wide: from all of them down, until they fit.
+    let room = width.saturating_sub(LEGEND);
+    let (mut shown, mut card) = (glances.len(), CARD_MIN);
+    while shown > 0 {
+        let widest = glances[..shown].iter().map(card_need).max().unwrap_or(CARD_MIN);
+        let more = if shown < glances.len() { GAP + more_need(&glances[shown..]) } else { 0 };
+        if shown * (widest + GAP) - GAP + more <= room {
+            card = ((room - more + GAP) / shown - GAP).clamp(widest, CARD_MAX.max(widest));
+            break;
+        }
+        shown -= 1;
     }
 
     let mut hits = app.viewport.hits.borrow_mut();
-    let mut listed = Vec::with_capacity(nodes.len());
-    let separator = " · ";
+    let mut listed = Vec::with_capacity(shown);
+    for (index, glance) in glances.iter().take(shown).enumerate() {
+        let at = LEGEND + index * (card + GAP);
+        for row in rows.iter_mut() {
+            row.pad_to(at);
+        }
+        card_name(&mut rows[0], glance, card, theme);
+        match &glance.down {
+            Some((word, detail)) => {
+                let crit = theme.sev(Severity::Crit).add_modifier(Modifier::BOLD);
+                rows[1].push(fmt::truncate(&format!("↯ {word}"), card), crit);
+                rows[2].push(fmt::truncate(detail.as_deref().unwrap_or_default(), card), theme.muted());
+            }
+            None => {
+                for (row, value) in [(1, glance.mem), (2, glance.cpu)] {
+                    let (text, style) = share(value, theme);
+                    rows[row].spans(thin_bar(value, card - 5, theme.bar_fill(severity::node(value)), theme));
+                    rows[row].cell_right(&text, 5, style);
+                }
+            }
+        }
+        hits.push((Rect::new(area.x + at as u16, area.y, card as u16, 3), Hit::Node(listed.len())));
+        listed.push(glance.name.clone());
+    }
+    let hidden = &glances[shown..];
+    let at = if shown > 0 { LEGEND + shown * (card + GAP) } else { LEGEND };
+    if !hidden.is_empty() && at + more_need(hidden) <= width {
+        for row in rows.iter_mut() {
+            row.pad_to(at);
+        }
+        let worst = hidden.iter().map(|glance| glance.level).max().unwrap_or(Severity::None);
+        if worst.is_problem() {
+            rows[0].push(format!("{} ", worst.glyph()), theme.sev(worst).add_modifier(Modifier::BOLD));
+        }
+        rows[0].push(format!("+{} more", hidden.len()), theme.text2());
+        // How high the rest go, so what is not shown is not a mystery.
+        let most = |of: fn(&Glance) -> Option<f64>| hidden.iter().filter_map(of).reduce(f64::max);
+        for (row, value) in [(1, most(|glance| glance.mem)), (2, most(|glance| glance.cpu))] {
+            if let Some(value) = value {
+                rows[row].push(format!("≤ {}", fmt::pct0(value)), theme.muted());
+            }
+        }
+        let rect = Rect::new(area.x + at as u16, area.y, more_need(hidden) as u16, 3);
+        hits.push((rect, Hit::View(crate::app::View::Nodes)));
+    }
+    drop(hits);
+    *app.viewport.listed_nodes.borrow_mut() = listed;
+
+    for (y, row) in (area.y..).zip(rows) {
+        frame.render_widget(Paragraph::new(row.line(width, Style::default())), Rect::new(area.x, y, area.width, 1));
+    }
+    let mut rule: Vec<&str> = vec!["─"; width];
+    if let Some(at) = divider_at(area.width).map(usize::from).filter(|&at| at < width) {
+        rule[at] = "┬";
+    }
+    let line = Line::from(Span::styled(rule.concat(), theme.rule()));
+    frame.render_widget(Paragraph::new(line), Rect::new(area.x, area.y + 3, area.width, 1));
+}
+
+/// How wide a node's card has to be for its mark, its name and its lag to be whole.
+fn card_need(glance: &Glance) -> usize {
+    let tag = glance.lag.as_ref().map_or(0, |(lag, _)| fmt::width(&format!(" lag {lag}")));
+    (2 + fmt::width(&glance.label) + tag).clamp(CARD_MIN, CARD_MAX)
+}
+
+/// How wide the card for the nodes not shown has to be: `▲ +3 more`, `≤ 100%`.
+fn more_need(hidden: &[Glance]) -> usize {
+    let mark = if hidden.iter().any(|glance| glance.level.is_problem()) { 2 } else { 0 };
+    (mark + fmt::width(&format!("+{} more", hidden.len()))).max(fmt::width("≤ 100%"))
+}
+
+/// A card's first line: the node's mark and name and, when it is behind, its lag at the right
+/// — as many words of the lag as fit beside the whole name, none rather than a cut one.
+fn card_name(cells: &mut Cells, glance: &Glance, card: usize, theme: &Theme) {
+    let (mark, mark_style, name_style) = node_mark(glance.level, theme);
+    let room = card.saturating_sub(2);
+    let name = fmt::width(&glance.label);
+    let tag = glance.lag.as_ref().and_then(|(lag, sev)| {
+        [format!("lag {lag}"), lag.clone()]
+            .into_iter()
+            .find(|tag| name + 1 + fmt::width(tag) <= room)
+            .map(|tag| (tag, *sev))
+    });
+    let start = cells.width();
+    cells.push(mark, mark_style).push(" ", Style::default()).push(fmt::truncate(&glance.label, room), name_style);
+    if let Some((tag, sev)) = tag {
+        cells.pad_to(start + card - fmt::width(&tag));
+        cells.push(tag, theme.sev(sev).add_modifier(Modifier::BOLD));
+    }
+}
+
+/// On a terminal too short for the cards the line under the band carries the fleet instead:
+/// every node in a few words, the worst first — `✖ clickhouse3 mem 93% cpu 97%` — as many as
+/// the width holds, then how many more. A click on one opens it on view 1.
+pub fn fleet_line(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
+    let width = area.width as usize;
+    let glances = glances(app);
+    if glances.is_empty() {
+        app.viewport.listed_nodes.borrow_mut().clear();
+        return rule(width, vec![Span::styled("waiting for the first snapshot…", theme.muted())], theme);
+    }
+    let mut hits = app.viewport.hits.borrow_mut();
+    let mut listed = Vec::with_capacity(glances.len());
+    let separator = "   ";
     let more = |left: usize| format!("{separator}+{left} more");
     let mut cells = Cells::new();
     cells.push("─ ", theme.rule());
-    for (index, node) in nodes.iter().enumerate() {
+    for (index, glance) in glances.iter().enumerate() {
         let mut piece = Cells::new();
-        let level = if node.down.is_some() { Severity::Crit } else { node.level };
-        if level.is_problem() {
-            piece.push(format!("{} ", level.glyph()), theme.sev(level).add_modifier(Modifier::BOLD));
-            piece.push(node.label.clone(), theme.strong());
-        } else {
-            piece.push(node.label.clone(), theme.text2());
-        }
-        piece.push(" ", Style::default());
-        match node.down {
-            Some(word) => {
-                piece.push(word, theme.sev(Severity::Crit));
+        let (mark, mark_style, name_style) = node_mark(glance.level, theme);
+        piece.push(format!("{mark} "), mark_style).push(glance.label.clone(), name_style);
+        match &glance.down {
+            Some((word, _)) => {
+                piece.push(format!(" {word}"), theme.sev(Severity::Crit));
             }
             None => {
-                let (what, value, hot) = &node.what;
-                piece.push(format!("{what} "), theme.faint());
-                let style = if hot.is_problem() { theme.sev(*hot).add_modifier(Modifier::BOLD) } else { theme.muted() };
-                piece.push(value.clone(), style);
+                for (what, value) in [("mem", glance.mem), ("cpu", glance.cpu)] {
+                    let (text, style) = share(value, theme);
+                    piece.push(format!(" {what} "), theme.faint()).push(text, style);
+                }
+                if let Some((lag, sev)) = &glance.lag {
+                    piece.push(" lag ", theme.faint()).push(lag.clone(), theme.sev(*sev).add_modifier(Modifier::BOLD));
+                }
             }
         }
         // This one, and room after it to say how many are left if it is not the last.
-        let left = nodes.len() - index - 1;
+        let left = glances.len() - index - 1;
         let gap = if index > 0 { fmt::width(separator) } else { 0 };
         let after = if left > 0 { fmt::width(&more(left)) } else { 0 };
         if cells.width() + gap + piece.width() + after + 2 > width {
             let x = area.x + cells.width() as u16;
-            let rest = more(nodes.len() - index);
+            let rest = more(glances.len() - index);
             hits.push((Rect::new(x, area.y, fmt::width(&rest) as u16, 1), Hit::View(crate::app::View::Nodes)));
             cells.push(rest, theme.muted());
             break;
         }
-        if index > 0 {
-            cells.push(separator, theme.faint());
-        }
+        cells.push(if index > 0 { separator } else { "" }, Style::default());
         let x = area.x + cells.width() as u16;
         hits.push((Rect::new(x, area.y, piece.width() as u16, 1), Hit::Node(listed.len())));
-        listed.push(node.name.clone());
+        listed.push(glance.name.clone());
         cells.spans(piece.into_spans());
     }
     drop(hits);

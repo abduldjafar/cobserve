@@ -1,7 +1,11 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────────────────────────────────────────────── ● LIVE 2s · 15:53:00 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────────────────────────────────────────────── ● LIVE 2s · 22:21:45 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
 │ FLEET  9 nodes · 1 hot   MEM █████▏         36.4% 280/768 GiB ▄▄▄▄▄▅▅▅▅▅▅▅▅▅▄▄   CPU ████           28.7% 55/192 cores ▅▄▄▄▄▄▄▄▅▄▅▄▄▄▄▄   QUERIES 15 · 4 ✕   │
 │ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue │
-│ ─ ✖ clickhouse3 cpu 93% · ▲ clickhouse7 lag 12s · clickhouse-bi cpu 72% · clickhouse2 mem 42% · clickhouse5 mem 38% · ch4 mem 21% · ch6 mem 19% · +2 more ── │
+│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│       ✖ clickhouse3          ▲ clickhouse7 lag 12s  ● clickhouse-bi        ● clickhouse2          ● clickhouse5          ● ch4                  +3 more      │
+│  mem  ━━━━━━━━━━━━━━━╺  93%  ━━━━━━━━━╸━━━━━━  60%  ━━━━━━━━━━━╺━━━━  67%  ━━━━━━╸━━━━━━━━━  42%  ━━━━━━╺━━━━━━━━━  38%  ━━━╸━━━━━━━━━━━━  21%  ≤ 19%        │
+│  cpu  ━━━━━━━━━━━━━━━╺  93%  ━━━━━━━╺━━━━━━━━  44%  ━━━━━━━━━━━╸━━━━  72%  ━━━━╸━━━━━━━━━━━  29%  ╸━━━━━━━━━━━━━━━   4%  ━━╸━━━━━━━━━━━━━  16%  ≤ 9%         │
+│ ──────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
 │  SESSIONS                         │ ✻ New Claude session  ·  where should it work?                                                                 ✕ cancel  │
 │                                   │                                                                                                                          │
 │   ✻  billing export           5   │  run   ✻ Claude    ▣ OpenCode    ❯ Terminal    shift+tab switches                                                        │
@@ -20,10 +24,6 @@
 │ │    choose its folder →        │ │   ▸  reports                                                                                        ⎇ add-weekly-totals  │
 │ ╰───────────────────────────────╯ │   ▸  sandbox                                                                                                             │
 │                                   │   ▸  website                                                                                                 ⎇ redesign  │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │
 │                                   │                                                                                                                          │

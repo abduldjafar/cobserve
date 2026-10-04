@@ -8,7 +8,8 @@
 //! │ FLEET 8 nodes · 2 hot   MEM ▕████▍ ▏ 58.1% 372/640 GiB ▁▂▃▅   CPU …   QUERIES 14 · 3 ✕       │
 //! │ REDASH 12 waiting ▁▂▅▇ · oldest 1m43s ▲ · workers ●●●●●● 6/6 busy · 2 failed/5m  [2] queue │
 //! │ ──────────────────────────────────────────────────────────────────────────────────────── │
-//! │ the view: the tree, the queue, the map or the tape                                         │
+//! │ view 5 only: a card for every node — mark, name, memory and CPU — and a rule under them    │
+//! │ the view: the tree, the queue, the map, the tape or the sessions                           │
 //! │ ─ INSIGHTS 2 ✖ 4 ▲ ─────────────────── (view 1 only)                                       │
 //! │ ─ the selected row ─────────────────── the drawer, 3 lines                                 │
 //! │  ↑↓ move  ⏎ open  tab insights  …                                    the keys that work now │
@@ -46,6 +47,10 @@ use widgets::{keycap, pill, rule, Cells};
 const DRAWER_FULL: u16 = 28;
 const DRAWER_TITLE_ONLY: u16 = 22;
 
+/// Height of the frame's inner area from which view 5 shows a card for every node under the
+/// band; below it the rule under the band carries them, in a few words each.
+const CARDS_FROM: u16 = 26;
+
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_with(frame, app, theme::current());
 }
@@ -55,6 +60,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
 struct Areas {
     band: Rect,
     band_rule: Rect,
+    /// View 5's node cards and the rule under them.
+    cards: Rect,
     body: Rect,
     insights: Rect,
     drawer: Rect,
@@ -83,6 +90,9 @@ fn areas(content: Rect, view: View, insights_len: usize, body_need: usize) -> Ar
     } else {
         row(top, 0)
     };
+    let cards_height = if view == View::Claude && band_rule.height > 0 && h >= CARDS_FROM { 4 } else { 0 };
+    let cards = row(top, cards_height);
+    top += cards_height;
 
     // §7: below a 30-row terminal the drawer is its title alone, then nothing.
     let drawer_body = if h >= 32 {
@@ -114,6 +124,7 @@ fn areas(content: Rect, view: View, insights_len: usize, body_need: usize) -> Ar
     Areas {
         band,
         band_rule,
+        cards,
         body,
         insights,
         drawer,
@@ -169,13 +180,16 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
 
     band::draw(frame, app, theme, a.band);
     if a.band_rule.height > 0 {
-        let line = if app.view == View::Claude {
-            // On view 5 the rule carries every node, in a few words.
+        let line = if app.view == View::Claude && a.cards.height == 0 {
+            // On view 5 with no room for the cards, the rule carries every node in a few words.
             claude::fleet_line(app, theme, a.band_rule)
         } else {
             Line::from(Span::styled("─".repeat(a.band_rule.width as usize), theme.rule()))
         };
         frame.render_widget(Paragraph::new(line), a.band_rule);
+    }
+    if a.cards.height > 0 {
+        claude::fleet_strip(frame, app, theme, a.cards);
     }
     match app.view {
         View::Nodes => nodes::draw_tree(frame, app, theme, a.body, area.width),

@@ -417,17 +417,29 @@ fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
 }
 
 #[test]
-fn every_node_is_on_the_line_under_the_band_and_a_click_opens_one() {
+fn every_node_has_a_card_under_the_band_and_a_click_opens_one() {
     use crate::app::Hit;
     let mut app = app_with_claude(b"one\r\n");
     let screen = render(&app, 160, 48);
-    let line = screen.lines().nth(3).unwrap().to_string();
-    // The worst first, marked and saying what; the rest quiet, with the busier of the two.
-    assert!(line.contains("─ ✖ clickhouse3 cpu ") || line.contains("─ ✖ clickhouse3 mem "), "{line}");
-    let at = |name: &str| line.find(name).unwrap_or_else(|| panic!("{name} in {line}"));
-    assert!(at("clickhouse3") < at("clickhouse-bi") && at("clickhouse-bi") < at("ch9"), "view 1's order: {line}");
-    assert!(line.contains("▲ clickhouse7 lag "), "amber for its lag, so the lag is what it says: {line}");
-    assert!(line.contains(" · ch9 mem ") || line.contains(" · ch9 cpu "), "a quiet one, unmarked: {line}");
+    let lines: Vec<&str> = screen.lines().collect();
+    let (names, mem, cpu, rule) = (lines[4], lines[5], lines[6], lines[7]);
+    // The worst first, marked; each with its memory and its CPU, a bar and a share.
+    assert!(names.starts_with("│       ✖ clickhouse3 "), "{names}");
+    assert!(mem.starts_with("│  mem  ━") && cpu.starts_with("│  cpu  ━"), "{mem}\n{cpu}");
+    let cards = app.viewport.listed_nodes.borrow().len();
+    assert!(cards >= 5, "{names}");
+    assert_eq!(mem.matches('%').count(), cards + 1, "a share on every card, and how high the rest go: {mem}");
+    assert_eq!(cpu.matches('%').count(), cards + 1, "{cpu}");
+    assert!(names.contains("▲ clickhouse7 lag "), "amber for its lag, said in full: {names}");
+    assert!(names.contains("● clickhouse2"), "a quiet one: {names}");
+    let at = |name: &str| names.find(name).unwrap_or_else(|| panic!("{name} in {names}"));
+    assert!(at("clickhouse3") < at("clickhouse7") && at("clickhouse7") < at("clickhouse2"), "trouble first: {names}");
+    let fleet = app.snapshot().unwrap().nodes.len();
+    assert!(names.contains(&format!("+{} more", fleet - cards)), "how many did not fit: {names}");
+    assert!(mem.contains("≤ ") && cpu.contains("≤ "), "and how high they go: {mem}");
+    // The rule under them meets the line beside the sessions.
+    let divider = lines[8].chars().skip(1).position(|c| c == '│').map(|at| at + 1);
+    assert_eq!(rule.chars().position(|c| c == '┬'), divider, "{rule}\n{}", lines[8]);
     assert!(!screen.lines().any(|l| l.starts_with("│  NODES")), "the list beside is the sessions' alone: {screen}");
 
     // A node that does not answer says why.
@@ -435,20 +447,47 @@ fn every_node_is_on_the_line_under_the_band_and_a_click_opens_one() {
     let name = down.nodes[1].name.clone();
     down.nodes[1] = crate::model::NodeSnapshot::unreachable(&name, "connection refused");
     app.update(Event::Snapshot(Box::new(down)));
-    let line = render(&app, 160, 48).lines().nth(3).unwrap().to_string();
-    assert!(line.contains(&format!("✖ {name} unreachable")), "{line}");
+    let screen = render(&app, 160, 48);
+    let lines: Vec<&str> = screen.lines().collect();
+    assert!(lines[4].contains(&format!("✖ {name}")), "{}", lines[4]);
+    assert!(lines[5].contains("↯ unreachable") && lines[6].contains("connection refused"), "{}\n{}", lines[5], lines[6]);
 
-    // A click on one opens it on view 1; the session goes on where it was.
+    // A click anywhere on a card opens its node on view 1; the session goes on where it was.
     let index = app.viewport.listed_nodes.borrow().iter().position(|n| n == &name).expect("listed");
-    click_on(&mut app, Hit::Node(index));
+    let card = app.viewport.hits.borrow().iter().find(|(_, h)| *h == Hit::Node(index)).map(|(r, _)| *r).unwrap();
+    assert_eq!(card.height, 3, "the name and both bars");
+    app.update(Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: card.x + 2,
+        row: card.y + 2,
+        modifiers: KeyModifiers::NONE,
+    }));
     assert_eq!(app.view, View::Nodes);
     assert_eq!(app.selected(), Some(&crate::tree::RowId::Node(name)));
 
-    // Narrow, as many as fit and how many more.
+    // The card for the rest opens view 1 too.
     app.update(key(KeyCode::Char('5')));
-    let narrow = render(&app, 100, 30);
-    let line = narrow.lines().nth(3).unwrap();
+    render(&app, 160, 48);
+    let more = app.viewport.hits.borrow().iter().find(|(r, h)| *h == Hit::View(View::Nodes) && r.y == 4).map(|(r, _)| *r);
+    let more = more.expect("the card for the rest");
+    app.update(Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: more.x,
+        row: more.y + 1,
+        modifiers: KeyModifiers::NONE,
+    }));
+    assert_eq!(app.view, View::Nodes);
+
+    // Wide, every node; short, the line under the band carries them, both numbers each.
+    app.update(key(KeyCode::Char('5')));
+    let wide = render(&app, 250, 56);
+    let names = wide.lines().nth(4).unwrap();
+    assert!(!names.contains("more") && app.viewport.listed_nodes.borrow().len() == fleet, "{names}");
+    let short = render(&app_with_claude(b"one\r\n"), 100, 26);
+    let line = short.lines().nth(3).unwrap();
+    assert!(line.starts_with("│ ─ ✖ clickhouse3 mem ") && line.contains("% cpu "), "{line}");
     assert!(line.contains(" more ─"), "how many did not fit: {line}");
+    assert!(short.lines().nth(4).unwrap().contains(" 5 ✻ "), "no cards: {short}");
 }
 
 #[test]
@@ -479,7 +518,8 @@ fn a_narrow_terminal_puts_the_sessions_on_a_bar() {
     let app = app_with_claude(b"one\r\n");
     let screen = render(&app, 96, 30);
     let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[4].contains(" 5 ✻ cobserve ") && lines[4].contains(" + "), "{}", lines[4]);
+    assert!(lines[4].contains("✖ clickhouse3") && lines[5].contains(" mem "), "the cards first: {screen}");
+    assert!(lines[8].contains(" 5 ✻ cobserve ") && lines[8].contains(" + "), "{}", lines[8]);
     assert!(!screen.contains("SESSIONS"), "{screen}");
 }
 
@@ -506,7 +546,7 @@ fn claude_runs_in_view_five_under_the_monitor() {
     assert!(screen.contains("> fix the failing test"), "{screen}");
     let lines: Vec<&str> = screen.lines().collect();
     assert!(lines[1].contains("FLEET") && lines[2].contains("REDASH"), "the band stays: {screen}");
-    assert!(lines[3].contains("✖ clickhouse3"), "the worst of the fleet under the band: {}", lines[3]);
+    assert!(lines[4].contains("✖ clickhouse3"), "the worst of the fleet under the band: {}", lines[4]);
     assert!(lines[0].contains("5 SESSIONS"), "a tab of its own: {}", lines[0]);
     assert!(screen.contains("✻  Tidy the README"), "Claude's task, from its title, in the list: {screen}");
     let footer = lines[lines.len() - 2];

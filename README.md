@@ -101,11 +101,20 @@ that rings while you are elsewhere is marked `●` there and on `5 SESSIONS`; on
 `✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the
 sessions.
 
-The fleet stays in sight on the line under the band, every node in a few words: those in
-trouble first, marked and saying what makes it so — `✖ clickhouse3 cpu 93%`, `▲ clickhouse7
-lag 12s`, `✖ clickhouse5 no access` — then the rest quiet, with the busier of their memory and
-CPU (`clickhouse-bi mem 42%`). As many as the width holds, then how many more; a click on one
-opens it on view 1.
+The fleet stays in sight above the sessions, a card for every node — the worst first, marked
+`✖` or `▲` (a quiet one `●`), with its lag when it is behind — and on every card its memory and
+its CPU, a thin bar and the share each:
+
+```text
+      ✖ clickhouse3          ▲ clickhouse7 lag 12s  ● clickhouse-bi        +6 more
+ mem  ━━━━━━━━━━━━━━╸━  91%  ━━━━━━━━━━╺━━━━━  62%  ━━━━━━━━━━━╺━━━━  67%  ≤ 42%
+ cpu  ━━━━━━━━━━━━━━━╺  95%  ━━━━━╸━━━━━━━━━━  36%  ━━━━━━━━━━━━╺━━━  72%  ≤ 29%
+```
+
+A node that does not answer says why (`↯ no access`). As many cards as the width holds, then
+how many more and how high the rest go; a click on a card opens its node on view 1. On a
+terminal under 28 rows the cards give way to the line under the band, each node in a few
+words: `✖ clickhouse3 mem 91% cpu 95%`.
 
 A new session's folder is picked as in a file explorer, no typing needed: it starts in the
 folder the session on screen works in, a click on a folder goes into it, a click on a step of
