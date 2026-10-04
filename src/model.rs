@@ -828,15 +828,16 @@ pub fn pivot<'a>(nodes: &[NodeView<'a>]) -> Vec<FleetUser<'a>> {
 
 /// §6.4 attribution, preferring what the server already extracted and falling back to the
 /// Rust regexes (`extract` can come back empty when the comment is unusual).
+///
+/// Whatever account the query runs as: the account Redash connects with is a setting of each
+/// data source, and a fleet where it is not `r_redash` would otherwise show nobody behind
+/// its queries and give the queue nothing to stitch to. Only the comment counts, so an
+/// account whose SQL has none — a real person, an ETL — is never renamed.
 pub fn attribution_from_sql(
-    user: &str,
     sql: &str,
     server_person: Option<&str>,
     server_redash_query_id: Option<u64>,
 ) -> (Option<String>, Option<u64>) {
-    if user != crate::attrib::REDASH_USER {
-        return (None, None);
-    }
     let person = server_person
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -863,12 +864,18 @@ pub struct QueueStatus {
     /// Why it is unreachable, for the strip: `HTTP 401`, `connection refused`.
     pub error: Option<String>,
     pub queues: Vec<QueueRow>,
-    /// Waiting and started jobs, with people (§6.3).
+    /// Waiting, running and stale jobs, with people (§6.3).
     pub jobs: Vec<Job>,
-    /// false → the WAITING list shows counts only, never invented names.
+    /// Redis answered, so the waiting jobs have names and ages — `rq_status` only counts them.
     pub names_available: bool,
+    /// Every live worker once, however many queues it serves — the per-queue counts share
+    /// workers between queues and do not add up.
+    pub workers_busy: u32,
+    pub workers_total: u32,
     /// The Redash instance name for the header, when we know it.
     pub host: Option<String>,
+    /// `10.1.0`, from `/api/config`.
+    pub version: Option<String>,
     pub taken_at: SystemTime,
 }
 
@@ -880,7 +887,10 @@ impl QueueStatus {
             queues: Vec::new(),
             jobs: Vec::new(),
             names_available: false,
+            workers_busy: 0,
+            workers_total: 0,
             host: None,
+            version: None,
             taken_at: SystemTime::now(),
         }
     }
@@ -907,7 +917,6 @@ impl QueueStatus {
     }
 
     /// Jobs on a worker: the RUNNING half of view 2 (§2.8).
-    /// Jobs on a worker: the RUNNING half of view 2 (§2.8).
     pub fn started(&self) -> Vec<&Job> {
         self.jobs
             .iter()
@@ -922,16 +931,35 @@ impl QueueStatus {
             .collect()
     }
 
+    /// Waiting in every queue: the count, which is authoritative even when Redis cannot name
+    /// the jobs.
+    pub fn total_waiting(&self) -> u32 {
+        self.queues.iter().map(|q| q.waiting).sum()
+    }
+
+    pub fn total_running(&self) -> u32 {
+        self.queues.iter().map(|q| q.running).sum()
+    }
+
+    pub fn total_stale(&self) -> u32 {
+        self.queues.iter().map(|q| q.stale).sum()
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct QueueRow {
     pub name: String,
+    /// Jobs a worker is running right now.
+    pub running: u32,
     pub waiting: u32,
+    /// Only with Redis: `rq_status` counts the waiting jobs and says nothing about their age.
     pub oldest_wait_s: Option<u64>,
+    /// Entries in RQ's started list that are not running (see [`Stale`]).
+    pub stale: u32,
+    /// The live workers that serve this queue, and how many of them are busy — with this
+    /// queue's job or another's, since a worker can serve several.
     pub workers_busy: u32,
     pub workers_total: u32,
-    pub failed_5m: u32,
 }
 
 impl QueueRow {
@@ -939,30 +967,69 @@ impl QueueRow {
     pub fn saturated(&self) -> bool {
         self.workers_total > 0 && self.workers_busy >= self.workers_total
     }
+
+    /// Nothing running, waiting or left over: one word on view 2 is enough for it.
+    pub fn is_idle(&self) -> bool {
+        self.running == 0 && self.waiting == 0 && self.stale == 0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
     /// Has not reached ClickHouse yet: nothing to kill, the wait is the queue (§2.8).
     Queued,
-    /// On a worker, so it IS a `system.processes` row somewhere.
+    /// On a worker, so — for a ClickHouse data source — a `system.processes` row somewhere.
     Started,
+    /// In RQ's started list, but not running.
+    Stale(Stale),
+}
+
+/// Why a job in RQ's started list is not really running. RQ leaves the entry behind when the
+/// worker that ran it dies, and Redash sets no time limit by default, so such entries can sit
+/// there for months; counting them as running makes a quiet Redash look full.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stale {
+    /// Its owner cancelled it; the worker that should have stopped it is gone.
+    Cancelled,
+    /// Every live worker of its queue is accounted for, and none of them holds it.
+    NoWorker,
+    /// Started more than a day ago — the cut-off the Redash admins' own scripts use.
+    OverADay,
+}
+
+impl Stale {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Stale::Cancelled => "cancelled",
+            Stale::NoWorker => "no worker holds it",
+            Stale::OverADay => "over a day old",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Job {
     /// The RQ job id, or a synthetic one in fake mode. Shown in the drawer: it is what you
-    /// look up in Redash when the row on screen is not enough.
+    /// look up in Redash when the row on screen is not enough — and what Redash writes into
+    /// the query's comment as `Job ID:`, which is how the stitch finds it in ClickHouse.
     pub id: String,
     pub state: JobState,
     pub queue: String,
-    /// The account the job runs as — `r_redash` for everything coming from Redash.
-    pub user: Option<String>,
-    /// Resolved from the Redash user's email, then displayed per §6.4.
+    /// The Redash user behind the job, displayed per §6.4 — the same form view 1 shows.
     pub person: Option<String>,
+    /// Their name and address as Redash has them, for the drawer.
+    pub person_full: Option<String>,
     pub redash_query_id: Option<u64>,
+    /// Run from the editor without saving: no number, and no text in Redash's API.
+    pub adhoc: bool,
+    /// Started by Redash's scheduler, not by a person.
+    pub scheduled: bool,
     pub query_name: Option<String>,
+    /// The saved query's SQL, as Redash has it.
+    pub sql: Option<String>,
     pub data_source: Option<String>,
+    /// Redash's type of the data source: `clickhouse`, `mysql`, `results`…
+    pub data_source_type: Option<String>,
     /// Waiting time while queued, running time once started.
     pub age_s: u64,
     /// The stitch: the ClickHouse node and `query_id` a started job became.
@@ -971,12 +1038,46 @@ pub struct Job {
 }
 
 impl Job {
-    /// `r_redash → grigol.gankava`, or just the user when the person is unknown.
-    pub fn label(&self) -> String {
-        match &self.user {
-            Some(user) => crate::attrib::user_label(user, self.person.as_deref()),
-            None => self.person.clone().unwrap_or_else(|| "—".to_string()),
+    /// An empty job of `state` on `queue`, for building one field by field.
+    pub fn new(id: impl Into<String>, state: JobState, queue: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            state,
+            queue: queue.into(),
+            person: None,
+            person_full: None,
+            redash_query_id: None,
+            adhoc: false,
+            scheduled: false,
+            query_name: None,
+            sql: None,
+            data_source: None,
+            data_source_type: None,
+            age_s: 0,
+            ch_node: None,
+            ch_query_id: None,
         }
+    }
+
+    /// The person, or `—` when Redash could not say.
+    pub fn label(&self) -> String {
+        self.person.clone().unwrap_or_else(|| "—".to_string())
+    }
+
+    /// `#7438 Gateway transfers`, `ad-hoc query`, or `—`.
+    pub fn query_label(&self) -> String {
+        match (self.redash_query_id, &self.query_name) {
+            (Some(id), Some(name)) => format!("#{id} {name}"),
+            (Some(id), None) => format!("#{id}"),
+            (None, Some(name)) => name.clone(),
+            (None, None) if self.adhoc => "ad-hoc query (not saved)".to_string(),
+            (None, None) => "—".to_string(),
+        }
+    }
+
+    /// Whether its data source is a ClickHouse one — `None` when Redash did not say.
+    pub fn on_clickhouse(&self) -> Option<bool> {
+        self.data_source_type.as_deref().map(|t| t.eq_ignore_ascii_case("clickhouse"))
     }
 
     /// A started job with no ClickHouse counterpart cannot be jumped to.

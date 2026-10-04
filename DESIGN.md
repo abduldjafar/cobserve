@@ -670,6 +670,20 @@ or from a slope over the last minutes of it.
   the environment, and `CH_SEED_URLS` adds to its servers. Errors in it name the key and the
   line, never a value — a password in the wrong place is not echoed — and a file other users
   can read is flagged in the footer.
+- **Redash, read the way its admins' queue script reads it** (`src/sources/redash.rs`): per
+  queue what runs, what waits and what is stale; each job's person by name and address
+  (`/api/users/{id}`), its data source by name and **type** (one `/api/data_sources` call for
+  all of them), its saved query by name and **SQL** (`/api/queries/{id}`, read again after ten
+  minutes, since queries get edited). The version comes from `/api/config`, asked once. All of
+  it read-only: nothing here cancels a job.
+- **STALE**, on view 2: what RQ's started list holds although no worker runs it — a job whose
+  worker died stays in that list, and without a time limit it stays for months (the screenshot
+  this was built from had five such jobs, 163 to 177 days old, under RUNNING). Each says why:
+  *cancelled*, *over a day old*, or *no worker holds it*. One that ClickHouse still runs is
+  marked so, and `⏎` goes to it.
+- **The job's SQL on view 2**: the cursor on a job opens its SQL under the row, as on view 1 —
+  what ClickHouse runs when the stitch found it, the query as saved in Redash otherwise (an
+  ad-hoc query outside ClickHouse has none: Redash's API keeps no text for it). `J` `K` scroll.
 
 ### Departures
 
@@ -720,6 +734,38 @@ or from a slope over the last minutes of it.
   it.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
+- **§2.8 view 2's layout**: the queues first, idle ones folded into one line; then RUNNING —
+  the table already says how full the queue is, the running jobs are why — then WAITING (only
+  when something waits), then STALE. No `failed/5m` column: the endpoint has no failure count,
+  and a column of zeros read as "no failures". OLDEST only where Redis can name the waiting
+  jobs, instead of a column of dashes. WHO is the person alone — the account was the same
+  `r_redash →` on every line. Columns are as wide as what is in them and never run into each
+  other; QUEUE appears when a list spans several queues on a terminal 150 wide or more. A job
+  on another database says so (*mysql · not ClickHouse*, *runs inside Redash* for Query
+  Results) instead of *not in ClickHouse yet*.
+- **§6.3 running is not "in the started list"**: a job counts as running when a live worker
+  holds it (`workers[].current_job`). Otherwise it is stale: cancelled (`meta.cancelled`), over
+  a day old, or held by no worker although every busy worker of its queue names its job (judged
+  only past 60 s, and a job a worker let go of since the last poll gets one more poll — it is
+  finishing). Workers that do not say what they hold leave only the first two tests.
+- **§6.3 a live worker** is one heard from within 480 s, RQ's own lifetime for a worker's key:
+  an idle RQ worker beats once every 405 s, so 60 s counted most idle workers as gone. A
+  heartbeat from the future is a clock running ahead, not a dead worker. The band and the
+  view's header count every worker once; a queue's row counts the workers serving it, so a
+  worker shared by two queues is in both rows.
+- **§6.3 waiting jobs from Redis** are read from RQ's `description` — the call written out,
+  `execute_query('…', 3, {'query_id': 7438, …}, user_id=42, …)`: RQ pickles `data` and
+  `meta`, which the previous reading expected to be JSON and so never named a waiting job.
+- **§6.4 attribution** is by the comment, whatever the account: the account Redash connects
+  with is a setting of each data source, and a fleet where it is not `r_redash` showed nobody
+  behind its queries and left the queue nothing to stitch to. An account whose SQL has no
+  comment is still never renamed. `query_id` is matched case-insensitively with a space or an
+  underscore, so `Query ID: N` — what older Redash writes for scheduled runs — counts too.
+- **§2.8 the stitch** uses `Job ID:`, which Redash also writes into the comment: the RQ job's
+  id, an exact match where the Redash number is not (one query can run twice at once). The
+  number is the fallback, for running jobs on ClickHouse data sources only — a leftover from
+  last spring does not claim today's run of the same query — and a data source names a node
+  when its name holds the node's first label (`clickhouse-bi (prod)` → `clickhouse-bi.…`).
 
 ### Fixed on the way
 
@@ -735,3 +781,7 @@ or from a slope over the last minutes of it.
   next frame did not change.
 - `dev/local-rig.sh` on Linux: the umask for the password file leaked onto the rendered
   configs, and Keeper's raft port needed `enable_ipv6=false` on a host without IPv6.
+- A Redash timestamp with a zone (`+03:00`) was read as if it were UTC.
+- The queue explanation said *why it is full* when nothing was waiting.
+- A Redash user, query or data source that could not be read was asked for again on every
+  poll; an answer that says "no" is now remembered, a connection that failed is not.

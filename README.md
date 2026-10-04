@@ -14,8 +14,8 @@ on top of it and are listed in `DESIGN.md` §13.
 
 | View | Key | What it answers |
 |---|---|---|
-| **NODES** | `1` | Every node's memory and CPU against its own capacity, and who holds it: user rows (Redash's `r_redash` resolved to the person) plus the server's own share always add up to the node (§5.3). Below the tree, **insights**; below them, the **drawer** for the selected row. |
-| **QUEUE** | `2` | The Redash queues: workers as slots, depth over the last minutes, who is **waiting** (and for how long, against the 3-minute red line), and every job **running** with the ClickHouse query it became — live memory, cores and progress. |
+| **NODES** | `1` | Every node's memory and CPU against its own capacity, and who holds it: user rows (a query from Redash resolved to the person behind it) plus the server's own share always add up to the node (§5.3). Below the tree, **insights**; below them, the **drawer** for the selected row. |
+| **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL. |
 | **MAP** | `3` | The whole fleet as tiles framed in their severity colour, with bars and history. A forty-node fleet on one screen. |
 | **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
 
@@ -50,6 +50,26 @@ row. What a line can say:
 
 The heaviest user, slow polls and new nodes are on screen elsewhere (`u`, the drawer, the tape)
 and are not repeated here.
+
+### The Redash queue
+
+View 2 reads what the Redash admins' own queue script reads, with the same admin API key and
+nothing that could cancel a job: `/api/admin/queries/rq_status` for the queues and the
+workers, `/api/users/{id}` for who (name and address), `/api/queries/{id}` for the query (name
+and SQL) and `/api/data_sources` for what it runs on (name and type).
+
+- **RUNNING** is a job a live worker holds. Redash's started list is not enough: when a worker
+  dies its job stays there, for months without a time limit.
+- **STALE** is the rest of that list, each with its reason — *cancelled*, *over a day old*,
+  *no worker holds it*. They take no worker; a Redash admin can clear them.
+- **IN CLICKHOUSE** follows a running job into ClickHouse by the `Job ID:` Redash writes into
+  the comment of every query (and by its query number when there is none): `⏎` goes to the
+  query on view 1. A job on another database says so — *mysql · not ClickHouse*, *runs inside
+  Redash* for Query Results.
+- **WAITING** has names and ages only with Redis (`redis_url:`); Redash's API only counts the
+  waiting jobs.
+
+![Redash with leftovers in its started list](docs/screenshots/120x36-queue-leftovers.png)
 
 ### Reading the screen
 
@@ -146,7 +166,7 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `↑ ↓` `j k` | move · `PgUp PgDn Home End` jump |
 | `⏎` | open / close a node or user · on an insight, a queue job, a tile or a tape line: go there |
 | `← →` `h l` | collapse / expand |
-| `J K` `shift ↑↓` | scroll the SQL of the selected query (it opens right under the query's row) |
+| `J K` `shift ↑↓` | scroll the SQL of the selected query or Redash job (it opens right under its row) |
 | `tab` | move between the tree and the insights |
 | `space` | fold / unfold the healthy nodes |
 | `u` | pivot node ↔ user: who is burning the fleet |

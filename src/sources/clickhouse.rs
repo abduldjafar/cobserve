@@ -77,7 +77,7 @@ SELECT
     ProfileEvents['UserTimeMicroseconds'] + ProfileEvents['SystemTimeMicroseconds']
   ) AS cpu_time_us,
   trim(extract(query, 'Username:\\s*([^,]+)')) AS redash_user,
-  extract(query, 'query_id:\\s*(\\d+)')        AS redash_query_id,
+  extract(query, '(?i)query[ _]id:\\s*(\\d+)') AS redash_query_id,
   total_rows_approx,
   written_rows,
   peak_memory_usage,
@@ -105,7 +105,7 @@ SELECT
     ProfileEvents['UserTimeMicroseconds'] + ProfileEvents['SystemTimeMicroseconds']
   ) AS cpu_time_us,
   trim(extract(query, 'Username:\\s*([^,]+)')) AS redash_user,
-  extract(query, 'query_id:\\s*(\\d+)')        AS redash_query_id
+  extract(query, '(?i)query[ _]id:\\s*(\\d+)') AS redash_query_id
 FROM system.processes
 WHERE is_initial_query = 1
   AND query NOT LIKE '%FROM system.processes%'
@@ -739,7 +739,7 @@ pub fn parse_processes(body: &str) -> Vec<QueryRow> {
         .filter_map(|line| serde_json::from_str::<ProcessRow>(line).ok())
         .map(|row| {
             let (person, redash_id) =
-                attribution_from_sql(&row.user, &row.query, row.redash_user.as_deref(), row.redash_query_id);
+                attribution_from_sql(&row.query, row.redash_user.as_deref(), row.redash_query_id);
             QueryRow {
                 query_id: row.query_id,
                 user: row.user,

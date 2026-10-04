@@ -1,6 +1,6 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 03:19:00 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────── ● LIVE 2s · 04:26:04 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
-│ REDASH  13 waiting    ▇████ · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues  [2] queue │
+│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
 │  NODE · USER → PERSON            MEM ▼                       GiB  CPU ▼                    cores  QUERIES  LONGEST   │
 │ ▏▾ clickhouse3       ▂▃▄▄▅▆▆▇▃▃   93.1%  █████████████   59.6/64   93.4%  █████████████▏ 14.9/16     4 ✕2    8m31s ✕ │
@@ -23,14 +23,14 @@
 │                                                                                                                      │
 │ ─ INSIGHTS · ↑↓ choose · ⏎ go there · tab back ───────────────────────────────────────────────────────────────────── │
 │  ✖ clickhouse3    memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more                                    │
-│ ▌✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 6 workers on long queries  +1 more                       │
+│ ▌✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 4 workers on long queries  +1 more                       │
 │  ▲ clickhouse-bi  memory 67.2% ↗ full in ~18m · j.petrova holds 33%  +1 more                                         │
 │  ▲ clickhouse7    r.simonyte's query at 80% of its memory limit  +1 more                                             │
 │  ▲ Redash #7711   running 2× · m.kairys                                                                              │
 │  ▲ Redash #8585   running 2× · j.petrova                                                                             │
 │ ─ ✖ Redash · 2 of 6 · ⏎ opens the queue ──────────────────────────────────────────────────────────────────────────── │
-│ queries: 13 waiting, oldest 3m43s · workers 6/6 busy · growing +2/min                                                │
-│ scheduled_queries: 3 waiting, oldest 22s · workers 2/2 busy                                                          │
-│ workers waiting on long ClickHouse queries: clickhouse-bi, clickhouse3                                               │
+│ queries: 13 waiting, oldest 3m43s · workers 4/4 busy · growing +2/min                                                │
+│ scheduled_queries: 3 waiting, oldest 1m01s · workers 2/2 busy                                                        │
+│ workers waiting on long ClickHouse queries: clickhouse-bi, clickhouse3, clickhouse7                                  │
 │  ↑↓  choose   ⏎  go there   tab  back to the tree   p  pause   ?  help   q  quit                                     │
 ╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

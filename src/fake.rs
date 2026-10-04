@@ -5,7 +5,7 @@
 //! is the sum of its users plus a server share, and `cpu_time_us` grows at exactly the cores
 //! the row claims. That way the §5.3 invariant holds on screen too, not just in tests.
 
-use crate::model::{FleetSnapshot, Job, JobState, NodeSnapshot, QueryRow, QueueRow, QueueStatus};
+use crate::model::{FleetSnapshot, Job, JobState, NodeSnapshot, QueryRow, QueueRow, QueueStatus, Stale};
 use std::time::{Duration, SystemTime};
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
@@ -90,6 +90,7 @@ const GATEWAY: &str = "SELECT\n  toDate(ts) AS d,\n  countIf(status = 'error') A
 const FX: &str = "SELECT currency, sum(amount) AS volume, uniqExact(merchant_id) AS merchants\nFROM statistics.fx_exposure\nWHERE event_date = today()\nGROUP BY currency";
 const JULY_CLOSE: &str = "SELECT merchant_id, sum(amount) AS july, sum(if(month = 7, amount, 0)) AS delta\nFROM wallet.ledger\nGROUP BY merchant_id\nHAVING delta > 1000\nORDER BY delta DESC";
 const CLUSTER_HISTORY: &str = "SELECT host_name, max(absolute_delay) AS lag, count() AS parts\nFROM clusterAllReplicas('ch_cluster', system.parts)\nGROUP BY host_name";
+const REFUNDS: &str = "SELECT r.id, r.amount, r.created_at\nFROM refunds r\nWHERE r.status = 'open'\nORDER BY r.created_at";
 const AIRFLOW_ETL: &str = "INSERT INTO statistics.daily_rollup SELECT toDate(event_time) AS d, user, sum(amount) FROM accounting.raw GROUP BY d, user";
 
 /// Per node: capacity, its own share of that capacity, and the queries running on it.
@@ -646,113 +647,140 @@ impl FakeSource {
         }
     }
 
-    /// A backed-up queue (§8): 12 waiting, oldest 1m40s, all 6 workers busy.
+    /// A backed-up Redash (§8): the four `queries` workers all busy — three on ClickHouse, one
+    /// on MySQL — 12 waiting, the oldest past 1m40s; a scheduled refresh on ClickHouse and one
+    /// on Query Results; and three entries RQ's started list never let go of.
     pub fn queue(&mut self) -> QueueStatus {
         self.queue_tick += Duration::from_millis(3000);
-        type WaitingSpec = (&'static str, &'static str, Option<u64>, &'static str);
-        let waiting_specs: &[WaitingSpec] = &[
-            ("r_redash", "r.simonyte", Some(8091), "July close pack · by product"),
-            ("r_redash", "j.petrova", Some(8113), "AML dashboard · by country"),
-            ("r_redash", "m.kairys", Some(7711), "FX exposure · intraday"),
-            ("r_redash", "grigol.gankava", Some(8092), "Gateway transfers · hourly"),
-            ("r_redash", "d.zaleckas", Some(8120), "Chargebacks · weekly"),
-        ];
-        type RunningSpec = (
-            &'static str,
-            &'static str,
-            Option<u64>,
-            &'static str,
-            &'static str,
-            &'static str,
-        );
-        let running_specs: &[RunningSpec] = &[
-            ("r_redash", "grigol.gankava", Some(7438), "Gateway transfers", "clickhouse3", "c3e51cb5"),
-            ("r_redash", "j.petrova", Some(8585), "AML dashboard", "clickhouse-bi", "8a1c4d02"),
-            ("r_redash", "m.kairys", Some(7711), "FX exposure", "clickhouse2", "1f9d77ae"),
-        ];
+        let grown = self.queue_tick.as_secs();
+        let clickhouse = |job: &mut Job, source: &str| {
+            job.data_source = Some(source.to_string());
+            job.data_source_type = Some("clickhouse".to_string());
+        };
+        let person = |job: &mut Job, local: &str| {
+            job.person = Some(local.to_string());
+            job.person_full = Some(format!("{local}@{DOMAIN}"));
+        };
+        let query = |job: &mut Job, id: u64, name: &str, sql: &str| {
+            job.redash_query_id = Some(id);
+            job.query_name = Some(name.to_string());
+            job.sql = Some(sql.to_string());
+        };
 
         let mut jobs: Vec<Job> = Vec::new();
+        type Spec = (&'static str, u64, &'static str, &'static str, &'static str);
+        let waiting: &[Spec] = &[
+            ("r.simonyte", 8093, "July close pack · by country", JULY_CLOSE, "clickhouse-bi"),
+            ("j.petrova", 8113, "AML dashboard · by country", AML, "clickhouse3"),
+            ("m.kairys", 7712, "FX exposure · intraday", FX, "clickhouse-bi"),
+            ("grigol.gankava", 8092, "Gateway transfers · hourly", GATEWAY, "clickhouse3"),
+            ("d.zaleckas", 8120, "Chargebacks · weekly", GATEWAY, "clickhouse-bi"),
+        ];
         let mut oldest_wait = 0u64;
-        let grown = self.queue_tick.as_secs();
-        for (i, (user, person, redash_id, name)) in waiting_specs.iter().enumerate() {
-            let age = (100 + grown).saturating_sub(i as u64 * 18);
-            oldest_wait = oldest_wait.max(age);
-            jobs.push(Job {
-                id: format!("wait-{}", i + 1),
-                state: JobState::Queued,
-                queue: "queries".to_string(),
-                user: Some((*user).to_string()),
-                person: Some((*person).to_string()),
-                redash_query_id: *redash_id,
-                query_name: Some((*name).to_string()),
-                data_source: Some(if i % 2 == 0 { "clickhouse-bi" } else { "clickhouse3" }.to_string()),
-                age_s: age,
-                ch_node: None,
-                ch_query_id: None,
-            });
+        for (i, (who, id, name, sql, source)) in waiting.iter().enumerate() {
+            let mut job = Job::new(format!("wait-{}", i + 1), JobState::Queued, "queries");
+            person(&mut job, who);
+            query(&mut job, *id, name, sql);
+            clickhouse(&mut job, source);
+            job.age_s = (100 + grown).saturating_sub(i as u64 * 18);
+            oldest_wait = oldest_wait.max(job.age_s);
+            jobs.push(job);
         }
-        for (i, (user, person, redash_id, name, node, ch_id)) in running_specs.iter().enumerate() {
-            jobs.push(Job {
-                id: format!("run-{}", i + 1),
-                state: JobState::Started,
-                queue: "queries".to_string(),
-                user: Some((*user).to_string()),
-                person: Some((*person).to_string()),
-                redash_query_id: *redash_id,
-                query_name: Some((*name).to_string()),
-                data_source: Some((*node).to_string()),
-                age_s: (275 + grown).saturating_sub(i as u64 * 60),
-                ch_node: Some((*node).to_string()),
-                ch_query_id: Some((*ch_id).to_string()),
-            });
+
+        // On a worker, and in ClickHouse: the stitch finds them by their Redash number.
+        let running: &[Spec] = &[
+            ("grigol.gankava", 7438, "Gateway transfers", AML, "clickhouse3"),
+            ("j.petrova", 8585, "AML dashboard", AML, "clickhouse-bi"),
+            ("m.kairys", 7711, "FX exposure", FX, "clickhouse2"),
+        ];
+        for (i, (who, id, name, sql, source)) in running.iter().enumerate() {
+            let mut job = Job::new(format!("run-{}", i + 1), JobState::Started, "queries");
+            person(&mut job, who);
+            query(&mut job, *id, name, sql);
+            clickhouse(&mut job, source);
+            job.age_s = (275 + grown).saturating_sub(i as u64 * 60);
+            jobs.push(job);
         }
-        for (i, (name, person)) in [("Refresh merchant risk", "a.vaitkus"), ("Nightly settlement", "d.zaleckas")]
+        // The fourth worker is on MySQL, which this monitor does not watch.
+        let mut mysql = Job::new("run-4", JobState::Started, "queries");
+        person(&mut mysql, "d.zaleckas");
+        query(&mut mysql, 6120, "Gateway refunds · open", REFUNDS);
+        mysql.data_source = Some("gateway-mysql".to_string());
+        mysql.data_source_type = Some("mysql".to_string());
+        mysql.age_s = 48 + grown;
+        jobs.push(mysql);
+
+        // Scheduled refreshes: one on ClickHouse, one on Query Results, which runs inside
+        // Redash itself.
+        let mut july = Job::new("sched-run-1", JobState::Started, "scheduled_queries");
+        person(&mut july, "r.simonyte");
+        query(&mut july, 8091, "July close pack", JULY_CLOSE);
+        clickhouse(&mut july, "clickhouse7");
+        july.scheduled = true;
+        july.age_s = 140 + grown;
+        jobs.push(july);
+        let mut risk = Job::new("sched-run-2", JobState::Started, "scheduled_queries");
+        person(&mut risk, "a.vaitkus");
+        query(&mut risk, 8470, "Merchant risk · rollup", "SELECT merchant, sum(score) AS risk FROM query_8466 GROUP BY merchant");
+        risk.data_source = Some("Query Results".to_string());
+        risk.data_source_type = Some("results".to_string());
+        risk.scheduled = true;
+        risk.age_s = 31 + grown.min(20);
+        jobs.push(risk);
+        for (i, (name, who)) in [("Refresh merchant risk", "a.vaitkus"), ("Nightly settlement", "d.zaleckas")]
             .iter()
             .enumerate()
         {
-            jobs.push(Job {
-                id: format!("sched-{}", i + 1),
-                state: JobState::Queued,
-                queue: "scheduled_queries".to_string(),
-                user: Some("r_redash".to_string()),
-                person: Some((*person).to_string()),
-                redash_query_id: None,
-                query_name: Some((*name).to_string()),
-                data_source: Some("clickhouse-bi".to_string()),
-                age_s: 22 + grown.min(30) + (i as u64 * 9),
-                ch_node: None,
-                ch_query_id: None,
-            });
+            let mut job = Job::new(format!("sched-{}", i + 1), JobState::Queued, "scheduled_queries");
+            person(&mut job, who);
+            job.query_name = Some((*name).to_string());
+            clickhouse(&mut job, "clickhouse-bi");
+            job.scheduled = true;
+            job.age_s = 22 + grown.min(30) + (i as u64 * 9);
+            jobs.push(job);
         }
+
+        // What RQ's started list still holds without anyone running it.
+        let mut cancelled = Job::new("stale-1", JobState::Stale(Stale::Cancelled), "queries");
+        person(&mut cancelled, "a.vaitkus");
+        query(&mut cancelled, 6301, "Card margin · by day", "SELECT day, sum(margin) FROM cards.daily GROUP BY day");
+        cancelled.data_source = Some("payments-mysql".to_string());
+        cancelled.data_source_type = Some("mysql".to_string());
+        cancelled.age_s = 3 * 86_400 + 4_000;
+        jobs.push(cancelled);
+        let mut old = Job::new("stale-2", JobState::Stale(Stale::OverADay), "queries");
+        person(&mut old, "j.petrova");
+        query(&mut old, 6302, "Ledger export · full", JULY_CLOSE);
+        clickhouse(&mut old, "clickhouse-bi");
+        old.age_s = 41 * 86_400 + 7_200;
+        jobs.push(old);
+        let mut orphan = Job::new("stale-3", JobState::Stale(Stale::NoWorker), "queries");
+        person(&mut orphan, "d.zaleckas");
+        query(&mut orphan, 162, "Replica health check", "SELECT * FROM query_160 WHERE lag > 60");
+        orphan.data_source = Some("Query Results".to_string());
+        orphan.data_source_type = Some("results".to_string());
+        orphan.age_s = 742 + grown;
+        jobs.push(orphan);
 
         // The queue breathes: a dashboard refresh lands, the workers chew through it.
         let t = self.queue_tick.as_secs_f64();
-        let waiting = (12.0 + 4.0 * (t / 50.0 * std::f64::consts::TAU).sin()).round().max(0.0) as u32;
+        let breathing = (12.0 + 4.0 * (t / 50.0 * std::f64::consts::TAU).sin()).round().max(0.0) as u32;
+        let row = |name: &str, running: u32, waiting: u32, oldest: Option<u64>, stale: u32, busy: u32, total: u32| QueueRow {
+            name: name.to_string(),
+            running,
+            waiting,
+            oldest_wait_s: oldest,
+            stale,
+            workers_busy: busy,
+            workers_total: total,
+        };
         let queues = vec![
-            QueueRow {
-                name: "queries".to_string(),
-                waiting,
-                oldest_wait_s: Some(oldest_wait),
-                workers_busy: 6,
-                workers_total: 6,
-                failed_5m: 2,
-            },
-            QueueRow {
-                name: "scheduled_queries".to_string(),
-                waiting: 3,
-                oldest_wait_s: Some(22),
-                workers_busy: 2,
-                workers_total: 2,
-                failed_5m: 0,
-            },
-            QueueRow {
-                name: "periodic".to_string(),
-                waiting: 0,
-                oldest_wait_s: None,
-                workers_busy: 0,
-                workers_total: 1,
-                failed_5m: 0,
-            },
+            row("default", 0, 0, None, 0, 0, 1),
+            row("emails", 0, 0, None, 0, 0, 1),
+            row("periodic", 0, 0, None, 0, 0, 1),
+            row("queries", 4, breathing, Some(oldest_wait), 3, 4, 4),
+            row("scheduled_queries", 2, 3, Some(22 + grown.min(30) + 9), 0, 2, 2),
+            row("schemas", 0, 0, None, 0, 2, 2),
         ];
 
         QueueStatus {
@@ -761,7 +789,11 @@ impl FakeSource {
             queues,
             jobs,
             names_available: true,
-            host: Some("redash.example.net".to_string()),
+            // Four on `queries`, two on scheduled_queries and schemas, one for the rest.
+            workers_busy: 6,
+            workers_total: 7,
+            host: Some(format!("redash.{DOMAIN}")),
+            version: Some("10.1.0".to_string()),
             taken_at: self.epoch + self.queue_tick,
         }
     }
@@ -874,9 +906,19 @@ mod tests {
         assert_eq!(queries.oldest_wait_s, Some(103));
         assert!(queries.oldest_wait_s.unwrap() >= 60, "amber on screen");
         assert!(!queue.waiting("queries").is_empty());
-        assert!(queue.started().iter().any(|j| j.ch_node.is_some()));
-        // §2.8: a waiting job has no ClickHouse counterpart, a started one does.
-        assert!(queue.waiting("queries").iter().all(|j| j.ch_node.is_none()));
+        // §2.8: a waiting job has no ClickHouse counterpart; the app's stitch finds the
+        // started ones' from the snapshot.
+        assert!(queue.jobs.iter().all(|j| j.ch_node.is_none()));
+        // Every count matches the jobs behind it, and no queue runs more than its workers.
+        for row in &queue.queues {
+            let of = |state: fn(&Job) -> bool| queue.jobs.iter().filter(|j| j.queue == row.name && state(j)).count() as u32;
+            assert_eq!(row.running, of(|j| j.state == JobState::Started), "{}", row.name);
+            assert_eq!(row.stale, of(|j| matches!(j.state, JobState::Stale(_))), "{}", row.name);
+            assert!(row.waiting >= of(|j| j.state == JobState::Queued), "{}", row.name);
+            assert!(row.running <= row.workers_busy && row.workers_busy <= row.workers_total, "{}", row.name);
+        }
+        assert_eq!(queue.total_running(), queue.started().len() as u32);
+        assert!(queue.workers_busy <= queue.workers_total);
     }
 
     #[test]
