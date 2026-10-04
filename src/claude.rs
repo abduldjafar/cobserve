@@ -7,20 +7,24 @@
 //! would in a terminal tab of its own.
 //!
 //! There can be several sessions, each its own `claude` with its own conversation, on a bar of
-//! tabs like the header's; a session can be renamed. `ctrl+\` is the one key Claude does not
-//! get: it opens the bar's commands (switch, new, rename, close) and, pressed again, goes back
-//! to the monitor.
+//! tabs numbered on from the header's — the views are 1 to 4, the sessions 5 to 9 — and a
+//! session can be renamed. `ctrl+\` is the one key Claude does not get: after it a number goes
+//! to that view or session, `n` `r` `x` open, rename and close sessions, and `ctrl+\` again goes
+//! back to the monitor.
 //!
 //! This module is the sessions' state — emulated screens, bytes owed to each program, what each
 //! program asked of its terminal — and is pure like the rest of `App`. The processes (PTYs,
 //! children, the threads that read them) are `pty.rs`, driven from `main.rs`.
 
 use crate::app::View;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::cell::Cell;
 
-/// The bar numbers its sessions 1 to 9, and a number is how one is picked.
-pub const MAX_SESSIONS: usize = 9;
+/// The number of the first session: the views are 1 to 4, so the sessions go on from 5, and
+/// one number picks any tab, view or session.
+pub const FIRST_NUMBER: usize = 5;
+/// Sessions 5 to 9: as many as a digit can pick.
+pub const MAX_SESSIONS: usize = 10 - FIRST_NUMBER;
 /// A name longer than this would push the other tabs off the bar.
 pub const NAME_MAX: usize = 24;
 
@@ -177,27 +181,37 @@ impl ClaudePane {
     }
 }
 
-/// A session of view 5: one `claude` and the name it goes by.
+/// A session of view 5: one `claude`, where it works, and the name it goes by.
 pub struct Session {
     /// Stable for the session's life; the PTY's events carry it.
     pub id: u64,
-    /// What the user called it (`r` on the bar). Until then the bar shows what Claude is
-    /// working on, from its title.
+    /// What the user called it (`r`). Until then the list shows what Claude is working on,
+    /// from its title.
     pub name: Option<String>,
+    /// The directory its program runs in, as typed — `~` is fine; `main.rs` resolves it.
+    pub dir: String,
+    /// The git branch checked out there, kept fresh by `main.rs`.
+    pub branch: Option<String>,
     pub pane: ClaudePane,
 }
 
 impl Session {
+    /// The last part of its directory: `cobserve` for `~/work/cobserve`.
+    pub fn dir_label(&self) -> String {
+        let trimmed = self.dir.trim_end_matches('/');
+        trimmed.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(trimmed).to_string()
+    }
+
     /// The tab's text: the name, else Claude's own title without its leading glyph, else
-    /// `claude N`.
-    pub fn label(&self, number: usize) -> String {
+    /// `claude` — the tab's number tells two of those apart.
+    pub fn label(&self) -> String {
         if let Some(name) = &self.name {
             return name.clone();
         }
         let title = self.pane.title.as_deref().map(|t| t.trim_start_matches(|c: char| !c.is_alphanumeric()).trim());
         match title {
             Some(title) if !title.is_empty() => title.to_string(),
-            _ => format!("claude {number}"),
+            _ => "claude".to_string(),
         }
     }
 }
@@ -207,10 +221,12 @@ impl Session {
 pub enum Mode {
     /// Every key but `ctrl+\` goes to the session on screen.
     Typing,
-    /// After `ctrl+\`: the bar's commands — a number, `n`, `r`, `x`, `m`, `esc`.
+    /// After `ctrl+\`: a number (1–4 a view, 5–9 a session), `n`, `r`, `x`, `esc`.
     Bar,
     /// Renaming the session on screen; the text so far.
     Naming(String),
+    /// Opening a session: the directory it will work in, as typed so far.
+    Opening(String),
 }
 
 /// Every session of view 5, and which one is on screen.
@@ -227,6 +243,13 @@ pub struct Sessions {
     pub back_to: View,
     /// `x` was pressed once: the next `x` closes the session on screen.
     pub closing: bool,
+    /// Where a new session works unless told otherwise: the monitor's own directory.
+    pub default_dir: String,
+    /// Where the pane was last drawn, for the mouse.
+    pub pane_origin: Cell<(u16, u16)>,
+    /// Wheel ticks not yet sent as a page: three make one, so a turn of the wheel is a page
+    /// and not three.
+    wheel: i8,
     next_id: u64,
 }
 
@@ -240,6 +263,9 @@ impl Default for Sessions {
             want_size: Cell::new((24, 80)),
             back_to: View::Nodes,
             closing: false,
+            default_dir: ".".to_string(),
+            pane_origin: Cell::new((0, 0)),
+            wheel: 0,
             next_id: 1,
         }
     }
@@ -263,8 +289,9 @@ impl Sessions {
         self.current().is_some_and(|s| s.pane.is_running())
     }
 
-    /// A new session, started and put on screen. `None` when the bar is full.
-    pub fn open_new(&mut self) -> Option<u64> {
+    /// A new session working in `dir` (the monitor's own directory when empty), started and
+    /// put on screen. `None` when every number is taken.
+    pub fn open_new(&mut self, dir: &str) -> Option<u64> {
         if self.list.len() >= MAX_SESSIONS {
             return None;
         }
@@ -272,9 +299,46 @@ impl Sessions {
         self.next_id += 1;
         let mut pane = ClaudePane::default();
         pane.start(self.want_size.get());
-        self.list.push(Session { id, name: None, pane });
+        let dir = if dir.trim().is_empty() { self.default_dir.clone() } else { dir.trim().to_string() };
+        self.list.push(Session { id, name: None, dir, branch: None, pane });
         self.select(self.list.len() - 1);
         Some(id)
+    }
+
+    /// Where the next session would work: the directory of the one on screen, else the
+    /// monitor's.
+    pub fn next_dir(&self) -> String {
+        self.current().map_or_else(|| self.default_dir.clone(), |s| s.dir.clone())
+    }
+
+    /// The mouse over the pane, for the program on screen: as the program asked for it when it
+    /// asked for mouse reports, else a turn of the wheel as a page — what Claude Code scrolls
+    /// its conversation with.
+    pub fn mouse(&mut self, event: &MouseEvent) {
+        let (top, left) = self.pane_origin.get();
+        let wheel = match event.kind {
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::ScrollDown => 1,
+            _ => 0,
+        };
+        let Some(session) = self.list.get_mut(self.active).filter(|s| s.pane.is_running()) else {
+            return;
+        };
+        let (row, col) = (event.row.saturating_sub(top), event.column.saturating_sub(left));
+        if let Some(bytes) = encode_mouse(session.pane.screen(), event, row, col) {
+            session.pane.outbox.extend(bytes);
+            return;
+        }
+        if wheel != 0 {
+            if self.wheel.signum() != wheel {
+                self.wheel = 0;
+            }
+            self.wheel += wheel;
+            if self.wheel.abs() >= 3 {
+                self.wheel = 0;
+                session.pane.outbox.extend(if wheel < 0 { b"\x1b[5~" } else { b"\x1b[6~" });
+            }
+        }
     }
 
     /// The session on screen ends, and its neighbour takes its place.
@@ -314,13 +378,61 @@ impl Sessions {
     pub fn calling(&self) -> bool {
         self.list.iter().any(|s| s.pane.attention)
     }
+
+    /// The tab number of session `index`.
+    pub fn number_of(index: usize) -> usize {
+        FIRST_NUMBER + index
+    }
+
+    /// The session a tab number picks, if there is one.
+    pub fn index_of(&self, number: usize) -> Option<usize> {
+        number.checked_sub(FIRST_NUMBER).filter(|i| *i < self.list.len())
+    }
 }
 
-/// `ctrl+\` — the one key that does not go to the program: it opens the session bar, and
-/// pressed again goes to the monitor. Claude Code has no use for it, and terminals send it as
+/// `ctrl+\` — the one key that does not go to the program: after it, a number picks a view or a
+/// session; pressed again, it goes to the monitor. Claude Code has no use for it, and terminals send it as
 /// `^\` (crossterm reports that byte as `ctrl+4`).
 pub fn is_switch_key(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('\\') | KeyCode::Char('4'))
+}
+
+/// A mouse event as the program asked to get them (`\e[?1000h` and friends), at `row`, `col`
+/// of the pane; `None` when it did not ask.
+fn encode_mouse(screen: &vt100::Screen, event: &MouseEvent, row: u16, col: u16) -> Option<Vec<u8>> {
+    use vt100::{MouseProtocolEncoding, MouseProtocolMode};
+    let mode = screen.mouse_protocol_mode();
+    let (button, release) = match event.kind {
+        MouseEventKind::ScrollUp => (64, false),
+        MouseEventKind::ScrollDown => (65, false),
+        MouseEventKind::Down(button) => (button_code(button), false),
+        MouseEventKind::Up(button) if mode != MouseProtocolMode::Press => (button_code(button), true),
+        MouseEventKind::Drag(button) if matches!(mode, MouseProtocolMode::ButtonMotion | MouseProtocolMode::AnyMotion) => {
+            (button_code(button) + 32, false)
+        }
+        _ => return None,
+    };
+    if mode == MouseProtocolMode::None {
+        return None;
+    }
+    let (x, y) = (u32::from(col) + 1, u32::from(row) + 1);
+    Some(match screen.mouse_protocol_encoding() {
+        MouseProtocolEncoding::Sgr => format!("\x1b[<{button};{x};{y}{}", if release { 'm' } else { 'M' }).into_bytes(),
+        _ => {
+            // The old encoding: one byte each, offset by 32; a release is button 3.
+            let b = if release { 3 } else { button };
+            let byte = |v: u32| u8::try_from((v + 32).min(255)).unwrap_or(255);
+            vec![0x1b, b'[', b'M', byte(b), byte(x), byte(y)]
+        }
+    })
+}
+
+fn button_code(button: MouseButton) -> u32 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
 }
 
 /// A key as an xterm sends it.
@@ -481,12 +593,43 @@ mod tests {
         assert!(pane.screen().contents().trim().is_empty());
     }
 
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE }
+    }
+
+    #[test]
+    fn the_wheel_scrolls_claude_a_page_per_turn_unless_it_asked_for_the_mouse() {
+        let mut sessions = Sessions::default();
+        sessions.open_new("").unwrap();
+        sessions.current_mut().unwrap().pane.state = PaneState::Running;
+        sessions.pane_origin.set((5, 30));
+        // Three ticks of the wheel are one turn: one page.
+        for _ in 0..3 {
+            sessions.mouse(&mouse(MouseEventKind::ScrollUp, 40, 10));
+        }
+        assert_eq!(sessions.current_mut().unwrap().pane.take_outbox(), b"\x1b[5~");
+        for _ in 0..2 {
+            sessions.mouse(&mouse(MouseEventKind::ScrollDown, 40, 10));
+        }
+        assert!(sessions.current_mut().unwrap().pane.take_outbox().is_empty(), "not yet a turn");
+        // A program that asks for SGR mouse reports gets them, at its own coordinates.
+        sessions.current_mut().unwrap().pane.feed(b"\x1b[?1000h\x1b[?1006h", true);
+        sessions.mouse(&mouse(MouseEventKind::ScrollDown, 40, 10));
+        sessions.mouse(&mouse(MouseEventKind::Down(MouseButton::Left), 31, 5));
+        sessions.mouse(&mouse(MouseEventKind::Up(MouseButton::Left), 31, 5));
+        assert_eq!(sessions.current_mut().unwrap().pane.take_outbox(), b"\x1b[<65;11;6M\x1b[<0;2;1M\x1b[<0;2;1m");
+    }
+
     #[test]
     fn sessions_open_switch_rename_and_close() {
         let mut sessions = Sessions::default();
         sessions.want_size.set((30, 100));
-        let first = sessions.open_new().unwrap();
-        let second = sessions.open_new().unwrap();
+        sessions.default_dir = "~/work/cobserve".into();
+        let first = sessions.open_new("").unwrap();
+        let second = sessions.open_new(" ~/work/airflow ").unwrap();
+        assert_eq!(sessions.list[0].dir, "~/work/cobserve", "the monitor's own directory by default");
+        assert_eq!((sessions.list[1].dir.as_str(), sessions.list[1].dir_label().as_str()), ("~/work/airflow", "airflow"));
+        assert_eq!(sessions.next_dir(), "~/work/airflow", "a new one starts where the one on screen works");
         assert_ne!(first, second);
         assert_eq!(sessions.active, 1, "a new session is put on screen");
         assert_eq!(sessions.current().unwrap().pane.state, PaneState::Starting);
@@ -494,14 +637,17 @@ mod tests {
 
         // Unnamed, a tab says what Claude is on; named, what the user said.
         sessions.current_mut().unwrap().pane.feed(b"\x1b]0;\xe2\x9c\xb3 Tidy the README\x07", true);
-        assert_eq!(sessions.current().unwrap().label(2), "Tidy the README");
+        assert_eq!(sessions.current().unwrap().label(), "Tidy the README");
         sessions.rename_current("  infra on-call  ");
-        assert_eq!(sessions.current().unwrap().label(2), "infra on-call");
+        assert_eq!(sessions.current().unwrap().label(), "infra on-call");
         sessions.rename_current(&"x".repeat(40));
-        assert_eq!(sessions.current().unwrap().label(2).len(), NAME_MAX);
+        assert_eq!(sessions.current().unwrap().label().len(), NAME_MAX);
         sessions.rename_current("");
-        assert_eq!(sessions.current().unwrap().label(2), "Tidy the README", "an empty name gives the default back");
-        assert_eq!(sessions.list[0].label(1), "claude 1");
+        assert_eq!(sessions.current().unwrap().label(), "Tidy the README", "an empty name gives the default back");
+        assert_eq!(sessions.list[0].label(), "claude");
+        // Numbered on from the views: the first session is tab 5.
+        assert_eq!((Sessions::number_of(0), Sessions::number_of(1)), (5, 6));
+        assert_eq!((sessions.index_of(5), sessions.index_of(6), sessions.index_of(7), sessions.index_of(4)), (Some(0), Some(1), None, None));
 
         sessions.step(true);
         assert_eq!(sessions.active, 0, "round the bar");
@@ -520,8 +666,9 @@ mod tests {
         sessions.close_current();
         assert!(sessions.current().is_none());
         for _ in 0..MAX_SESSIONS {
-            sessions.open_new().unwrap();
+            sessions.open_new("").unwrap();
         }
-        assert!(sessions.open_new().is_none(), "the bar numbers nine");
+        assert!(sessions.open_new("").is_none(), "5 to 9: five sessions, as many as a digit can pick");
+        assert_eq!(sessions.list.len(), 5);
     }
 }

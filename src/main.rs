@@ -72,6 +72,11 @@ async fn main() -> color_eyre::Result<()> {
     // Pasted text arrives as one event, so a paste into Claude's pane is a paste and not a
     // stream of keys, each newline an Enter.
     let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+    // Clicks on the tabs and the sessions, the wheel over Claude. MOUSE=0 leaves the mouse to
+    // the terminal, whose own selection then needs no modifier key.
+    if config.mouse {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
+    }
 
     let result = run(&mut terminal, config, args.claude).await;
 
@@ -80,7 +85,11 @@ async fn main() -> color_eyre::Result<()> {
 }
 
 fn restore_terminal() {
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste
+    );
     ratatui::restore();
 }
 
@@ -100,11 +109,16 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
     let mut app = App::new();
     app.poll_interval = config.poll;
     app.claude.command = config.claude_command.clone();
+    if let Ok(dir) = std::env::current_dir() {
+        app.claude.default_dir = pty::tilde(&dir);
+    }
     if open_claude {
         app.open_claude();
     }
     // View 5's programs, one per session. Dropping one ends it — on quit, all of them.
     let mut panes: HashMap<u64, pty::PtyProcess> = HashMap::new();
+    // When the sessions' branches were last read: Claude, or you, can change them.
+    let mut branches_read = std::time::Instant::now();
 
     spawn_sources(&config, tx.clone());
     // Anything a source could not even start with belongs on screen, not in a log file.
@@ -126,6 +140,14 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
         terminal.draw(|frame| ui::draw(frame, &app))?;
         // After the frame: the panes now know the size they are drawn at.
         drive_panes(&mut app, &mut panes, &tx);
+        if branches_read.elapsed() >= Duration::from_secs(5) {
+            branches_read = std::time::Instant::now();
+            for session in &mut app.claude.list {
+                if let Ok(dir) = pty::resolve_dir(&session.dir) {
+                    session.branch = pty::git_branch(&dir);
+                }
+            }
+        }
 
         tokio::select! {
             event = rx.recv() => match event {
@@ -167,7 +189,15 @@ fn drive_panes(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>, tx: &mp
             PaneState::Starting => {
                 // An earlier program of this session, if any, ends here.
                 panes.remove(&session.id);
-                match pty::PtyProcess::spawn(session.id, &command, rows, cols, tx.clone()) {
+                let dir = match pty::resolve_dir(&session.dir) {
+                    Ok(dir) => dir,
+                    Err(why) => {
+                        session.pane.state = PaneState::Failed(why);
+                        continue;
+                    }
+                };
+                session.branch = pty::git_branch(&dir);
+                match pty::PtyProcess::spawn(session.id, &command, &dir, rows, cols, tx.clone()) {
                     Ok(process) => {
                         session.pane.resize(rows, cols);
                         session.pane.state = PaneState::Running;
@@ -226,6 +256,12 @@ fn spawn_key_reader(tx: mpsc::UnboundedSender<Event>) {
         match crossterm::event::read() {
             Ok(TermEvent::Key(key)) if key.kind == KeyEventKind::Press => {
                 if tx.send(Event::Key(key)).is_err() {
+                    return;
+                }
+            }
+            // A click, a drag or the wheel; a mouse that only moves is not news.
+            Ok(TermEvent::Mouse(mouse)) if mouse.kind != crossterm::event::MouseEventKind::Moved => {
+                if tx.send(Event::Mouse(mouse)).is_err() {
                     return;
                 }
             }

@@ -81,6 +81,9 @@ pub struct Config {
     pub warnings: Vec<String>,
     /// What view 5 runs: `CLAUDE_CMD`, split like a shell would — `claude` by default.
     pub claude_command: Vec<String>,
+    /// Clicks and the wheel (`MOUSE=0` turns them off, and with them the terminal's own
+    /// selection comes back without a modifier key).
+    pub mouse: bool,
 }
 
 pub const USAGE: &str = "\
@@ -95,8 +98,8 @@ Usage: pay_monitoring [--credential FILE] [--claude]
 
 Everything else comes from the environment (DESIGN.md §9): CH_SEED_URLS, CH_CLUSTER,
 CH_USER, CH_PASSWORD, CH_HTTP_PORT, REDASH_URL, REDASH_ADMIN_API_KEY, REDIS_URL,
-EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, and CLAUDE_CMD for
-what view 5 runs (default: claude).
+EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, CLAUDE_CMD for what
+view 5 runs (default: claude), and MOUSE=0 to leave the mouse to the terminal.
 ";
 
 /// `CLAUDE_CMD` as a command and its arguments, quotes as a shell reads them; `claude` when it
@@ -546,6 +549,10 @@ impl Config {
                 .or_else(|| fake.then(|| crate::fake::DOMAIN.to_string())),
             warnings: Vec::new(),
             claude_command: claude_command(env.get("CLAUDE_CMD"))?,
+            mouse: !matches!(
+                env.get("MOUSE").map(|m| m.trim().to_ascii_lowercase()).as_deref(),
+                Some("0" | "off" | "false" | "no")
+            ),
         })
     }
 }

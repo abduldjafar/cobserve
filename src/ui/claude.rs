@@ -1,13 +1,13 @@
-//! View 5: Claude Code's sessions — a bar of tabs, and the screen of the one on it, drawn from
-//! its emulated terminal (`claude.rs`).
+//! View 5: Claude Code's sessions — a list of them beside the screen of the one on it (a bar of
+//! tabs over it on a narrow terminal), drawn from its emulated terminal (`claude.rs`).
 //!
 //! Above them the header and the two band lines stay as on every view, and the line under the
 //! band names the worst thing in the fleet right now — so a node going red is seen without
 //! leaving the conversation.
 
 use super::widgets::{rule, tone_spans, Cells};
-use crate::app::App;
-use crate::claude::{Mode, PaneState};
+use crate::app::{App, Hit};
+use crate::claude::{Mode, PaneState, Session, Sessions};
 use crate::fmt;
 use crate::insight::Insight;
 use crate::severity::Severity;
@@ -15,22 +15,47 @@ use crate::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
+
+/// From this width the sessions are a list beside the pane, like a terminal's tab list; below
+/// it, a bar of tabs over the pane.
+const SIDEBAR_FROM: u16 = 100;
 
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let bar = Rect::new(area.x, area.y, area.width, 1);
-    frame.render_widget(Paragraph::new(session_bar(app, theme, area.width as usize)), bar);
-    let area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
-    if area.height == 0 {
+    let area = if area.width >= SIDEBAR_FROM {
+        let side = (area.width * 22 / 100).clamp(26, 36);
+        sidebar(frame, app, theme, Rect::new(area.x, area.y, side, area.height));
+        let rule: Vec<Line<'static>> = (0..area.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
+        frame.render_widget(Paragraph::new(rule), Rect::new(area.x + side, area.y, 1, area.height));
+        Rect::new(area.x + side + 2, area.y, area.width.saturating_sub(side + 2), area.height)
+    } else {
+        let bar = Rect::new(area.x, area.y, area.width, 1);
+        frame.render_widget(Paragraph::new(session_bar(app, theme, bar)), bar);
+        Rect::new(area.x, area.y + 1, area.width, area.height - 1)
+    };
+    if area.height == 0 || area.width == 0 {
         return;
     }
-    // Every PTY is sized to what a pane gets here.
+    // Every PTY is sized to what a pane gets here; the mouse needs to know where it is.
     app.claude.want_size.set((area.height, area.width));
+    app.claude.pane_origin.set((area.y, area.x));
+    app.viewport.hits.borrow_mut().push((area, Hit::Pane));
+
     let program = app.claude.command.first().cloned().unwrap_or_default();
+    if let Mode::Opening(_) = app.claude.mode {
+        message(frame, theme, area, vec![
+            Line::from(Span::styled("a new session — where should it work?", theme.strong())),
+            Line::from(Span::styled(
+                "type a directory on the left (~ is your home) · ⏎ opens it there · esc cancels",
+                theme.muted(),
+            )),
+        ]);
+        return;
+    }
     let Some(session) = app.claude.current() else {
         message(frame, theme, area, vec![Line::from(vec![
             Span::styled("no Claude session open · ", theme.muted()),
@@ -45,7 +70,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 Line::from(vec![
                     Span::styled("starting ", theme.muted()),
                     Span::styled(program, theme.strong()),
-                    Span::styled(" …", theme.muted()),
+                    Span::styled(format!(" in {} …", session.dir), theme.muted()),
                 ]),
             ]);
         }
@@ -68,70 +93,197 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             screen(frame, &session.pane, theme, area, false);
             let mut cells = Cells::new();
             cells.push(format!(" {program} — {how} "), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
-            cells.push(" ⏎ start it again · ctrl+\\ for the bar and the monitor ", theme.muted());
+            cells.push(" ⏎ start it again · ctrl+\\ then a number for another tab ", theme.muted());
             let bottom = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
             frame.render_widget(Paragraph::new(cells.line(area.width as usize, theme.selected())), bottom);
         }
     }
 }
 
-/// The sessions as tabs, like the header's: the one on screen lit, one that rang marked `●`,
-/// one that ended marked `✕`. While a name is typed its tab is the input; after `ctrl+\` the
-/// bar is lit, waiting for a command.
-fn session_bar(app: &App, theme: &Theme, width: usize) -> Line<'static> {
+/// A session's state at a glance: `●` it rang while not on screen, `✕` its program ended.
+fn mark(session: &Session) -> &'static str {
+    if session.pane.attention {
+        "●"
+    } else if matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_)) {
+        "✕"
+    } else {
+        ""
+    }
+}
+
+/// The sessions as a list, like a terminal's tabs: number, name — or what Claude says it is
+/// on — and under it the branch and the directory it works in. A `+` opens another; the keys
+/// are at the bottom, for when the mouse is not at hand.
+fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let sessions = &app.claude;
+    let width = area.width as usize;
+    let mut hits = app.viewport.hits.borrow_mut();
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let lit = sessions.mode == Mode::Bar;
+    let mut title = Cells::new();
+    title.push(" SESSIONS", theme.section());
+    if lit {
+        title.push("  which one?", theme.strong());
+    }
+    title.pad_to(width.saturating_sub(3));
+    title.push(" + ", theme.keycap());
+    lines.push(title.line(width, if lit { theme.selected() } else { Style::default() }));
+    hits.push((Rect::new(area.x + area.width.saturating_sub(3), area.y, 3.min(area.width), 1), Hit::NewSession));
+    lines.push(Line::from(""));
+
+    for (index, session) in sessions.list.iter().enumerate() {
+        let y = area.y + lines.len() as u16;
+        let on_screen = index == sessions.active;
+        let row = if on_screen { theme.selected() } else { Style::default() };
+        let mut first = Cells::new();
+        first.push(if on_screen { "▌" } else { " " }, theme.accent());
+        first.push(format!("{} ", Sessions::number_of(index)), theme.faint());
+        let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
+        first.push("✳ ", if ended { theme.faint() } else { theme.person() });
+        let mark = mark(session);
+        let room = width.saturating_sub(first.width() + 3);
+        match (&sessions.mode, on_screen) {
+            (Mode::Naming(name), true) => {
+                first.push(format!("{}▏", fmt::truncate(name, room)), theme.keycap());
+            }
+            _ => {
+                let style = if on_screen { theme.strong() } else if ended { theme.faint() } else { theme.text() };
+                first.push(fmt::truncate(&session.label(), room), style);
+            }
+        }
+        if !mark.is_empty() {
+            first.pad_to(width.saturating_sub(2));
+            let style = if mark == "●" { theme.sev(Severity::Warn).add_modifier(Modifier::BOLD) } else { theme.faint() };
+            first.push(mark, style);
+        }
+        lines.push(first.line(width, row));
+
+        // The directory first: it is short, and says which project; a long branch is cut.
+        let mut second = Cells::new();
+        second.push("    ", Style::default());
+        second.push(session.dir_label(), theme.faint());
+        if let Some(branch) = &session.branch {
+            second.push(" ⎇ ", theme.faint());
+            second.push(branch.clone(), theme.muted());
+        }
+        lines.push(second.line(width, row));
+        hits.push((Rect::new(area.x, y, area.width, 2), Hit::Session(index)));
+
+        if on_screen && sessions.closing {
+            let mut warn = Cells::new();
+            warn.push("    x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+            lines.push(warn.line(width, Style::default()));
+        }
+        lines.push(Line::from(""));
+    }
+
+    match &sessions.mode {
+        Mode::Opening(dir) => {
+            let mut head = Cells::new();
+            head.push(" + new session, in:", theme.strong());
+            lines.push(head.line(width, Style::default()));
+            let mut input = Cells::new();
+            input.push("   ", Style::default());
+            // The end of a long path is the part that says where.
+            let shown = dir.chars().rev().take(width.saturating_sub(5)).collect::<Vec<_>>().into_iter().rev().collect::<String>();
+            input.push(format!("{shown}▏"), theme.keycap());
+            lines.push(input.line(width, Style::default()));
+            let mut keys = Cells::new();
+            keys.push("   ⏎ open · esc cancel · ctrl+u clear", theme.faint());
+            lines.push(keys.line(width, Style::default()));
+        }
+        _ if sessions.list.len() < crate::claude::MAX_SESSIONS => {
+            hits.push((Rect::new(area.x, area.y + lines.len() as u16, area.width, 1), Hit::NewSession));
+            let mut new = Cells::new();
+            new.push(" + ", theme.keycap());
+            new.push(" new session", theme.muted());
+            lines.push(new.line(width, Style::default()));
+        }
+        _ => {}
+    }
+
+    // The keys, at the bottom, when there is room for them.
+    let keys: [(&str, &str); 5] = [
+        (" ctrl+\\", " then"),
+        ("  1-4", " view · 5-9 session"),
+        ("  n r x", " new · name · close"),
+        (" ctrl+\\ ctrl+\\", " monitor"),
+        (" F1-F9", " or a click: any tab"),
+    ];
+    let height = area.height as usize;
+    if lines.len() + keys.len() < height {
+        while lines.len() + keys.len() < height {
+            lines.push(Line::from(""));
+        }
+        for (key, what) in keys {
+            let mut cells = Cells::new();
+            cells.push(key, theme.muted());
+            cells.push(what, theme.faint());
+            lines.push(cells.line(width, Style::default()));
+        }
+    }
+    drop(hits);
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// On a narrow terminal: the sessions as tabs over the pane, like the header's.
+fn session_bar(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
+    let sessions = &app.claude;
+    let width = area.width as usize;
+    let mut hits = app.viewport.hits.borrow_mut();
     let mut cells = Cells::new();
     for (index, session) in sessions.list.iter().enumerate() {
-        let number = index + 1;
+        let number = Sessions::number_of(index);
         let on_screen = index == sessions.active;
+        let x = area.x + cells.width() as u16;
         if let (true, Mode::Naming(name)) = (on_screen, &sessions.mode) {
             cells.push(format!(" {number} "), theme.tab_active());
             cells.push(format!("{name}▏"), theme.keycap());
             cells.push(" ", theme.tab_active());
-            cells.push(" ", Style::default());
-            continue;
-        }
-        let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
-        let mark = if session.pane.attention { " ●" } else if ended { " ✕" } else { "" };
-        let label = format!(" {number} {}{mark} ", fmt::truncate(&session.label(number), 22));
-        let style = if on_screen {
-            theme.tab_active()
-        } else if session.pane.attention {
-            theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)
-        } else if ended {
-            theme.faint()
         } else {
-            theme.muted()
-        };
-        cells.push(label, style);
+            let mark = mark(session);
+            let label = format!(" {number} {}{}{mark} ", fmt::truncate(&session.label(), 18), if mark.is_empty() { "" } else { " " });
+            let style = if on_screen {
+                theme.tab_active()
+            } else if session.pane.attention {
+                theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)
+            } else {
+                theme.muted()
+            };
+            cells.push(label, style);
+        }
+        hits.push((Rect::new(x, area.y, (area.x + cells.width() as u16).saturating_sub(x), 1), Hit::Session(index)));
         cells.push(" ", Style::default());
     }
+    let x = area.x + cells.width() as u16;
     match &sessions.mode {
+        Mode::Opening(dir) => {
+            cells.push(" + in: ", theme.strong());
+            cells.push(format!("{dir}▏"), theme.keycap());
+            cells.push("  ⏎ open · esc cancel", theme.faint());
+        }
         Mode::Bar if sessions.closing => {
-            let name = sessions.current().map(|s| s.label(sessions.active + 1)).unwrap_or_default();
-            cells.push(
-                format!(" x again closes “{name}” — `claude --resume` finds the conversation later "),
-                theme.sev(Severity::Warn).add_modifier(Modifier::BOLD),
-            );
+            cells.push(" x again closes it ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
         }
         Mode::Bar => {
             cells.push(" which one? ", theme.strong());
         }
-        Mode::Typing if sessions.list.len() < 2 => {
-            cells.push(" ctrl+\\ then n opens another session", theme.faint());
+        _ => {
+            cells.push(" + ", theme.keycap());
+            hits.push((Rect::new(x, area.y, 3, 1), Hit::NewSession));
+            cells.push("  ctrl+\\ then 1-4 views · 5-9 sessions · n new · r rename · x close", theme.faint());
         }
-        Mode::Typing | Mode::Naming(_) => {}
     }
-    let lit = matches!(sessions.mode, Mode::Bar);
+    let lit = sessions.mode == Mode::Bar;
     cells.line(width, if lit { theme.selected() } else { Style::default() })
 }
 
-/// A few lines in the middle of the pane.
+/// A few lines in the upper middle of the pane, wrapped to it.
 fn message(frame: &mut Frame, theme: &Theme, area: Rect, lines: Vec<Line<'static>>) {
-    let top = area.y + area.height.saturating_sub(lines.len() as u16) / 3;
-    let height = (lines.len() as u16).min(area.height);
-    let block = Rect::new(area.x + 2.min(area.width), top, area.width.saturating_sub(4), height);
-    frame.render_widget(Paragraph::new(lines).style(theme.text()), block);
+    let top = area.y + area.height / 4;
+    let block = Rect::new(area.x + 2.min(area.width), top, area.width.saturating_sub(4), area.height - (top - area.y));
+    frame.render_widget(Paragraph::new(lines).style(theme.text()).wrap(Wrap { trim: true }), block);
 }
 
 /// The emulated screen, cell by cell, runs of one style joined into one span.

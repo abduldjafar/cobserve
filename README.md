@@ -82,31 +82,38 @@ permission prompts — signed in with your **Pro or Max plan**. Nothing here use
 - `ANTHROPIC_API_KEY` is taken out of its environment, so Claude Code bills the plan you signed
   in with even when your shell has a key set; so are the monitor's own credentials
   (`CH_PASSWORD`, `CH_SEED_URLS`, `REDASH_ADMIN_API_KEY`, `REDIS_URL`).
-- It runs in the directory the monitor was started from — start it in the project you want to
-  work on. Claude can read files there, so keep the credential file somewhere else.
+- Each session works in a directory of its own — the first in the one the monitor was started
+  from. Claude can read files there, so keep the credential file somewhere else.
 - Install Claude Code and sign in once (`claude`, then `/login`). `CLAUDE_CMD` runs something
   else, or the same with arguments: `CLAUDE_CMD="claude --model opus"`. `--claude` opens on
   view 5.
 
-Several sessions run side by side, each its own `claude` with its own conversation, on a bar of
-tabs like the header's. A session goes by the name you give it, or by what Claude says it is
-working on. One that rings while you are elsewhere is marked `●` on its tab and on `5 CLAUDE`.
+Up to five sessions run side by side, each its own `claude` with its own conversation, listed
+beside it like a terminal's tabs: the session's number, its name — the one you gave it, or
+what Claude says it is working on — and under it the directory and its git branch. A session
+that rings while you are elsewhere is marked `●` there and on `5 CLAUDE`; one that ended, `✕`.
+The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the sessions.
 
 | On view 5 | |
 |---|---|
 | any key | goes to Claude — `q`, the digits and `ctrl+c` too |
-| `ctrl+\` | the session bar; pressed again, back to the monitor |
-| then `1`…`9` | that session |
-| then `←` `→` | the previous or the next one |
-| then `n` | a new session |
-| then `r` | rename the one on screen (`⏎` keeps it, an empty name gives the default back) |
-| then `x` `x` | close it — `claude --resume` finds the conversation later |
-| then `esc` | back to Claude |
+| `ctrl+\` then `1`…`4` | that view of the monitor |
+| `ctrl+\` then `5`…`9` | that session |
+| `ctrl+\` then `n` | a new session: type where it works (it starts from the current one's directory; `ctrl+u` clears, `⏎` opens) |
+| `ctrl+\` then `r` | rename the one on screen (an empty name gives the default back) |
+| `ctrl+\` then `x` `x` | close it — `claude --resume` finds the conversation later |
+| `ctrl+\` then `esc` | back to Claude |
+| `ctrl+\` `ctrl+\` | back to the monitor, where you came from |
+| `F1`…`F9` | the same tabs from anywhere, without `ctrl+\` |
+| a click | a tab in the header, a session, the `+` |
+| the wheel | over Claude, its page up and down; elsewhere, the cursor |
 
-From any other view `5` or `ctrl+\` comes back. `ctrl+z` is not passed on: there is no shell
-around Claude to bring it back.
+From the monitor, `5`…`9` or `ctrl+\` go to Claude. `ctrl+z` is not passed on: there is no
+shell around Claude to bring it back. With the mouse on, selecting text takes the terminal's
+modifier — Shift in most, ⌥ in iTerm2 and Terminal — and `MOUSE=0` leaves the mouse to the
+terminal altogether.
 
-![Claude in view 5](docs/screenshots/120x36-claude.png)
+![Claude in view 5](docs/screenshots/160x48-claude.png)
 
 ### Reading the screen
 
@@ -188,6 +195,7 @@ have a user the other one does not know.
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |
 | `EMAIL_DOMAIN` | your organisation's e-mail domain: people there are shown by name alone (`grigol.gankava`), everyone else by the whole address | unset — every address whole |
 | `CLAUDE_CMD` | what view 5 runs, with its arguments | `claude` |
+| `MOUSE` | `0` leaves the mouse to the terminal: no clicks, but selection without a modifier | on |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `THEME` | `dark`, `light` or `mono` | `dark` |
 | `NO_COLOR` | any value: no colour at all (glyphs still carry severity) | unset |
@@ -210,8 +218,10 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `u` | pivot node ↔ user: who is burning the fleet |
 | `s` | sort: pressure, memory, CPU, name |
 | `/` | filter by node, user, person, SQL or query id · `esc` clears |
-| `1 2 3 4 5` | views |
-| `ctrl+\` | Claude (view 5); there, the session bar — see *Claude in the monitor* |
+| `1 2 3 4` | views · `5`…`9` Claude's sessions |
+| `F1`…`F9` | the same, from anywhere — Claude's screen too |
+| `ctrl+\` | Claude (view 5); there, the key before a number — see *Claude in the monitor* |
+| a click · the wheel | a tab, a session · the cursor (on view 5, Claude's page up and down) |
 | `p` | pause (the numbers stop, the clock does not) |
 | `?` | help · `q` quit |
 

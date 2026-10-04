@@ -8,6 +8,7 @@
 use crate::app::Event;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// What the program does not get from the monitor's environment.
@@ -32,9 +33,9 @@ pub struct PtyProcess {
 }
 
 impl PtyProcess {
-    /// Start `command` in a PTY of `rows` × `cols`, in the directory the monitor was started
-    /// from — that is the project Claude works on. Its events carry `session`.
-    pub fn spawn(session: u64, command: &[String], rows: u16, cols: u16, tx: UnboundedSender<Event>) -> Result<Self, String> {
+    /// Start `command` in a PTY of `rows` × `cols`, in `dir` — the project Claude works on.
+    /// Its events carry `session`.
+    pub fn spawn(session: u64, command: &[String], dir: &Path, rows: u16, cols: u16, tx: UnboundedSender<Event>) -> Result<Self, String> {
         let program = command.first().ok_or("CLAUDE_CMD is empty")?;
         if find_program(program).is_none() {
             return Err(format!(
@@ -45,7 +46,7 @@ impl PtyProcess {
         let pair = native_pty_system().openpty(size).map_err(|e| format!("no pseudo-terminal: {e}"))?;
         let child = pair
             .slave
-            .spawn_command(command_for(command))
+            .spawn_command(command_for(command, dir))
             .map_err(|e| format!("{program} did not start: {e}"))?;
         // The program holds the only other end now: when it exits, reading sees the end.
         drop(pair.slave);
@@ -106,15 +107,13 @@ impl Drop for PtyProcess {
     }
 }
 
-/// The command, in the monitor's working directory, with a terminal it can believe and
-/// without what [`NOT_PASSED_ON`] lists.
-fn command_for(command: &[String]) -> CommandBuilder {
+/// The command, in `dir`, with a terminal it can believe and without what [`NOT_PASSED_ON`]
+/// lists.
+fn command_for(command: &[String], dir: &Path) -> CommandBuilder {
     let mut builder = CommandBuilder::new(&command[0]);
     builder.args(&command[1..]);
     // Without this the PTY starts the program in the home directory.
-    if let Ok(dir) = std::env::current_dir() {
-        builder.cwd(dir);
-    }
+    builder.cwd(dir);
     scrub(&mut builder);
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");
@@ -125,6 +124,59 @@ fn scrub(builder: &mut CommandBuilder) {
     for name in NOT_PASSED_ON {
         builder.env_remove(name);
     }
+}
+
+/// A session's directory as typed — `~` for home, relative to the monitor's own — as a path
+/// that exists.
+pub fn resolve_dir(typed: &str) -> Result<PathBuf, String> {
+    let typed = typed.trim();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let path = match (typed.strip_prefix('~'), home) {
+        (Some(rest), Some(home)) => home.join(rest.trim_start_matches('/')),
+        _ => PathBuf::from(typed),
+    };
+    let path = if path.is_relative() { std::env::current_dir().map_err(|e| e.to_string())?.join(path) } else { path };
+    if path.is_dir() { Ok(path) } else { Err(format!("no such directory: {typed}")) }
+}
+
+/// `~/work/cobserve` for a path under home: how a directory is shown, and typed.
+pub fn tilde(path: &Path) -> String {
+    match std::env::var_os("HOME").map(PathBuf::from) {
+        Some(home) if path.starts_with(&home) => {
+            let rest = path.strip_prefix(&home).unwrap_or(path);
+            if rest.as_os_str().is_empty() { "~".to_string() } else { format!("~/{}", rest.display()) }
+        }
+        _ => path.display().to_string(),
+    }
+}
+
+/// The branch checked out in `dir` or the repository around it, read from git's own files —
+/// no `git` to run, and a worktree's `.git` file is followed. A detached head is its hash, cut.
+pub fn git_branch(dir: &Path) -> Option<String> {
+    let mut at = Some(dir);
+    while let Some(here) = at {
+        let dot_git = here.join(".git");
+        let git_dir = if dot_git.is_dir() {
+            Some(dot_git)
+        } else if dot_git.is_file() {
+            let text = std::fs::read_to_string(&dot_git).ok()?;
+            let target = text.trim().strip_prefix("gitdir:")?.trim().to_string();
+            let target = PathBuf::from(target);
+            Some(if target.is_relative() { here.join(target) } else { target })
+        } else {
+            None
+        };
+        if let Some(git_dir) = git_dir {
+            let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+            let head = head.trim();
+            return Some(match head.strip_prefix("ref: refs/heads/") {
+                Some(branch) => branch.to_string(),
+                None => head.chars().take(7).collect(),
+            });
+        }
+        at = here.parent();
+    }
+    None
 }
 
 /// Where `program` would be run from: itself when it names a path, else the first match on
@@ -157,9 +209,30 @@ mod tests {
     }
 
     #[test]
+    fn a_branch_is_read_from_git_s_own_files() {
+        let root = std::env::temp_dir().join(format!("pay_monitoring-git-{}", std::process::id()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src/deep")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/fix-late-partitions\n").unwrap();
+        assert_eq!(git_branch(&repo.join("src/deep")).as_deref(), Some("fix-late-partitions"), "from anywhere inside");
+        // A worktree's .git is a file pointing at its own git directory.
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(root.join("gitdirs/wt")).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), format!("gitdir: {}\n", root.join("gitdirs/wt").display())).unwrap();
+        std::fs::write(root.join("gitdirs/wt/HEAD"), "4c8d1b5e2f3a4e1b9d7c\n").unwrap();
+        assert_eq!(git_branch(&worktree).as_deref(), Some("4c8d1b5"), "a detached head is its hash, cut");
+        assert!(resolve_dir(&repo.display().to_string()).is_ok());
+        let err = resolve_dir("/no/such/place").unwrap_err();
+        assert!(err.contains("no such directory"), "{err}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn a_program_that_is_not_installed_says_so() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let error = PtyProcess::spawn(1, &["no-such-claude-here".into()], 24, 80, tx).err().unwrap();
+        let error = PtyProcess::spawn(1, &["no-such-claude-here".into()], Path::new("."), 24, 80, tx).err().unwrap();
         assert!(error.contains("not installed"), "{error}");
         assert!(find_program("sh").is_some());
     }
@@ -185,9 +258,13 @@ mod tests {
     fn a_program_runs_in_the_pty_and_answers_its_keys() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let script = r#"printf 'size %s\n' "$(stty size)"; printf 'key=[%s] ' "${ANTHROPIC_API_KEY-unset}"; printf 'ready> '; read line; printf 'got:%s\n' "$line""#;
-        let mut process = PtyProcess::spawn(7, &["sh".into(), "-c".into(), script.into()], 30, 100, tx).expect("sh starts");
+        let dir = std::env::temp_dir();
+        let script = format!("printf 'in %s\\n' \"$(pwd -P)\"; {script}");
+        let mut process = PtyProcess::spawn(7, &["sh".into(), "-c".into(), script], &dir, 30, 100, tx).expect("sh starts");
         let (seen, _) = collect(&mut rx, |seen, _| seen.contains("ready>"));
         assert!(seen.contains("size 30 100"), "the PTY has the pane's size: {seen}");
+        let real = std::fs::canonicalize(&dir).unwrap();
+        assert!(seen.contains(&format!("in {}", real.display())), "it runs in its session's directory: {seen}");
         assert!(seen.contains("key=[unset]"), "{seen}");
         process.write(b"hello\r");
         let (seen, ended) = collect(&mut rx, |seen, ended| seen.contains("got:hello") && ended.is_some());
