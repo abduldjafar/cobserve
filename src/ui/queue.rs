@@ -108,7 +108,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             if app.queue.names_available {
                 "     nothing waiting"
             } else {
-                "     names unavailable (no REDIS_URL) — counts only"
+                "     names need Redis (redis_url: under redash: in the credential file, or REDIS_URL) — counts only"
             },
             theme.muted(),
         )));
