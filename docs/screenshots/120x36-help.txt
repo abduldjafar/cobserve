@@ -1,21 +1,21 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────── ● LIVE 2s · 05:33:17 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────── ● LIVE 2s · 08:18:18 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.8% 283/768 GiB          ▅   CPU ██▊        27.4% 53/192 cores          ▅  │
 │ REDASH  19 waiting        █ · oldest 1m55s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
-│  NODE · USER → PERSON            MEM ▼                       GiB  CPU ▼                    cores  QUERIES  LONGEST   │
-│ ▌▾ clickhous╭ keys · ? closes ─────────────────────────────────────────────────────────────────────────╮2    4m55s ✕ │
-│  ├─ r_redash│─ KEYS ─────────────────────────────────────────────────────────────────────────────────  │1    4m55s ✕ │
-│  ├─ r_redash│   ↑ ↓  j k  move the cursor · PgUp PgDn Home End jump                                    │1    3m04s ✕ │
-│  ├─ airflow │          ⏎  open / close · on an insight, a queue job, a tile or a tape line: go there   │1      12s   │
-│  ├─ haris   │   ← →  h l  collapse / expand, vim-style                                                 │1       4s   │
-│  └─ server ·│   J K  ⇧↑↓  scroll the SQL under the selected query or Redash job                        │             │
-│  ▸ clickhous│        tab  move between the tree and the insights                                       │2    3m04s ✕ │
-│ ▎▸ clickhous│      space  fold / unfold the healthy nodes                                              │1    5m20s ✕ │
-│  ▸ clickhous│          u  pivot node ↔ user: who is burning the fleet                                  │0        —   │
-│  ▸ clickhous│          s  sort: pressure, memory, CPU, name                                            │2      12s   │
-│  ▸ 4 healthy│          /  filter by node, user, person, SQL or query id · esc clears                   │   ␣ unfold  │
-│             │  1 2 3 4 5  views: nodes · queue · map · tape · claude                                   │             │
-│             │     ctrl+\  Claude (view 5) · there: the sessions bar (1-9 n r x), again: the monitor    │             │
+│  NODE · USER╭ keys · ? closes ─────────────────────────────────────────────────────────────────────────╮S  LONGEST   │
+│ ▌▾ clickhous│─ KEYS ─────────────────────────────────────────────────────────────────────────────────  │2    4m55s ✕ │
+│  ├─ r_redash│   ↑ ↓  j k  move the cursor · PgUp PgDn Home End jump                                    │1    4m55s ✕ │
+│  ├─ r_redash│          ⏎  open / close · on an insight, a queue job, a tile or a tape line: go there   │1    3m04s ✕ │
+│  ├─ airflow │   ← →  h l  collapse / expand, vim-style                                                 │1      12s   │
+│  ├─ haris   │   J K  ⇧↑↓  scroll the SQL under the selected query or Redash job                        │1       4s   │
+│  └─ server ·│        tab  move between the tree and the insights                                       │             │
+│  ▸ clickhous│      space  fold / unfold the healthy nodes                                              │2    3m04s ✕ │
+│ ▎▸ clickhous│          u  pivot node ↔ user: who is burning the fleet                                  │1    5m20s ✕ │
+│  ▸ clickhous│          s  sort: pressure, memory, CPU, name                                            │0        —   │
+│  ▸ clickhous│          /  filter by node, user, person, SQL or query id · esc clears                   │2      12s   │
+│  ▸ 4 healthy│  1 2 3 4 5  views: nodes · queue · map · tape · claude — 5 to 9 are Claude's sessions    │   ␣ unfold  │
+│             │     ctrl+\  Claude · there, then 1-4 a view, 5-9 a session, n new, r rename, x close     │             │
+│             │    F1 … F9  the same tabs from anywhere, Claude's screen too · or click them             │             │
 │             │          p  pause: the numbers stop, the clock does not                                  │             │
 │             │  q  ctrl-c  quit                                                                         │             │
 │             │─ ON SCREEN ────────────────────────────────────────────────────────────────────────────  │             │
@@ -31,6 +31,6 @@
 │ ─ clickhouse╰──────────────────────────────────────────────────────────────────────────────────────────╯──────────── │
 │ MEM 58.7/64 GiB  91.7%         ▅ ↑ +2.4%/min    CPU 15.8/16 cores  99.0%         ▇ ↑ +33.9%/min                      │
 │ memory: queries 45.6% + server 46.1% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 5.3 GiB = 0.2× a 24.0 GiB query  │
-│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 05:33:37 UTC                             │
+│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 08:18:38 UTC                             │
 │  ?  close   any other key goes back                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 1029 ms · read-only ╯

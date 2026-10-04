@@ -977,7 +977,7 @@ mod tests {
         node.mem_total = Some(453 * GIB);
         let mut q = redash_query("q1", "ch_user", 1, 1670.0, 71 * GIB + GIB / 2);
         q.memory_limit = Some(6_000_000_000);
-        q.sql = "CREATE MATERIALIZED VIEW materialized_views.mv_gateway_bank_statement AS SELECT 1".into();
+        q.sql = "CREATE MATERIALIZED VIEW materialized_views.mv_invoice_monthly_totals AS SELECT 1".into();
         node.queries = vec![q];
         let s = snap(vec![node]);
         let insights = analyze_snapshot(&s, &no_queue());
@@ -989,7 +989,7 @@ mod tests {
     fn a_node_that_answered_without_access_says_no_access_in_short() {
         let s = snap(vec![
             quiet_node("a"),
-            NodeSnapshot::unreachable("posthog", "no access — r_datateam_sync needs SELECT on system.asynchronous_metrics"),
+            NodeSnapshot::unreachable("metrics", "no access — r_reports_daily needs SELECT on system.asynchronous_metrics"),
             NodeSnapshot::unreachable("dead", "connection refused — nothing listening on that port"),
         ]);
         let insights = analyze_snapshot(&s, &no_queue());
@@ -997,11 +997,11 @@ mod tests {
             texts(&insights),
             [
                 "dead  unreachable · connection refused",
-                "posthog  no access · r_datateam_sync needs SELECT on system.asynchronous_metrics",
+                "metrics  no access · r_reports_daily needs SELECT on system.asynchronous_metrics",
             ]
         );
         let details = insights[1].detail_text();
-        assert_eq!(details[0], "no access: r_datateam_sync needs SELECT on system.asynchronous_metrics");
+        assert_eq!(details[0], "no access: r_reports_daily needs SELECT on system.asynchronous_metrics");
         assert!(details[1].contains("SELECT on system.*"), "{details:?}");
         assert_eq!(insights[0].detail_text()[0], "unreachable: connection refused — nothing listening on that port");
     }
@@ -1091,7 +1091,7 @@ mod tests {
     #[test]
     fn labels_leave_out_the_domain_every_node_shares() {
         assert_eq!(
-            shared_domain(&["clickhouse1.example.net", "clickhouse-posthog.example.net"]).as_deref(),
+            shared_domain(&["clickhouse1.example.net", "clickhouse-metrics.example.net"]).as_deref(),
             Some(".example.net")
         );
         assert_eq!(shared_domain(&["a.dc1.example.net", "b.dc2.example.net"]).as_deref(), Some(".example.net"));
@@ -1099,12 +1099,12 @@ mod tests {
         assert_eq!(shared_domain(&["127.0.0.1:8123", "127.0.0.1:8124"]), None);
         assert_eq!(shared_domain(&["10.0.0.1", "10.0.0.2"]), None);
         let s = snap(vec![
-            NodeSnapshot::unreachable("clickhouse-posthog.example.net", "connection refused"),
+            NodeSnapshot::unreachable("clickhouse-metrics.example.net", "connection refused"),
             quiet_node("clickhouse1.example.net"),
         ]);
         let insights = analyze_snapshot(&s, &no_queue());
-        assert_eq!(insights[0].label, "clickhouse-posthog");
-        assert_eq!(insights[0].subject, Subject::Node("clickhouse-posthog.example.net".into()), "⏎ still finds it");
+        assert_eq!(insights[0].label, "clickhouse-metrics");
+        assert_eq!(insights[0].subject, Subject::Node("clickhouse-metrics.example.net".into()), "⏎ still finds it");
     }
 
     /// The point of the rewrite: nothing is said twice, and every line fits a laptop.

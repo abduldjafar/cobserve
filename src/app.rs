@@ -9,8 +9,9 @@ use crate::insight::{self, Insight, Subject};
 use crate::model::{fleet_totals, mark_new_nodes, FleetSnapshot, FleetView, Job, JobState, QueueStatus};
 use crate::tape::{Tape, Watch};
 use crate::tree::{self, Row, RowId, TreeState};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use std::cell::Cell;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
@@ -108,6 +109,18 @@ pub struct Viewport {
     pub map_columns: Cell<usize>,
     /// How far the selected query's SQL can scroll, as last drawn.
     pub sql_max: Cell<usize>,
+    /// What the mouse can click, as last drawn: the header's tabs, the sessions, Claude's pane.
+    pub hits: RefCell<Vec<(Rect, Hit)>>,
+}
+
+/// Something on screen a click means something on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hit {
+    View(View),
+    Session(usize),
+    NewSession,
+    /// Claude's screen: clicks and the wheel go to the program.
+    Pane,
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -158,6 +171,8 @@ pub enum Event {
     PaneExited(u64, String),
     /// Text pasted into the terminal (bracketed paste).
     Paste(String),
+    /// A click or a turn of the wheel.
+    Mouse(MouseEvent),
     Quit,
 }
 
@@ -295,6 +310,7 @@ impl App {
                     session.pane.state = PaneState::Exited(how);
                 }
             }
+            Event::Mouse(event) => self.on_mouse(event),
             Event::Paste(text) => {
                 let line = text.lines().next().unwrap_or_default();
                 if self.view == View::Claude {
@@ -303,6 +319,7 @@ impl App {
                             let room = crate::claude::NAME_MAX.saturating_sub(name.chars().count());
                             name.extend(line.chars().take(room));
                         }
+                        Mode::Opening(dir) => dir.push_str(line),
                         Mode::Typing => {
                             if let Some(session) = self.claude.current_mut().filter(|s| s.pane.is_running()) {
                                 session.pane.paste(&text);
@@ -331,10 +348,25 @@ impl App {
         self.queue_selection = None;
         self.claude.mode = Mode::Typing;
         if self.claude.list.is_empty() {
-            self.claude.open_new();
+            self.claude.open_new("");
         } else {
             let active = self.claude.active;
             self.claude.select(active);
+        }
+    }
+
+    /// Session `number` (5–9) on view 5. The first visit opens session 5; a number with no
+    /// session behind it says how to open one.
+    fn open_session(&mut self, number: usize) {
+        match self.claude.index_of(number) {
+            Some(index) => {
+                self.open_claude();
+                self.claude.select(index);
+            }
+            None if self.claude.list.is_empty() && number == crate::claude::FIRST_NUMBER => self.open_claude(),
+            None => {
+                self.notice = Some((format!("no session {number} yet — ctrl+\\ then n opens one"), SystemTime::now()));
+            }
         }
     }
 
@@ -344,8 +376,104 @@ impl App {
         match self.claude.current_mut() {
             Some(session) => session.pane.start(size),
             None => {
-                self.claude.open_new();
+                self.claude.open_new("");
             }
+        }
+    }
+
+    /// Ask where a new session should work — the one on screen's directory to start from —
+    /// unless every number is taken.
+    pub fn ask_new_session(&mut self) {
+        if self.claude.list.len() >= crate::claude::MAX_SESSIONS {
+            self.notice = Some((
+                format!("sessions are 5 to 9: {} is as many as there are numbers for — close one with x", crate::claude::MAX_SESSIONS),
+                SystemTime::now(),
+            ));
+            self.claude.mode = Mode::Typing;
+            return;
+        }
+        self.claude.mode = Mode::Opening(self.claude.next_dir());
+    }
+
+    /// Typing the directory of a new session.
+    fn on_opening_key(&mut self, key: KeyEvent) {
+        let Mode::Opening(dir) = &mut self.claude.mode else {
+            return;
+        };
+        match key.code {
+            KeyCode::Enter => {
+                let dir = dir.clone();
+                self.claude.mode = Mode::Typing;
+                if self.claude.open_new(&dir).is_none() {
+                    self.ask_new_session();
+                }
+            }
+            KeyCode::Esc => self.claude.mode = Mode::Typing,
+            KeyCode::Backspace => {
+                dir.pop();
+            }
+            // ctrl+u clears it, as in a shell.
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => dir.clear(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => dir.push(c),
+            _ => {}
+        }
+    }
+
+    /// A click on what was drawn there, or the wheel: over Claude's screen it is Claude's,
+    /// elsewhere it moves the cursor like ↑ ↓.
+    fn on_mouse(&mut self, event: MouseEvent) {
+        let hit = self
+            .viewport
+            .hits
+            .borrow()
+            .iter()
+            .find(|(r, _)| event.column >= r.x && event.column < r.x + r.width && event.row >= r.y && event.row < r.y + r.height)
+            .map(|(_, hit)| *hit);
+        if hit == Some(Hit::Pane) && self.view == View::Claude {
+            self.claude.mouse(&event);
+            return;
+        }
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => match hit {
+                Some(Hit::View(View::Claude)) => self.open_claude(),
+                Some(Hit::View(view)) => self.go_to_view(view),
+                Some(Hit::Session(index)) => {
+                    self.open_claude();
+                    self.claude.select(index);
+                }
+                Some(Hit::NewSession) => {
+                    self.open_claude();
+                    self.ask_new_session();
+                }
+                Some(Hit::Pane) | None => {}
+            },
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let delta = if event.kind == MouseEventKind::ScrollUp { -1 } else { 1 };
+                match self.view {
+                    View::Nodes if self.focus == Focus::Insights => {
+                        let last = self.insights().len().saturating_sub(1);
+                        self.insight_selection = self.insight_selection.saturating_add_signed(delta).min(last);
+                    }
+                    View::Nodes | View::Queue => self.move_by(delta),
+                    View::Tape => {
+                        let last = self.tape.len().saturating_sub(1);
+                        self.tape_selection = self.tape_selection.saturating_add_signed(delta).min(last);
+                    }
+                    View::Map | View::Claude => {}
+                }
+            }
+            _ => {}
+        }
+        self.sync_view_state();
+    }
+
+    /// One of the monitor's views, leaving Claude's modes behind.
+    fn go_to_view(&mut self, view: View) {
+        self.claude.mode = Mode::Typing;
+        self.view = view;
+        self.focus = Focus::Tree;
+        if view != View::Queue {
+            self.queue_selection = None;
         }
     }
 
@@ -353,21 +481,22 @@ impl App {
     fn on_bar_key(&mut self, key: KeyEvent) {
         let closing = std::mem::take(&mut self.claude.closing);
         match key.code {
-            KeyCode::Char(c @ '1'..='9') => {
-                self.claude.select(c as usize - '1' as usize);
+            // One numbering for every tab: 1–4 the monitor's views, 5–9 the sessions.
+            KeyCode::Char(c @ '1'..='4') => {
+                self.claude.mode = Mode::Typing;
+                if let Some(view) = View::from_number(c as u8 - b'0') {
+                    self.view = view;
+                }
+            }
+            KeyCode::Char(c @ '5'..='9') => {
+                if let Some(index) = self.claude.index_of(c as usize - '0' as usize) {
+                    self.claude.select(index);
+                }
                 self.claude.mode = Mode::Typing;
             }
             KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => self.claude.step(false),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => self.claude.step(true),
-            KeyCode::Char('n') | KeyCode::Char('c') => {
-                if self.claude.open_new().is_none() {
-                    self.notice = Some((
-                        format!("{} sessions is as many as the bar numbers — close one with x", crate::claude::MAX_SESSIONS),
-                        SystemTime::now(),
-                    ));
-                }
-                self.claude.mode = Mode::Typing;
-            }
+            KeyCode::Char('n') | KeyCode::Char('c') => self.ask_new_session(),
             KeyCode::Char('r') => {
                 if let Some(name) = self.claude.current().map(|s| s.name.clone().unwrap_or_default()) {
                     self.claude.mode = Mode::Naming(name);
@@ -865,6 +994,21 @@ impl App {
             return;
         }
 
+        let typing_text = matches!(self.claude.mode, Mode::Naming(_) | Mode::Opening(_)) && self.view == View::Claude;
+        // F1–F4 the views, F5–F9 the sessions — from anywhere, Claude's screen too, and with no
+        // key before them: a terminal that keeps ctrl+\ for itself still has these.
+        if let (KeyCode::F(n @ 1..=9), false) = (key.code, typing_text) {
+            if n <= 4 {
+                if let Some(view) = View::from_number(n) {
+                    self.go_to_view(view);
+                }
+            } else {
+                self.open_session(usize::from(n));
+            }
+            self.sync_view_state();
+            return;
+        }
+
         // ctrl+\ opens Claude from the monitor; on view 5 it opens the session bar, and once more
         // goes back to the monitor.
         if crate::claude::is_switch_key(&key) {
@@ -885,6 +1029,7 @@ impl App {
         if self.view == View::Claude {
             match self.claude.mode {
                 Mode::Naming(_) => return self.on_naming_key(key),
+                Mode::Opening(_) => return self.on_opening_key(key),
                 Mode::Bar => {
                     self.on_bar_key(key);
                     self.sync_view_state();
@@ -921,8 +1066,8 @@ impl App {
                 self.quit = true;
                 return;
             }
-            KeyCode::Char('5') => {
-                self.open_claude();
+            KeyCode::Char(c @ '5'..='9') => {
+                self.open_session(c as usize - '0' as usize);
                 self.sync_view_state();
                 return;
             }
@@ -1865,15 +2010,26 @@ mod tests {
     #[test]
     fn the_bar_opens_switches_renames_and_closes_sessions() {
         let mut app = app_with_fake();
+        app.claude.default_dir = "~/work/cobserve".into();
         app.open_claude();
         pane(&mut app).state = PaneState::Running;
         let first = app.claude.current().unwrap().id;
 
-        // ctrl+\ n: a second session, on screen.
+        // ctrl+\ n asks where; ⏎ opens it there, on screen.
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('n')));
+        assert_eq!(app.claude.mode, Mode::Opening("~/work/cobserve".into()), "where the one on screen works, to start from");
+        app.update(ctrl('u'));
+        for c in "~/work/airflow".chars() {
+            app.update(key(KeyCode::Char(c)));
+        }
+        app.update(key(KeyCode::Enter));
         assert_eq!((app.claude.list.len(), app.claude.active), (2, 1));
+        assert_eq!(app.claude.current().unwrap().dir, "~/work/airflow");
         assert_eq!(app.claude.mode, Mode::Typing, "straight back to typing, into the new one");
+        assert!(pane(&mut app).take_outbox().is_empty(), "the directory was not typed into Claude");
+        // As main.rs leaves it once its program has started.
+        pane(&mut app).state = PaneState::Running;
 
         // ctrl+\ r: rename it.
         app.update(ctrl('\\'));
@@ -1885,12 +2041,20 @@ mod tests {
         app.update(key(KeyCode::Char('a')));
         app.update(key(KeyCode::Enter));
         assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
-        assert!(pane(&mut app).take_outbox().is_empty(), "the name was not typed into Claude");
 
-        // ctrl+\ 1: back to the first.
+        // ctrl+\ 5: the first session — the sessions are numbered on from the views.
         app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('1')));
+        app.update(key(KeyCode::Char('5')));
         assert_eq!(app.claude.current().unwrap().id, first);
+        // ctrl+\ 4: straight to the tape.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('4')));
+        assert_eq!(app.view, View::Tape);
+        // And 6 from the monitor is session 6.
+        app.update(key(KeyCode::Char('6')));
+        assert_eq!((app.view, app.claude.current().unwrap().name.as_deref()), (View::Claude, Some("infra")));
+        app.update(key(KeyCode::Char('7')));
+        assert_eq!(pane(&mut app).take_outbox(), b"7", "on view 5 a digit is Claude's");
 
         // ctrl+\ x x: closed — once is not enough.
         app.update(ctrl('\\'));
@@ -1899,19 +2063,75 @@ mod tests {
         assert!(app.claude.closing);
         app.update(key(KeyCode::Char('x')));
         assert_eq!(app.claude.list.len(), 1);
-        assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
+        assert_eq!(app.claude.current().unwrap().id, first);
 
         // A rename can be given up, and esc leaves the bar for Claude.
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('r')));
         app.update(key(KeyCode::Char('z')));
         app.update(key(KeyCode::Esc));
-        assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
+        assert_eq!(app.claude.current().unwrap().name, None);
         assert_eq!(app.claude.mode, Mode::Typing);
-        // m on the bar is the monitor.
+        // m on the bar is the monitor, as is ctrl+\ twice.
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('m')));
-        assert_eq!(app.view, View::Nodes);
+        assert_eq!(app.view, View::Tape, "back where it came from");
+    }
+
+    #[test]
+    fn f_keys_reach_every_tab_without_ctrl_backslash() {
+        let mut app = app_with_fake();
+        app.open_claude();
+        pane(&mut app).state = PaneState::Running;
+        let f = |n| Event::Key(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
+        app.update(f(4));
+        assert_eq!(app.view, View::Tape, "F4 from Claude's screen, not passed on to it");
+        assert!(pane(&mut app).take_outbox().is_empty());
+        app.update(f(5));
+        assert_eq!(app.view, View::Claude);
+        app.update(f(2));
+        assert_eq!(app.view, View::Queue);
+        app.update(f(7));
+        assert_eq!(app.view, View::Queue, "no session 7: nothing happens but a word on how to open one");
+        assert!(app.notice().is_some_and(|n| n.contains("no session 7")));
+    }
+
+    #[test]
+    fn a_click_opens_a_tab_or_a_session_and_the_wheel_moves() {
+        let mut app = app_with_fake();
+        app.open_claude();
+        pane(&mut app).state = PaneState::Running;
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('n')));
+        app.update(key(KeyCode::Enter));
+        // What the last frame drew: two tabs, the first session, the +, Claude's screen.
+        let rect = |x, y, w, h| Rect::new(x, y, w, h);
+        app.viewport.hits.borrow_mut().extend([
+            (rect(80, 0, 8, 1), Hit::View(View::Tape)),
+            (rect(90, 0, 10, 1), Hit::View(View::Claude)),
+            (rect(1, 6, 26, 2), Hit::Session(0)),
+            (rect(24, 4, 3, 1), Hit::NewSession),
+            (rect(30, 4, 80, 25), Hit::Pane),
+        ]);
+        let click = |x, y| {
+            Event::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE })
+        };
+        app.update(click(2, 7));
+        assert_eq!(app.claude.active, 0, "the first session, clicked");
+        app.update(click(83, 0));
+        assert_eq!(app.view, View::Tape, "a tab of the header, clicked");
+        app.update(click(92, 0));
+        assert_eq!(app.view, View::Claude);
+        app.update(click(25, 4));
+        assert!(matches!(app.claude.mode, Mode::Opening(_)), "the + asks where");
+        app.update(key(KeyCode::Esc));
+        // The wheel over Claude's screen is Claude's; over the tape it moves the cursor.
+        pane(&mut app).take_outbox();
+        let wheel = |kind| Event::Mouse(MouseEvent { kind, column: 50, row: 10, modifiers: KeyModifiers::NONE });
+        for _ in 0..3 {
+            app.update(wheel(MouseEventKind::ScrollUp));
+        }
+        assert_eq!(pane(&mut app).take_outbox(), b"\x1b[5~", "a turn of the wheel is a page of Claude's");
     }
 
     #[test]
@@ -1938,11 +2158,12 @@ mod tests {
         let first = app.claude.current().unwrap().id;
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('n')));
+        app.update(key(KeyCode::Enter));
         app.update(Event::Pane(first, b"all done\x07".to_vec()));
         assert!(app.claude.list[0].pane.attention, "rang behind the session on screen");
         assert!(app.claude.calling());
         app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('1')));
+        app.update(key(KeyCode::Char('5')));
         assert!(!app.claude.calling(), "seen once it is on screen");
     }
 

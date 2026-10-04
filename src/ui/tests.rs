@@ -229,37 +229,68 @@ fn app_with_claude(output: &[u8]) -> App {
 }
 
 #[test]
-fn sessions_are_tabs_that_can_be_renamed() {
+fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     let mut app = app_with_claude(b"the first session\r\n");
     let first = app.claude.current().unwrap().id;
-    // ctrl+\ n: a second one; ctrl+\ r: named.
+    // ctrl+\ n asks where; ⏎ opens it where the first works.
     app.update(ctrl('\\'));
     app.update(key(KeyCode::Char('n')));
+    let asking = render(&app, 140, 40);
+    assert!(asking.contains("new session, in:") && asking.contains("where should it work"), "{asking}");
+    app.update(key(KeyCode::Enter));
     run_session(&mut app, b"the second session\r\n");
+    // ctrl+\ r: named.
     app.update(ctrl('\\'));
     app.update(key(KeyCode::Char('r')));
     for c in "infra".chars() {
         app.update(key(KeyCode::Char(c)));
     }
-    let typing = render(&app, 120, 36);
-    assert!(typing.contains("infra▏"), "the tab is the input while the name is typed: {typing}");
+    let typing = render(&app, 140, 40);
+    assert!(typing.contains("infra▏"), "the name is typed in its place: {typing}");
     assert!(typing.contains("keep the name"), "{typing}");
     app.update(key(KeyCode::Enter));
     // The first one rings while the second is on screen.
     app.update(Event::Pane(first, b"\x07".to_vec()));
 
-    let screen = render(&app, 120, 36);
-    assert!(screen.contains(" 1 claude 1 ● ") && screen.contains(" 2 infra "), "{screen}");
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("SESSIONS"), "{screen}");
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
+    assert!(row("5 ✳ claude").contains('●'), "the first, which rang: {screen}");
+    assert!(!row("6 ✳ infra").is_empty(), "the second, by its name: {screen}");
     assert!(screen.contains("the second session") && !screen.contains("the first session"), "only the session on screen: {screen}");
-    let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[4].contains("2 infra"), "the bar is right under the band: {}", lines[4]);
+    assert!(screen.contains("+  new session"), "{screen}");
+    assert!(screen.contains("5-9 session") && screen.contains("F1-F9"), "the keys, for when the mouse is not at hand: {screen}");
 
     app.update(ctrl('\\'));
-    let bar = render(&app, 120, 36);
+    let bar = render(&app, 140, 40);
     assert!(bar.contains("which one?") && bar.contains("rename") && bar.contains("close"), "{bar}");
     app.update(key(KeyCode::Char('x')));
-    let closing = render(&app, 120, 36);
-    assert!(closing.contains("x again closes “infra”"), "{closing}");
+    let closing = render(&app, 140, 40);
+    assert!(closing.contains("x again closes it"), "{closing}");
+}
+
+#[test]
+fn a_narrow_terminal_puts_the_sessions_on_a_bar() {
+    let app = app_with_claude(b"one\r\n");
+    let screen = render(&app, 96, 30);
+    let lines: Vec<&str> = screen.lines().collect();
+    assert!(lines[4].contains(" 5 claude ") && lines[4].contains(" + "), "{}", lines[4]);
+    assert!(!screen.contains("SESSIONS"), "{screen}");
+}
+
+#[test]
+fn the_header_s_tabs_and_the_sessions_can_be_clicked() {
+    let app = app_with_claude(b"one\r\n");
+    let screen = render(&app, 140, 40);
+    let hits = app.viewport.hits.borrow().clone();
+    let find = |hit: crate::app::Hit| hits.iter().find(|(_, h)| *h == hit).map(|(r, _)| *r);
+    let tape = find(crate::app::Hit::View(View::Tape)).expect("the TAPE tab");
+    let top: Vec<String> = screen.lines().next().unwrap().chars().map(String::from).collect();
+    let under: String = top[tape.x as usize..(tape.x + tape.width) as usize].concat();
+    assert_eq!(under, " 4 TAPE ", "the click area is the tab itself");
+    assert!(find(crate::app::Hit::Session(0)).is_some() && find(crate::app::Hit::NewSession).is_some());
+    let pane = find(crate::app::Hit::Pane).expect("Claude's screen");
+    assert_eq!(app.claude.pane_origin.get(), (pane.y, pane.x));
 }
 
 #[test]
@@ -714,7 +745,7 @@ fn a_real_fleet_reads_in_a_few_short_lines() {
         "ch_user",
         1670.0,
         71.5,
-        "CREATE MATERIALIZED VIEW materialized_views.mv_gateway_bank_statement AS SELECT 1",
+        "CREATE MATERIALIZED VIEW materialized_views.mv_invoice_monthly_totals AS SELECT 1",
     )];
     let snapshot = crate::model::FleetSnapshot {
         taken_at: std::time::SystemTime::now(),
@@ -723,8 +754,8 @@ fn a_real_fleet_reads_in_a_few_short_lines() {
             ch3,
             ch2,
             crate::model::NodeSnapshot::unreachable(
-                "clickhouse-posthog.example.net",
-                "no access — r_datateam_sync needs SELECT on system.asynchronous_metrics",
+                "clickhouse-metrics.example.net",
+                "no access — r_reports_daily needs SELECT on system.asynchronous_metrics",
             ),
             node("clickhouse4.example.net", 128, 2.0, 16.0, 0.4),
             node("clickhouse1.example.net", 128, 3.0, 16.0, 0.4),
@@ -738,7 +769,7 @@ fn a_real_fleet_reads_in_a_few_short_lines() {
     assert_eq!(
         lines,
         [
-            "clickhouse-posthog  no access · r_datateam_sync needs SELECT on system.asynchronous_metrics",
+            "clickhouse-metrics  no access · r_reports_daily needs SELECT on system.asynchronous_metrics",
             "clickhouse2  long query · ch_user, 27m50s",
             "clickhouse3  long query · airflow, 2m46s",
         ]
@@ -750,7 +781,7 @@ fn a_real_fleet_reads_in_a_few_short_lines() {
         .skip(1)
         .take(3)
         .collect();
-    assert!(panel[0].contains("✖ clickhouse-posthog  no access · r_datateam_sync needs SELECT"), "{screen}");
+    assert!(panel[0].contains("✖ clickhouse-metrics  no access · r_reports_daily needs SELECT"), "{screen}");
     assert!(!screen.contains("1279%") && !screen.contains("DB::Exception"), "{screen}");
 }
 
@@ -806,6 +837,7 @@ fn html_with(buf: &Buffer, title: &str, theme: &crate::theme::Theme) -> String {
          pre{{margin:0;padding:14px 16px;font:15px 'DejaVu Sans Mono',monospace;color:{fg0};background:{bg0};}}\
          div{{height:18px;line-height:18px;white-space:pre;overflow:hidden}}\
          span{{white-space:pre}}\
+         i{{display:inline-block;width:1ch;font-style:normal}}\
          </style></head><body><pre>"
     ));
     let width = buf.area.width;
@@ -818,9 +850,8 @@ fn html_with(buf: &Buffer, title: &str, theme: &crate::theme::Theme) -> String {
                 return;
             }
             let (fg, bg, bold) = style.clone().unwrap();
-            let escaped = run.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
             out.push_str(&format!(
-                "<span style=\"color:{fg};background:{bg};{}\">{escaped}</span>",
+                "<span style=\"color:{fg};background:{bg};{}\">{run}</span>",
                 if bold { "font-weight:bold;" } else { "" }
             ));
             run.clear();
@@ -840,7 +871,17 @@ fn html_with(buf: &Buffer, title: &str, theme: &crate::theme::Theme) -> String {
                 flush(&mut out, &mut run, &style);
                 style = Some(this);
             }
-            run.push_str(cell.symbol());
+            let symbol = cell.symbol().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let lines_and_blocks = symbol.chars().all(|c| ('\u{2500}'..='\u{259f}').contains(&c));
+            if !symbol.is_ascii() && !lines_and_blocks && unicode_width::UnicodeWidthStr::width(cell.symbol()) == 1 {
+                // A glyph the font lacks (⎇, ✳) comes from a fallback font with its own width;
+                // held to one column, it no longer pushes the rest of the line along. Lines and
+                // blocks are the font's own and come in long runs, where the browser's rounding
+                // of each held column would add up.
+                run.push_str(&format!("<i>{symbol}</i>"));
+            } else {
+                run.push_str(&symbol);
+            }
         }
         flush(&mut out, &mut run, &style);
         out.push_str("</div>");
@@ -860,9 +901,11 @@ const CLAUDE_DEMO: &[u8] = b"\x1b]0;\xe2\x9c\xb3 Stream the invoice export\x07\
 \x1b[32m\xe2\x97\x8f\x1b[m \x1b[1mUpdate\x1b[m(src/export/invoice.rs)\r\n\
 \x20\x20\x1b[2m\xe2\x94\x94  18 lines added, 31 removed\x1b[m\r\n\r\n\
 \x1b[38;2;215;119;87m\xe2\x9c\xbb\x1b[m Running the tests\xe2\x80\xa6 \x1b[2m(esc to interrupt)\x1b[m\r\n\r\n\
-\x1b[2m\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n\
-\x1b[2m\xe2\x94\x82\x1b[m > \r\n\
-\x1b[2m\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n";
+\x1b[2m\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\
+\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n\
+\xe2\x9d\xaf \r\n\
+\x1b[2m\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\
+\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n";
 
 #[test]
 #[ignore]
@@ -922,19 +965,35 @@ fn export_screens() {
     map.update(key(KeyCode::Char('3')));
     save("120x36-map", &map, 120, 36);
 
-    // Two sessions: one named and on screen, one that rang while it was not.
+    // Three sessions in three projects: one named and on screen, one that rang while it was
+    // not, one that Claude itself named by its task.
     let mut claude = app_after(118);
+    claude.claude.default_dir = "~/work/billing".into();
     claude.update(key(KeyCode::Char('5')));
     let billing = run_session(&mut claude, CLAUDE_DEMO);
-    claude.claude.rename_current("billing");
+    claude.claude.rename_current("billing export");
+    for (dir, title) in [
+        ("~/work/pipelines", &b"\x1b]0;\xe2\x9c\xb3 late partitions\x07"[..]),
+        ("~/work/reports", &b"\x1b]0;\xe2\x9c\xb3 weekly totals\x07"[..]),
+    ] {
+        claude.update(ctrl('\\'));
+        claude.update(key(KeyCode::Char('n')));
+        claude.update(ctrl('u'));
+        for c in dir.chars() {
+            claude.update(key(KeyCode::Char(c)));
+        }
+        claude.update(key(KeyCode::Enter));
+        run_session(&mut claude, title);
+    }
     claude.update(ctrl('\\'));
-    claude.update(key(KeyCode::Char('n')));
-    run_session(&mut claude, b"\x1b]0;\xe2\x9c\xb3 Review the ETL DAG\x07\x07");
-    claude.update(ctrl('\\'));
-    claude.update(key(KeyCode::Char('1')));
+    claude.update(key(KeyCode::Char('5')));
     assert_eq!(claude.claude.current().unwrap().id, billing);
+    claude.claude.list[0].branch = Some("main".into());
+    claude.claude.list[1].branch = Some("fix-late-partitions".into());
+    claude.claude.list[2].branch = Some("add-weekly-totals".into());
     claude.claude.list[1].pane.attention = true;
     save("120x36-claude", &claude, 120, 36);
+    save("160x48-claude", &claude, 160, 48);
 
     // Long enough for clickhouse5 to join, ch6 to drop out and come back, and a kill.
     let mut tape = app_after(118);

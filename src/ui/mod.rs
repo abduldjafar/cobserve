@@ -29,7 +29,7 @@ pub mod widgets;
 #[cfg(test)]
 mod tests;
 
-use crate::app::{App, Focus, Footer, View};
+use crate::app::{App, Focus, Footer, Hit, View};
 use crate::fmt;
 use crate::insight;
 use crate::severity::Severity;
@@ -123,6 +123,8 @@ fn areas(content: Rect, view: View, insights_len: usize, body_need: usize) -> Ar
 
 pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
+    // What can be clicked is what this frame draws.
+    app.viewport.hits.borrow_mut().clear();
     frame.render_widget(Block::new().style(theme.base()), area);
     if area.width < 4 || area.height < 3 {
         return;
@@ -144,6 +146,7 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         .title_bottom(bottom_right(app, theme).right_aligned());
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    tab_hits(frame, app, area);
     // One cell of breathing room on each side, when there is room to breathe.
     let content = if inner.width > 40 {
         Rect::new(inner.x + 1, inner.y, inner.width - 2, inner.height)
@@ -191,6 +194,26 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
 // ---------------------------------------------------------------------------
 // Header and border
 // ---------------------------------------------------------------------------
+
+/// The header's tabs, found where the border drew them, so a click on one opens it.
+fn tab_hits(frame: &mut Frame, app: &App, area: Rect) {
+    let buffer = frame.buffer_mut();
+    let row: Vec<String> = (area.x..area.x + area.width).map(|x| buffer[(x, area.y)].symbol().to_string()).collect();
+    let mut hits = app.viewport.hits.borrow_mut();
+    for view in View::ALL {
+        let long = format!("{} {}", view.number(), view.title());
+        let short = format!("{}{}", view.number(), &view.title()[..1]);
+        for label in [long, short] {
+            let wanted: Vec<String> = label.chars().map(|c| c.to_string()).collect();
+            if let Some(at) = row.windows(wanted.len()).position(|w| w == wanted.as_slice()) {
+                // The space either side is part of the tab.
+                let x = (area.x + at as u16).saturating_sub(1);
+                hits.push((Rect::new(x, area.y, wanted.len() as u16 + 2, 1), Hit::View(view)));
+                break;
+            }
+        }
+    }
+}
 
 fn header_left(app: &App, theme: &Theme, status: Severity, width: u16) -> Line<'static> {
     let mut spans = vec![
@@ -360,9 +383,14 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("⏎", "keep the name"),
             ("esc", "cancel"),
         ],
+        View::Claude if matches!(app.claude.mode, crate::claude::Mode::Opening(_)) => &[
+            ("⏎", "open it there"),
+            ("esc", "cancel"),
+            ("ctrl+u", "clear"),
+        ],
         View::Claude if app.claude.mode == crate::claude::Mode::Bar => &[
-            ("1-9", "switch"),
-            ("←→", "next"),
+            ("1-4", "views"),
+            ("5-9", "sessions"),
             ("n", "new"),
             ("r", "rename"),
             ("x", "close"),
@@ -371,7 +399,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         ],
         View::Claude if app.claude.is_running() => {
             // Every other key is Claude's; the one that is not opens the bar.
-            cells.spans(keycap("ctrl+\\", "sessions · monitor", theme));
+            cells.spans(keycap("ctrl+\\", "then 1-4 views · 5-9 sessions", theme));
             cells.push("   every other key goes to Claude", theme.muted());
             if let Some(title) = app.claude.current().and_then(|s| s.pane.title.as_ref()) {
                 let room = width.saturating_sub(cells.width() + 2);
@@ -417,8 +445,9 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("u", "pivot node ↔ user: who is burning the fleet"),
     ("s", "sort: pressure, memory, CPU, name"),
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
-    ("1 2 3 4 5", "views: nodes · queue · map · tape · claude"),
-    ("ctrl+\\", "Claude (view 5) · there: the sessions bar (1-9 n r x), again: the monitor"),
+    ("1 2 3 4 5", "views: nodes · queue · map · tape · claude — 5 to 9 are Claude's sessions"),
+    ("ctrl+\\", "Claude · there, then 1-4 a view, 5-9 a session, n new, r rename, x close"),
+    ("F1 … F9", "the same tabs from anywhere, Claude's screen too · or click them"),
     ("p", "pause: the numbers stop, the clock does not"),
     ("q  ctrl-c", "quit"),
 ];

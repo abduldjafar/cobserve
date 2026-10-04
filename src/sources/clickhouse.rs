@@ -1383,16 +1383,16 @@ mod tests {
     /// "unreachable", and the line names the grant instead of ClickHouse's paragraph.
     #[test]
     fn a_missing_grant_reads_no_access_with_the_grant_it_needs() {
-        let sync = login("r_datateam_sync", "p");
-        let body = "Code: 497. DB::Exception: r_datateam_sync: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(metric, value) ON system.asynchronous_metrics. (ACCESS_DENIED) (version 24.11.1.2557 (official build))";
+        let sync = login("r_reports_daily", "p");
+        let body = "Code: 497. DB::Exception: r_reports_daily: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(metric, value) ON system.asynchronous_metrics. (ACCESS_DENIED) (version 24.11.1.2557 (official build))";
         let said = http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, body, &sync);
-        assert_eq!(said, "no access — r_datateam_sync needs SELECT on system.asynchronous_metrics");
-        let node = NodeSnapshot::unreachable("posthog", said);
+        assert_eq!(said, "no access — r_reports_daily needs SELECT on system.asynchronous_metrics");
+        let node = NodeSnapshot::unreachable("metrics", said);
         assert_eq!(node.down_word(), "no access");
-        assert_eq!(node.down_detail(), Some("r_datateam_sync needs SELECT on system.asynchronous_metrics"));
+        assert_eq!(node.down_detail(), Some("r_reports_daily needs SELECT on system.asynchronous_metrics"));
 
         let vague = http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "Code: 497. DB::Exception: Not enough privileges", &sync);
-        assert_eq!(vague, "no access — r_datateam_sync lacks a grant the monitor needs");
+        assert_eq!(vague, "no access — r_reports_daily lacks a grant the monitor needs");
     }
 
     #[test]

@@ -685,12 +685,14 @@ or from a slope over the last minutes of it.
   pseudo-terminal, its screen emulated (`vt100`) and drawn under the header and the band, the
   worst insight on the line between them. Signed in with the user's own plan; no API is called
   from here, and `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of the
-  program's environment. Up to nine sessions on a bar of tabs, each its own program and
-  conversation, named by the user or by the title Claude sets; a session that rings while it is
-  not on screen is marked. Every PTY is sized to the pane, so switching never shows a layout
-  for another size. The terminal queries a full-screen program makes (cursor position, device
-  attributes, default colours) are answered; `ctrl+z` is held back, since nothing in the pane
-  could resume a suspended program.
+  program's environment. Up to five sessions, numbered 5 to 9 after the views' 1 to 4, each its
+  own program, conversation and working directory, listed beside the pane like a terminal's
+  tabs — name (the user's, or the title Claude sets), directory and git branch (read from
+  `.git/HEAD`, a worktree's `.git` file followed, every few seconds) — on a narrow terminal a
+  bar of tabs over it; a session that rings while it is not on screen is marked. Every PTY is
+  sized to the pane, so switching never shows a layout for another size. The terminal queries
+  a full-screen program makes (cursor position, device attributes, default colours) are
+  answered; `ctrl+z` is held back, since nothing in the pane could resume a suspended program.
 - **The job's SQL on view 2**: the cursor on a job opens its SQL under the row, as on view 1 —
   what ClickHouse runs when the stitch found it, the query as saved in Redash otherwise (an
   ad-hoc query outside ClickHouse has none: Redash's API keeps no text for it). `J` `K` scroll.
@@ -745,8 +747,14 @@ or from a slope over the last minutes of it.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
 - **§3 keys on view 5**: every key goes to Claude — `q`, the digits, `ctrl+c` — except `ctrl+\`,
-  which opens the session bar (`1`–`9`, `←` `→`, `n`, `r`, `x` twice, `esc`) and, pressed again,
-  goes back to the monitor. From the monitor, `5` or `ctrl+\` opens it. With bracketed paste on,
+  after which a number goes to that tab (`1`–`4` a view, `5`–`9` a session), `n` `r` `x x` open,
+  rename and close sessions, `esc` goes back to Claude and `ctrl+\` again to the monitor; and
+  `F1`–`F9`, the same tabs with no key before them, for a terminal that keeps `ctrl+\`. From the
+  monitor, `5`–`9` or `ctrl+\` open Claude.
+- **§3 the mouse**, which v1 left out: a click opens a tab of the header, a session or a new
+  one; the wheel moves the cursor, and over Claude is its page up and down — or, when the
+  program asked for mouse reports, the reports themselves. The terminal's own selection then
+  needs its modifier key; `MOUSE=0` gives the mouse back to the terminal. With bracketed paste on,
   a paste is one event: into Claude as a paste, into `/` as text, and nowhere else — before, a
   paste was a stream of keys, and a `q` in it quit.
 - **Read-only** still describes everything the monitor does. View 5 is the user's own Claude
