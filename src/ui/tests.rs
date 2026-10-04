@@ -205,6 +205,22 @@ fn an_unreachable_queue_still_says_something() {
 }
 
 #[test]
+fn a_host_without_a_login_reads_not_polled() {
+    let mut fake = FakeSource::new();
+    let mut snapshot = fake.snapshot();
+    snapshot
+        .nodes
+        .push(crate::model::NodeSnapshot::unreachable("ch-x", crate::model::NO_LOGIN));
+    let mut app = App::new();
+    app.update(Event::Snapshot(Box::new(snapshot)));
+    let screen = render(&app, 160, 48);
+    assert!(screen.contains("↯ not polled"), "the row: {screen}");
+    assert!(screen.contains("ch-x is not polled"), "the insight: {screen}");
+    assert!(!screen.contains("ch-x is unreachable"), "it was never asked, so it is not down: {screen}");
+    assert_eq!(crate::model::NodeSnapshot::unreachable("ch-y", "HTTP 502").down_word(), "unreachable");
+}
+
+#[test]
 fn the_map_draws_one_tile_per_node() {
     let mut app = app_after(5);
     app.update(key(KeyCode::Char('3')));

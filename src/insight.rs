@@ -187,7 +187,7 @@ fn unreachable(node: &NodeView<'_>, history: &History, now: f64, out: &mut Vec<I
         .node(&node.node.name)
         .and_then(|h| h.unreachable_since)
         .map(|t| now - t);
-    let mut text = Text::default().node(&node.node.name).plain(" is ").sev("unreachable", Severity::Crit);
+    let mut text = Text::default().node(&node.node.name).plain(" is ").sev(node.node.down_word(), Severity::Crit);
     if let Some(for_s) = since.filter(|s| *s >= 1.0) {
         text = text.plain(format!(" for {}", fmt::dur(for_s)));
     }

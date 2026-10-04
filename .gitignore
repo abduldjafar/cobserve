@@ -6,6 +6,11 @@ dev/local/redash_api_key
 dev/local/rendered/
 dev/local/forward.log
 
+# files for --credential: credentials.example.yaml is the template; filled-in copies hold
+# passwords (dev/local/credentials.yaml included)
+credentials.yaml
+*.credentials.yaml
+
 .DS_Store
 # local only
 CLAUDE.md

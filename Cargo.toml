@@ -18,6 +18,9 @@ regex = "1"
 # Already in the tree through ratatui; used directly so padding agrees with what the
 # terminal draws when a person, a node or a piece of SQL has wide characters in it.
 unicode-width = "0.2"
+# The --credential file. serde_yaml's maintained fork; asked for a string, it hands over a
+# YAML scalar as the text it is, so `password: 007` stays "007".
+serde_norway = "0.9"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

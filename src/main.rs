@@ -30,11 +30,26 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    let config = match Config::from_env() {
+    // Before the terminal is touched: a configuration mistake should print a line, not leave
+    // a mangled terminal behind.
+    let args = match config::Args::parse(std::env::args().skip(1)) {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("pay_monitoring: {e}");
+            std::process::exit(2);
+        }
+    };
+    if args.help {
+        print!("{}", config::USAGE);
+        return Ok(());
+    }
+    if args.version {
+        println!("pay_monitoring {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let config = match Config::load(&args) {
         Ok(config) => config,
         Err(e) => {
-            // Before the terminal is touched: a configuration mistake should print a line,
-            // not leave a mangled terminal behind.
             eprintln!("pay_monitoring: {e}");
             std::process::exit(2);
         }
@@ -74,6 +89,9 @@ async fn run(terminal: &mut DefaultTerminal, config: Config) -> color_eyre::Resu
 
     spawn_sources(&config, tx.clone());
     // Anything a source could not even start with belongs on screen, not in a log file.
+    for warning in &config.warnings {
+        app.update(Event::Notice(warning.clone()));
+    }
     if let Some(config_error) = startup_problem(&config) {
         app.update(Event::Notice(config_error));
     }

@@ -846,7 +846,7 @@ fn unreachable_cells(cells: &mut Cells, view: &NodeView<'_>, app: &App, theme: &
         .and_then(|h| h.unreachable_since)
         .map(|t| app.history.now() - t)
         .filter(|s| *s >= 1.0);
-    cells.push("↯ unreachable", theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
+    cells.push(format!("↯ {}", view.node.down_word()), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
     if let Some(for_s) = since {
         cells.push(format!(" for {}", fmt::dur(for_s)), theme.sev(Severity::Crit));
     }

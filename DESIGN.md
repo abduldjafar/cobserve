@@ -559,6 +559,9 @@ set (for `NEW`), expansion set, selection id, sort, pivot, filter, paused, view.
 Never print credentials, not even in error messages (redact the `X-ClickHouse-Key` header
 if you log requests).
 
+Since v1, a server can have a login of its own — from a credential file named on the command
+line, or in its seed URL. See §13.
+
 ---
 
 ## 10. Tests — what must exist before this is done
@@ -655,6 +658,15 @@ or from a slope over the last minutes of it.
 - **Poll latency** per node, in the drawer and the insights.
 - **Theme** (`src/theme.rs`): 24-bit, 256- and 16-colour renderings of one palette, `THEME=light`,
   `THEME=mono` and `NO_COLOR`.
+- **A login per server** (`src/config.rs`): `--credential FILE` names a YAML file with the
+  servers and a user and password for each (`credentials.example.yaml`), plus optionally the
+  cluster, a `default_login` and the Redash settings; `http://user:password@host:8123` in
+  `CH_SEED_URLS` does the same without a file. A password is only ever sent to its own server:
+  a host discovery finds uses the default login (the file's, or `CH_USER` / `CH_PASSWORD`) and,
+  without one, is shown as *not polled* with a note instead of being asked. The file wins over
+  the environment, and `CH_SEED_URLS` adds to its servers. Errors in it name the key and the
+  line, never a value — a password in the wrong place is not echoed — and a file other users
+  can read is flagged in the footer.
 
 ### Departures
 
@@ -668,6 +680,9 @@ or from a slope over the last minutes of it.
   instead of one under every open node, bars on node rows on the same scale as the user rows
   under them, insights between the tree and the drawer. The drawer and the §7 degradation order
   are as specified.
+- **§9 nothing on disk** has one exception: the credential file, read only when the command
+  line names it. `CH_USER` / `CH_PASSWORD` are required only when some server has no login of
+  its own, and one of the two is never completed with a guess for the other.
 - **§6.2 seeds** are de-duplicated by URL, not by host: two ports on one machine are two
   servers.
 - **§6.2 discovery matches each seed to its own row** of `system.clusters` before adding
@@ -679,9 +694,15 @@ or from a slope over the last minutes of it.
   resolve `.lan`. A seed keeps the name it was typed with (a bare IP takes the cluster's);
   the cluster's name is in the drawer. A host no seed is — a real other node — is reached by
   name when that resolves here, by its listed address when it does not.
+- **A seed that refuses the discovery query** — a wrong password — is still matched to its row,
+  by the name its server gives in `X-ClickHouse-Server-Display-Name` (its host name unless
+  configured otherwise), which ClickHouse sends even with a refused login. While a seed neither
+  answers nor matches, rows nobody has a login for are not added: they may be that seed, and
+  would only say "add this host" about a host that is already there.
 - **Unreachable reasons** are said plainly (*name does not resolve from here (DNS)*,
-  *connection refused*, *no answer within 1.5 s*) instead of reqwest's
-  `error sending request for url (…)`.
+  *connection refused*, *no answer within 1.5 s*, *login refused for user monitor_ch2 — check
+  this server's user and password*) instead of reqwest's `error sending request for url (…)`
+  or ClickHouse's stack of exception text.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
 

@@ -1,7 +1,8 @@
 <!--
-    Read-only users for the local rig. Rendered by dev/local-rig.sh: the __*_PASSWORD__
-    placeholders are filled with values generated per run and written to dev/local/.env,
-    which is gitignored. Nothing here is a real credential.
+    Read-only users for the local rig. Rendered by dev/local-rig.sh once per node: the
+    __*_PASSWORD__ placeholders are filled with values generated per run and written to
+    dev/local/.env, which is gitignored, and __NODE_USER__ becomes monitor_a or monitor_b.
+    Nothing here is a real credential.
 
     The monitor profile caps itself at 2 threads / 6 GB / 5 s on purpose — the same limits
     the probing rules for the fleet, so the local rig cannot accidentally become a heavy
@@ -41,6 +42,17 @@
             <profile>r_redash</profile>
             <quota>default</quota>
         </r_redash>
+
+        <!-- This node's own login: monitor_a on ch-a, monitor_b on ch-b, each unknown to the
+             other node. A login per server, as `./dev/local-rig.sh credentials` writes them
+             into the credential file. (No double hyphen in here: XML comments forbid it.) -->
+        <__NODE_USER__>
+            <password>__NODE_PASSWORD__</password>
+            <networks><ip>::/0</ip></networks>
+            <profile>monitor</profile>
+            <quota>default</quota>
+            <access_management>0</access_management>
+        </__NODE_USER__>
 
         <!-- Rig-only: dev/local-rig.sh needs DDL and INSERTs to seed the testing database.
              The app never uses this one. -->
