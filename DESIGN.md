@@ -681,23 +681,27 @@ or from a slope over the last minutes of it.
   this was built from had five such jobs, 163 to 177 days old, under RUNNING). Each says why:
   *cancelled*, *over a day old*, or *no worker holds it*. One that ClickHouse still runs is
   marked so, and `⏎` goes to it.
-- **CLAUDE**, view 5 (`src/claude.rs`, `src/pty.rs`): the official `claude` command in a
-  pseudo-terminal, its screen emulated (`vt100`) and drawn under the header and the band, the
-  worst insight on the line between them. Signed in with the user's own plan; no API is called
-  from here, and `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of the
-  program's environment. Up to five sessions, numbered 5 to 9 after the views' 1 to 4, each its
-  own program, conversation and working directory, listed beside the pane like a terminal's
-  tabs, the one on screen framed — name (the user's, the title Claude sets, else the folder),
+- **SESSIONS**, view 5 (`src/claude.rs`, `src/pty.rs`): a program in a pseudo-terminal — the
+  official `claude`, `opencode`, or the user's shell — its screen emulated (`vt100`) and drawn
+  under the header and the band, the worst insight on the line between them. Each signed in
+  its own way, Claude with the user's own plan; no API is called from here, and
+  `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of every program's
+  environment. Up to five sessions, numbered 5 to 9 after the views' 1 to 4, each its own
+  program, conversation and working directory, listed beside the pane like a terminal's tabs,
+  the one on screen framed — what it runs, name (the user's, the title its program sets unless
+  that is only the program's name, else the folder),
   directory and git branch (read from `.git/HEAD`, a worktree's `.git` file followed, every few
   seconds) — on a narrow terminal a bar of tabs over it; a session that rings while it is not
   on screen is marked. A new session's folder is chosen in a picker shaped like a file
   explorer (`folders.rs`): clickable path, the folders here, a click goes in, a search below by
   name (breadth-first, six levels, bounded in folders read and in time, package and build
   folders skipped, on a thread of its own and dropped when a newer one starts) or a typed path
-  completed as a shell does. Every PTY is sized to the pane, so switching never shows a layout
-  for another size. The terminal queries a full-screen program makes (cursor position, device
-  attributes, default colours) are answered; `ctrl+z` is held back, since nothing in the pane
-  could resume a suspended program.
+  completed as a shell does; above it, what the session runs. Every PTY is sized to the pane,
+  so switching never shows a layout for another size. The terminal queries a full-screen
+  program makes (cursor position, device attributes, default colours) are answered, and the
+  rest (OpenCode asks for many more) left to time out as an older terminal would; `ctrl+z` is
+  held back from Claude and OpenCode, since nothing in the pane could resume them — a shell
+  gets it, for its own jobs.
 - **The job's SQL on view 2**: the cursor on a job opens its SQL under the row, as on view 1 —
   what ClickHouse runs when the stitch found it, the query as saved in Redash otherwise (an
   ad-hoc query outside ClickHouse has none: Redash's API keeps no text for it). `J` `K` scroll.
@@ -751,11 +755,12 @@ or from a slope over the last minutes of it.
   it.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
-- **§3 keys on view 5**: every key goes to Claude — `q`, the digits, `ctrl+c` — except `ctrl+\`,
-  after which a number goes to that tab (`1`–`4` a view, `5`–`9` a session), `n` `r` `x x` open,
-  rename and close sessions, `esc` goes back to Claude and `ctrl+\` again to the monitor; and
-  `F1`–`F9`, the same tabs with no key before them, for a terminal that keeps `ctrl+\`. From the
-  monitor, `5`–`9` or `ctrl+\` open Claude.
+- **§3 keys on view 5**: every key goes to the session — `q`, the digits, `ctrl+c` — except
+  `ctrl+\`, after which a number goes to that tab (`1`–`4` a view, `5`–`9` a session), `n` `r`
+  `x x` open, rename and close sessions (`c` `o` `t` open a Claude, OpenCode or terminal one),
+  `esc` goes back to the session and `ctrl+\` again to the monitor; and `F1`–`F9`, the same
+  tabs with no key before them, for a terminal that keeps `ctrl+\`. From the monitor, `5`–`9`
+  or `ctrl+\` open the sessions.
 - **§3 the mouse**, which v1 left out: a click opens a tab of the header, a session or a new
   one, and in the folder picker goes into a folder or back up the path; the wheel moves the
   cursor, and over Claude is its page up and down — or, when the program asked for mouse
@@ -764,8 +769,8 @@ or from a slope over the last minutes of it.
   event: into Claude as a paste, into `/` or the picker's search as text, and nowhere else —
   before, a paste was a stream of keys, and a `q` in it quit.
 - **Read-only** still describes everything the monitor does. View 5 is the user's own Claude
-  Code with its own permissions, as it would be in another terminal tab; the monitor only draws
-  it and carries its keys.
+  Code, OpenCode or shell with its own permissions, as it would be in another terminal tab;
+  the monitor only draws it and carries its keys.
 - **§2.8 view 2's layout**: the queues first, idle ones folded into one line; then RUNNING —
   the table already says how full the queue is, the running jobs are why — then WAITING (only
   when something waits), then STALE. No `failed/5m` column: the endpoint has no failure count,

@@ -1,6 +1,6 @@
-//! View 5: Claude Code's sessions — a list of them beside the screen of the one on it (a bar of
-//! tabs over it on a narrow terminal), drawn from its emulated terminal (`claude.rs`); and,
-//! while a new one is opened, the folder picker in the screen's place.
+//! View 5: the sessions — Claude Code, OpenCode, a shell — listed beside the screen of the one
+//! on it (a bar of tabs over it on a narrow terminal), drawn from its emulated terminal
+//! (`claude.rs`); and, while a new one is opened, the folder picker in the screen's place.
 //!
 //! Above them the header and the two band lines stay as on every view, and the line under the
 //! band names the worst thing in the fleet right now — so a node going red is seen without
@@ -8,7 +8,7 @@
 
 use super::widgets::{fit, rule, tone_spans, Cells};
 use crate::app::{App, Hit};
-use crate::claude::{Mode, PaneState, PickRow, Picker, Session, Sessions, MAX_SESSIONS};
+use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, MAX_SESSIONS};
 use crate::fmt;
 use crate::folders::Folder;
 use crate::insight::Insight;
@@ -51,15 +51,17 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     }
     app.viewport.hits.borrow_mut().push((area, Hit::Pane));
 
-    let program = app.claude.command.first().cloned().unwrap_or_default();
     let Some(session) = app.claude.current() else {
         message(frame, theme, area, vec![Line::from(vec![
-            Span::styled("no Claude session open · ", theme.muted()),
+            Span::styled("no session open · ", theme.muted()),
             Span::styled("⏎", theme.strong()),
-            Span::styled(" starts one", theme.muted()),
+            Span::styled(" starts Claude · ", theme.muted()),
+            Span::styled("ctrl+\\ n", theme.strong()),
+            Span::styled(" opens Claude, OpenCode or a terminal", theme.muted()),
         ])]);
         return;
     };
+    let program = app.claude.command_of(session.kind).first().cloned().unwrap_or_default();
     match &session.pane.state {
         PaneState::Idle | PaneState::Starting => {
             message(frame, theme, area, vec![
@@ -71,18 +73,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             ]);
         }
         PaneState::Failed(why) => {
-            message(frame, theme, area, vec![
-                Line::from(Span::styled(why.clone(), theme.sev(Severity::Warn))),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Claude Code runs here as it would in a terminal of its own, signed in with your Pro or Max plan — no API key.",
-                    theme.muted(),
-                )),
-                Line::from(Span::styled(
-                    "Install it, run `claude` once and sign in with /login, then press ⏎ here. CLAUDE_CMD chooses another command.",
-                    theme.muted(),
-                )),
-            ]);
+            let mut lines = vec![Line::from(Span::styled(why.clone(), theme.sev(Severity::Warn))), Line::from("")];
+            lines.extend(how_to_get(session.kind, &program).into_iter().map(|text| Line::from(Span::styled(text, theme.muted()))));
+            message(frame, theme, area, lines);
         }
         PaneState::Running => screen(frame, &session.pane, theme, area, true),
         PaneState::Exited(how) => {
@@ -93,6 +86,36 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             let bottom = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
             frame.render_widget(Paragraph::new(cells.line(area.width as usize, theme.selected())), bottom);
         }
+    }
+}
+
+/// What a session of `kind` is, and how to get its program when it would not start.
+fn how_to_get(kind: Kind, program: &str) -> [String; 2] {
+    match kind {
+        Kind::Claude => [
+            "Claude Code runs here as it would in a terminal of its own, signed in with your Pro or Max plan — no API key.".into(),
+            format!("Install it, run `claude` once and sign in with /login, then press ⏎ here. {} chooses another command.", kind.variable()),
+        ],
+        Kind::OpenCode => [
+            "OpenCode runs here as it would in a terminal of its own, signed in the way `opencode auth login` set it up — ANTHROPIC_API_KEY is not passed on.".into(),
+            format!(
+                "Install it (curl -fsSL https://opencode.ai/install | bash), sign in once with `opencode auth login`, then press ⏎ here. {} chooses another command.",
+                kind.variable()
+            ),
+        ],
+        Kind::Terminal => [
+            "A terminal runs your shell here, as a tab of its own would.".into(),
+            format!("`{program}` would not start — {} chooses another shell; ⏎ tries again.", kind.variable()),
+        ],
+    }
+}
+
+/// A kind's mark, in its colour: Claude's orange, OpenCode's white, a shell's green.
+fn kind_style(kind: Kind, theme: &Theme) -> Style {
+    match kind {
+        Kind::Claude => theme.claude(),
+        Kind::OpenCode => theme.strong(),
+        Kind::Terminal => theme.sev(Severity::Ok).add_modifier(Modifier::BOLD),
     }
 }
 
@@ -107,10 +130,10 @@ fn mark(session: &Session) -> &'static str {
     }
 }
 
-/// The sessions as cards, like a terminal's tab list: Claude's mark, the name — the user's,
-/// what Claude says it is on, or the folder — and the number that picks it; under it the
-/// folder and its branch. The card on screen is framed, and so is a new one while its folder
-/// is chosen.
+/// The sessions as cards, like a terminal's tab list: the mark of what it runs (Claude, OpenCode,
+/// a shell), the name — the user's, what the program says it is on, or the folder — and the
+/// number that picks it; under it the folder and its branch. The card on screen is framed,
+/// and so is a new one while its folder is chosen.
 fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let sessions = &app.claude;
     // A column short of the rule beside it, so a frame never runs into it.
@@ -157,7 +180,7 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             right.push(number, theme.faint());
         }
         let mut first = Cells::new();
-        first.push("✻  ", if ended { theme.faint() } else { theme.claude() });
+        first.push(format!("{}  ", session.kind.glyph()), if ended { theme.faint() } else { kind_style(session.kind, theme) });
         let room = inner.saturating_sub(first.width() + right.width() + 1);
         match &sessions.mode {
             Mode::Naming(name) if index == sessions.active => {
@@ -286,7 +309,8 @@ fn session_bar(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
             cells.push(" ", theme.tab_active());
         } else {
             let mark = mark(session);
-            let label = format!(" {number} {}{}{mark} ", fmt::truncate(&session.label(), 18), if mark.is_empty() { "" } else { " " });
+            let glyph = session.kind.glyph();
+            let label = format!(" {number} {glyph} {}{}{mark} ", fmt::truncate(&session.label(), 18), if mark.is_empty() { "" } else { " " });
             let style = if on_screen {
                 theme.tab_active()
             } else if session.pane.attention {
@@ -330,15 +354,34 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
 
     // What this is, and the way out.
     let mut head = Cells::new();
-    head.push("✻ ", theme.claude());
-    head.push("New session", theme.strong());
-    head.push("  ·  where should Claude work?", theme.muted());
+    head.push(format!("{} ", picker.kind.glyph()), kind_style(picker.kind, theme));
+    let what = match picker.kind {
+        Kind::Terminal => "New terminal".to_string(),
+        kind => format!("New {} session", kind.title()),
+    };
+    head.push(what, theme.strong());
+    head.push("  ·  where should it work?", theme.muted());
     let cancel = " ✕ cancel ";
     let at = width.saturating_sub(fmt::width(cancel));
     head.pad_to(at);
     head.push(cancel, theme.keycap());
     lines.push(head.line(width, Style::default()));
     hits.push((Rect::new(area.x + at as u16, area.y, fmt::width(cancel) as u16, 1), Hit::Cancel));
+    lines.push(Line::from(""));
+
+    // What it will run, a click to change.
+    let y = area.y + lines.len() as u16;
+    let mut kinds = Cells::new();
+    kinds.push(" run  ", theme.muted());
+    for kind in Kind::ALL {
+        let chip = format!(" {} {} ", kind.glyph(), kind.title());
+        let x = area.x + kinds.width() as u16;
+        hits.push((Rect::new(x, y, fmt::width(&chip) as u16, 1), Hit::Kind(kind)));
+        kinds.push(chip, if kind == picker.kind { theme.tab_active() } else { theme.keycap() });
+        kinds.push("  ", Style::default());
+    }
+    kinds.push(" shift+tab switches", theme.faint());
+    lines.push(kinds.line(width, Style::default()));
     lines.push(Line::from(""));
 
     // The search, in a box of its own; what it found so far on its right.

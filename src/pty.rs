@@ -36,11 +36,10 @@ impl PtyProcess {
     /// Start `command` in a PTY of `rows` × `cols`, in `dir` — the project Claude works on.
     /// Its events carry `session`.
     pub fn spawn(session: u64, command: &[String], dir: &Path, rows: u16, cols: u16, tx: UnboundedSender<Event>) -> Result<Self, String> {
-        let program = command.first().ok_or("CLAUDE_CMD is empty")?;
+        let program = command.first().ok_or("no command to run")?;
+        // How to install it is the session's to say: it knows what kind of program this is.
         if find_program(program).is_none() {
-            return Err(format!(
-                "{program} is not installed here (not on PATH) — install Claude Code, then sign in once with /login and your Pro or Max account"
-            ));
+            return Err(format!("{program} is not installed here (not on PATH)"));
         }
         let size = PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 };
         let pair = native_pty_system().openpty(size).map_err(|e| format!("no pseudo-terminal: {e}"))?;

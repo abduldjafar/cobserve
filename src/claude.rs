@@ -1,16 +1,16 @@
-//! View 5: Claude Code in panes (DESIGN.md §13).
+//! View 5: sessions in panes (DESIGN.md §13) — Claude Code, OpenCode, or a shell.
 //!
-//! The monitor runs `claude` — Claude Code, signed in with the user's own Pro or Max plan — in
-//! pseudo-terminals and draws one of them in the body of view 5, under the header and the two
-//! band lines, so the fleet and the Redash queue stay in sight while Claude does whatever else
-//! needs doing. Nothing here talks to an API: the official command does everything, the way it
-//! would in a terminal tab of its own.
+//! The monitor runs `claude` — Claude Code, signed in with the user's own Pro or Max plan —
+//! `opencode`, or the user's shell in pseudo-terminals and draws one of them in the body of
+//! view 5, under the header and the two band lines, so the fleet and the Redash queue stay in
+//! sight while something else gets done. Nothing here talks to an API: each program does
+//! everything itself, the way it would in a terminal tab of its own.
 //!
-//! There can be several sessions, each its own `claude` with its own conversation, on a bar of
-//! tabs numbered on from the header's — the views are 1 to 4, the sessions 5 to 9 — and a
-//! session can be renamed. `ctrl+\` is the one key Claude does not get: after it a number goes
-//! to that view or session, `n` `r` `x` open, rename and close sessions, and `ctrl+\` again goes
-//! back to the monitor.
+//! There can be several sessions, each its own program with its own conversation, listed
+//! beside the pane and numbered on from the header's tabs — the views are 1 to 4, the sessions
+//! 5 to 9 — and a session can be renamed. `ctrl+\` is the one key a session does not get:
+//! after it a number goes to that view or session, `n` `r` `x` open, rename and close
+//! sessions (`c` `o` `t` open one of a kind), and `ctrl+\` again goes back to the monitor.
 //!
 //! This module is the sessions' state — emulated screens, bytes owed to each program, what each
 //! program asked of its terminal — and the folder picker's, and is pure like the rest of `App`.
@@ -31,6 +31,100 @@ pub const FIRST_NUMBER: usize = 5;
 pub const MAX_SESSIONS: usize = 10 - FIRST_NUMBER;
 /// A name longer than this would push the other tabs off the bar.
 pub const NAME_MAX: usize = 24;
+
+/// What a session runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Kind {
+    /// Claude Code, signed in with the user's own plan.
+    #[default]
+    Claude,
+    /// OpenCode, signed in the way `opencode auth login` set it up.
+    OpenCode,
+    /// The user's own shell.
+    Terminal,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 3] = [Kind::Claude, Kind::OpenCode, Kind::Terminal];
+
+    /// Its mark in the list of sessions.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Kind::Claude => "✻",
+            Kind::OpenCode => "▣",
+            Kind::Terminal => "❯",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Kind::Claude => "Claude",
+            Kind::OpenCode => "OpenCode",
+            Kind::Terminal => "Terminal",
+        }
+    }
+
+    /// Who the keys go to, for the footer.
+    pub fn listener(self) -> &'static str {
+        match self {
+            Kind::Claude => "Claude",
+            Kind::OpenCode => "OpenCode",
+            Kind::Terminal => "the shell",
+        }
+    }
+
+    /// The variable that chooses its command.
+    pub fn variable(self) -> &'static str {
+        match self {
+            Kind::Claude => "CLAUDE_CMD",
+            Kind::OpenCode => "OPENCODE_CMD",
+            Kind::Terminal => "SHELL_CMD",
+        }
+    }
+
+    /// The next kind round, for shift+tab in the picker.
+    pub fn next(self) -> Kind {
+        match self {
+            Kind::Claude => Kind::OpenCode,
+            Kind::OpenCode => Kind::Terminal,
+            Kind::Terminal => Kind::Claude,
+        }
+    }
+
+    /// What its program puts in its title before it has anything to say: its own name, which
+    /// tells no two sessions apart.
+    fn own_title(self, title: &str) -> bool {
+        match self {
+            Kind::Claude => title.eq_ignore_ascii_case("claude code") || title.eq_ignore_ascii_case("claude"),
+            Kind::OpenCode => title.eq_ignore_ascii_case("opencode"),
+            Kind::Terminal => false,
+        }
+    }
+}
+
+/// The command each kind runs, with its arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commands {
+    pub claude: Vec<String>,
+    pub opencode: Vec<String>,
+    pub terminal: Vec<String>,
+}
+
+impl Default for Commands {
+    fn default() -> Self {
+        Self { claude: vec!["claude".into()], opencode: vec!["opencode".into()], terminal: vec!["sh".into()] }
+    }
+}
+
+impl Commands {
+    pub fn of(&self, kind: Kind) -> &[String] {
+        match kind {
+            Kind::Claude => &self.claude,
+            Kind::OpenCode => &self.opencode,
+            Kind::Terminal => &self.terminal,
+        }
+    }
+}
 
 /// Where the pane is in its life.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,10 +279,11 @@ impl ClaudePane {
     }
 }
 
-/// A session of view 5: one `claude`, where it works, and the name it goes by.
+/// A session of view 5: one program, where it works, and the name it goes by.
 pub struct Session {
     /// Stable for the session's life; the PTY's events carry it.
     pub id: u64,
+    pub kind: Kind,
     /// What the user called it (`r`). Until then the list shows what Claude is working on,
     /// from its title.
     pub name: Option<String>,
@@ -206,16 +301,16 @@ impl Session {
         trimmed.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(trimmed).to_string()
     }
 
-    /// The tab's text: the name, else what Claude says it is working on (its title without
-    /// the leading glyph), else the folder — Claude's title before there is a task is only
-    /// its own name, which tells no two sessions apart.
+    /// The tab's text: the name, else what the program says it is working on (its title
+    /// without a leading glyph), else the folder — a title that is only the program's own
+    /// name tells no two sessions apart.
     pub fn label(&self) -> String {
         if let Some(name) = &self.name {
             return name.clone();
         }
         let title = self.pane.title.as_deref().map(|t| t.trim_start_matches(|c: char| !c.is_alphanumeric()).trim());
         match title {
-            Some(title) if !title.is_empty() && !title.eq_ignore_ascii_case("claude code") => title.to_string(),
+            Some(title) if !title.is_empty() && !self.kind.own_title(title) => title.to_string(),
             _ => self.dir_label(),
         }
     }
@@ -226,6 +321,8 @@ impl Session {
 /// `folders.rs` on a thread `main.rs` starts; this is what was asked and what came back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Picker {
+    /// What the session will run.
+    pub kind: Kind,
     /// The folder looked at: absolute, as the disk has it once the first answer is in.
     pub dir: PathBuf,
     /// The search, as typed: a name to find below `dir`, or a path.
@@ -265,8 +362,9 @@ fn next_generation() -> u64 {
 }
 
 impl Picker {
-    pub fn new(dir: PathBuf) -> Self {
+    pub fn new(dir: PathBuf, kind: Kind) -> Self {
         Self {
+            kind,
             dir,
             query: String::new(),
             folders: Vec::new(),
@@ -433,8 +531,8 @@ pub struct Sessions {
     pub list: Vec<Session>,
     pub active: usize,
     pub mode: Mode,
-    /// The command and its arguments: `CLAUDE_CMD`, `claude` by default.
-    pub command: Vec<String>,
+    /// What each kind runs: `CLAUDE_CMD`, `OPENCODE_CMD`, `SHELL_CMD`.
+    pub commands: Commands,
     /// The size view 5 last drew a pane at; `main.rs` sizes every PTY to it, so a session
     /// switched to is already the right size.
     pub want_size: Cell<(u16, u16)>,
@@ -458,7 +556,7 @@ impl Default for Sessions {
             list: Vec::new(),
             active: 0,
             mode: Mode::Typing,
-            command: vec!["claude".to_string()],
+            commands: Commands::default(),
             want_size: Cell::new((24, 80)),
             back_to: View::Nodes,
             closing: false,
@@ -488,9 +586,9 @@ impl Sessions {
         self.current().is_some_and(|s| s.pane.is_running())
     }
 
-    /// A new session working in `dir` (the monitor's own directory when empty), started and
-    /// put on screen. `None` when every number is taken.
-    pub fn open_new(&mut self, dir: &str) -> Option<u64> {
+    /// A new session of `kind` working in `dir` (the monitor's own directory when empty),
+    /// started and put on screen. `None` when every number is taken.
+    pub fn open_new(&mut self, dir: &str, kind: Kind) -> Option<u64> {
         if self.list.len() >= MAX_SESSIONS {
             return None;
         }
@@ -499,7 +597,7 @@ impl Sessions {
         let mut pane = ClaudePane::default();
         pane.start(self.want_size.get());
         let dir = if dir.trim().is_empty() { self.default_dir.clone() } else { dir.trim().to_string() };
-        self.list.push(Session { id, name: None, dir, branch: None, pane });
+        self.list.push(Session { id, kind, name: None, dir, branch: None, pane });
         self.select(self.list.len() - 1);
         Some(id)
     }
@@ -508,6 +606,16 @@ impl Sessions {
     /// monitor's.
     pub fn next_dir(&self) -> String {
         self.current().map_or_else(|| self.default_dir.clone(), |s| s.dir.clone())
+    }
+
+    /// What the next session would run: what the one on screen runs, else Claude.
+    pub fn next_kind(&self) -> Kind {
+        self.current().map_or(Kind::Claude, |s| s.kind)
+    }
+
+    /// The command a session of `kind` runs.
+    pub fn command_of(&self, kind: Kind) -> &[String] {
+        self.commands.of(kind)
     }
 
     /// The mouse over the pane, for the program on screen: as the program asked for it when it
@@ -799,7 +907,7 @@ mod tests {
     #[test]
     fn the_wheel_scrolls_claude_a_page_per_turn_unless_it_asked_for_the_mouse() {
         let mut sessions = Sessions::default();
-        sessions.open_new("").unwrap();
+        sessions.open_new("", Kind::Claude).unwrap();
         sessions.current_mut().unwrap().pane.state = PaneState::Running;
         sessions.pane_origin.set((5, 30));
         // Three ticks of the wheel are one turn: one page.
@@ -824,7 +932,7 @@ mod tests {
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
         let work = home.join("work");
         let folder = |name: &str| Folder { path: work.join(name), shown: name.into(), hit: None, branch: None };
-        let mut picker = Picker::new(work.clone());
+        let mut picker = Picker::new(work.clone(), Kind::Claude);
         let first = picker.lookup().expect("the first look");
         assert_eq!((first.dir.as_path(), first.query.as_str()), (work.as_path(), ""));
         assert!(picker.lookup().is_none(), "asked once");
@@ -856,7 +964,26 @@ mod tests {
         assert_eq!(picker.cursor, 0, "the cursor stays in the list");
         picker.step(isize::MAX);
         assert_eq!(picker.cursor, picker.rows().len() - 1);
-        assert_eq!(names(&Picker::new(PathBuf::from("/opt/tools"))), ["/", "opt", "tools"]);
+        assert_eq!(names(&Picker::new(PathBuf::from("/opt/tools"), Kind::Terminal)), ["/", "opt", "tools"]);
+    }
+
+    #[test]
+    fn a_session_runs_what_its_kind_says_and_goes_by_what_it_is_on() {
+        let commands = Commands { opencode: vec!["opencode".into(), "--model".into(), "x/y".into()], ..Commands::default() };
+        let mut sessions = Sessions { default_dir: "~/work/cobserve".into(), commands, ..Sessions::default() };
+        assert_eq!(sessions.next_kind(), Kind::Claude, "with nothing open, Claude");
+        sessions.open_new("", Kind::OpenCode).unwrap();
+        assert_eq!(sessions.next_kind(), Kind::OpenCode, "a new one runs what the one on screen runs");
+        assert_eq!(sessions.command_of(Kind::OpenCode), ["opencode", "--model", "x/y"]);
+        assert_eq!(sessions.command_of(Kind::Terminal), ["sh"]);
+        // OpenCode's title before a task is only its name; a shell's says what runs in it.
+        sessions.current_mut().unwrap().pane.feed(b"\x1b]0;OpenCode\x07", true);
+        assert_eq!(sessions.current().unwrap().label(), "cobserve");
+        sessions.open_new("", Kind::Terminal).unwrap();
+        sessions.current_mut().unwrap().pane.feed(b"\x1b]0;vim notes.md\x07", true);
+        assert_eq!(sessions.current().unwrap().label(), "vim notes.md");
+        assert_eq!(Kind::ALL.map(Kind::glyph), ["✻", "▣", "❯"]);
+        assert_eq!(Kind::ALL.map(Kind::next), [Kind::OpenCode, Kind::Terminal, Kind::Claude]);
     }
 
     #[test]
@@ -864,8 +991,8 @@ mod tests {
         let mut sessions = Sessions::default();
         sessions.want_size.set((30, 100));
         sessions.default_dir = "~/work/cobserve".into();
-        let first = sessions.open_new("").unwrap();
-        let second = sessions.open_new(" ~/work/airflow ").unwrap();
+        let first = sessions.open_new("", Kind::Claude).unwrap();
+        let second = sessions.open_new(" ~/work/airflow ", Kind::Claude).unwrap();
         assert_eq!(sessions.list[0].dir, "~/work/cobserve", "the monitor's own directory by default");
         assert_eq!((sessions.list[1].dir.as_str(), sessions.list[1].dir_label().as_str()), ("~/work/airflow", "airflow"));
         assert_eq!(sessions.next_dir(), "~/work/airflow", "a new one starts where the one on screen works");
@@ -907,9 +1034,9 @@ mod tests {
         sessions.close_current();
         assert!(sessions.current().is_none());
         for _ in 0..MAX_SESSIONS {
-            sessions.open_new("").unwrap();
+            sessions.open_new("", Kind::Claude).unwrap();
         }
-        assert!(sessions.open_new("").is_none(), "5 to 9: five sessions, as many as a digit can pick");
+        assert!(sessions.open_new("", Kind::Claude).is_none(), "5 to 9: five sessions, as many as a digit can pick");
         assert_eq!(sessions.list.len(), 5);
     }
 }

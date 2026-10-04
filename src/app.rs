@@ -3,7 +3,7 @@
 //! Everything the UI draws lives here or in the model; sources push `Event`s in and the loop
 //! applies them. Nothing in this file knows that ClickHouse or Redash exist.
 
-use crate::claude::{Mode, PaneState, PickRow, Picker, Sessions};
+use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Sessions};
 use crate::folders::Found;
 use crate::history::{self, History};
 use crate::insight::{self, Insight, Subject};
@@ -48,7 +48,8 @@ pub enum View {
     Map,
     /// What changed, newest first (`tape.rs`).
     Tape,
-    /// Claude Code in a pane, the monitor's band above it (`claude.rs`).
+    /// Sessions — Claude Code, OpenCode, a shell — in a pane, the monitor's band above it
+    /// (`claude.rs`).
     Claude,
 }
 
@@ -59,7 +60,7 @@ impl View {
             View::Queue => "QUEUE",
             View::Map => "MAP",
             View::Tape => "TAPE",
-            View::Claude => "CLAUDE",
+            View::Claude => "SESSIONS",
         }
     }
 
@@ -129,6 +130,8 @@ pub enum Hit {
     Crumb(usize),
     /// The picker's way out.
     Cancel,
+    /// What the picker will open.
+    Kind(Kind),
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -366,7 +369,7 @@ impl App {
         self.queue_selection = None;
         self.claude.mode = Mode::Typing;
         if self.claude.list.is_empty() {
-            self.claude.open_new("");
+            self.claude.open_new("", Kind::Claude);
         } else {
             let active = self.claude.active;
             self.claude.select(active);
@@ -394,14 +397,15 @@ impl App {
         match self.claude.current_mut() {
             Some(session) => session.pane.start(size),
             None => {
-                self.claude.open_new("");
+                self.claude.open_new("", Kind::Claude);
             }
         }
     }
 
     /// Ask where a new session should work — the folder picker, starting where the one on
-    /// screen works — unless every number is taken.
-    pub fn ask_new_session(&mut self) {
+    /// screen works, for a session of `kind` or of the kind on screen — unless every number
+    /// is taken.
+    pub fn ask_new_session(&mut self, kind: Option<Kind>) {
         if self.claude.list.len() >= crate::claude::MAX_SESSIONS {
             self.notice = Some((
                 format!("sessions are 5 to 9: {} is as many as there are numbers for — close one with x", crate::claude::MAX_SESSIONS),
@@ -411,7 +415,8 @@ impl App {
             return;
         }
         let dir = crate::pty::expand(&self.claude.next_dir());
-        self.claude.mode = Mode::Opening(Picker::new(dir));
+        let kind = kind.unwrap_or_else(|| self.claude.next_kind());
+        self.claude.mode = Mode::Opening(Picker::new(dir, kind));
     }
 
     /// The folder picker's keys: ↑ ↓ choose, ⏎ opens the session in the folder under the
@@ -424,6 +429,8 @@ impl App {
         match key.code {
             // A search first, then the picker.
             KeyCode::Esc if picker.searching() => picker.clear_query(),
+            // What it will open: Claude, OpenCode, a terminal, round.
+            KeyCode::BackTab => picker.kind = picker.kind.next(),
             KeyCode::Esc => self.claude.mode = Mode::Typing,
             KeyCode::Enter => {
                 let row = picker.at_cursor();
@@ -464,20 +471,21 @@ impl App {
         let Some(row) = row else {
             return;
         };
+        let kind = picker.kind;
         match (row, picker.path_of(row)) {
             (PickRow::Up, _) => picker.up(),
-            (PickRow::Here, Some(dir)) if open => self.open_in(&dir),
-            (PickRow::Folder(_), Some(dir)) if open => self.open_in(&dir),
+            (PickRow::Here, Some(dir)) if open => self.open_in(&dir, kind),
+            (PickRow::Folder(_), Some(dir)) if open => self.open_in(&dir, kind),
             (PickRow::Folder(_), Some(dir)) => picker.go_to(dir),
             _ => {}
         }
     }
 
-    /// A new session working in `dir`, on screen.
-    fn open_in(&mut self, dir: &std::path::Path) {
+    /// A new session of `kind` working in `dir`, on screen.
+    fn open_in(&mut self, dir: &std::path::Path, kind: Kind) {
         self.claude.mode = Mode::Typing;
-        if self.claude.open_new(&crate::pty::tilde(dir)).is_none() {
-            self.ask_new_session();
+        if self.claude.open_new(&crate::pty::tilde(dir), kind).is_none() {
+            self.ask_new_session(Some(kind));
         }
     }
 
@@ -506,7 +514,7 @@ impl App {
                 Some(Hit::NewSession) if matches!(self.claude.mode, Mode::Opening(_)) => {}
                 Some(Hit::NewSession) => {
                     self.open_claude();
-                    self.ask_new_session();
+                    self.ask_new_session(None);
                 }
                 // A folder is gone into with a click; the first row opens the session there.
                 Some(Hit::Pick(row)) => self.pick(Some(row), row == PickRow::Here),
@@ -518,6 +526,11 @@ impl App {
                     }
                 }
                 Some(Hit::Cancel) => self.claude.mode = Mode::Typing,
+                Some(Hit::Kind(kind)) => {
+                    if let Mode::Opening(picker) = &mut self.claude.mode {
+                        picker.kind = kind;
+                    }
+                }
                 Some(Hit::Pane) | None => {}
             },
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -574,7 +587,11 @@ impl App {
             }
             KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => self.claude.step(false),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => self.claude.step(true),
-            KeyCode::Char('n') | KeyCode::Char('c') => self.ask_new_session(),
+            // A new session: of the kind on screen, or Claude, OpenCode, a terminal.
+            KeyCode::Char('n') => self.ask_new_session(None),
+            KeyCode::Char('c') => self.ask_new_session(Some(Kind::Claude)),
+            KeyCode::Char('o') => self.ask_new_session(Some(Kind::OpenCode)),
+            KeyCode::Char('t') => self.ask_new_session(Some(Kind::Terminal)),
             KeyCode::Char('r') => {
                 if let Some(name) = self.claude.current().map(|s| s.name.clone().unwrap_or_default()) {
                     self.claude.mode = Mode::Naming(name);
@@ -1115,12 +1132,15 @@ impl App {
                 }
                 Mode::Typing => {}
             }
-            // With Claude running, every other key is Claude's — q, the digits and ctrl+c
+            // With a program running, every other key is its — q, the digits and ctrl+c
             // included: it is a terminal, and a terminal does not keep keys for itself.
             if let Some(session) = self.claude.current_mut().filter(|s| s.pane.is_running()) {
-                if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('z') | KeyCode::Char('Z')) {
-                    // Suspended, Claude would freeze: the pane has no shell around it to say `fg`.
-                    self.notice = Some(("ctrl+z is not passed on — nothing here could bring Claude back".to_string(), SystemTime::now()));
+                let suspend = key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('z') | KeyCode::Char('Z'));
+                if suspend && session.kind != Kind::Terminal {
+                    // Suspended, it would freeze: the pane has no shell around it to say `fg`.
+                    // A shell's own jobs are another thing — there ctrl+z is the shell's.
+                    let who = session.kind.title();
+                    self.notice = Some((format!("ctrl+z is not passed on — nothing here could bring {who} back"), SystemTime::now()));
                     return;
                 }
                 session.pane.key(&key);
@@ -2213,6 +2233,50 @@ mod tests {
         assert_eq!(app.claude.mode, Mode::Typing);
         assert_eq!(app.claude.list.len(), 1, "nothing opened");
         assert!(pane(&mut app).take_outbox().is_empty(), "and nothing typed into Claude");
+    }
+
+    #[test]
+    fn ctrl_backslash_c_o_t_open_claude_opencode_or_a_terminal() {
+        let mut app = app_with_fake();
+        app.claude.default_dir = "~/work/cobserve".into();
+        app.open_claude();
+        assert_eq!(app.claude.current().unwrap().kind, crate::claude::Kind::Claude, "the first visit is Claude");
+        pane(&mut app).state = PaneState::Running;
+        let picking = |app: &App| match &app.claude.mode {
+            Mode::Opening(picker) => picker.kind,
+            other => panic!("not picking: {other:?}"),
+        };
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('o')));
+        assert_eq!(picking(&app), crate::claude::Kind::OpenCode);
+        app.update(key(KeyCode::Enter));
+        assert_eq!(app.claude.current().unwrap().kind, crate::claude::Kind::OpenCode);
+        pane(&mut app).state = PaneState::Running;
+        app.update(ctrl('z'));
+        assert!(pane(&mut app).take_outbox().is_empty(), "suspended, OpenCode could not come back either");
+        assert!(app.notice().is_some_and(|n| n.contains("OpenCode")));
+
+        // n: the kind on screen; shift+tab: the next one; a click: that one.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('n')));
+        assert_eq!(picking(&app), crate::claude::Kind::OpenCode);
+        app.update(Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)));
+        assert_eq!(picking(&app), crate::claude::Kind::Terminal);
+        app.viewport.hits.borrow_mut().push((Rect::new(10, 3, 12, 1), Hit::Kind(crate::claude::Kind::Claude)));
+        app.update(Event::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 12, row: 3, modifiers: KeyModifiers::NONE }));
+        assert_eq!(picking(&app), crate::claude::Kind::Claude);
+        app.update(key(KeyCode::Esc));
+
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('t')));
+        app.update(key(KeyCode::Enter));
+        assert_eq!(app.claude.current().unwrap().kind, crate::claude::Kind::Terminal);
+        pane(&mut app).state = PaneState::Running;
+        app.update(ctrl('z'));
+        assert_eq!(pane(&mut app).take_outbox(), [0x1a], "in a shell ctrl+z is the shell's, for its jobs");
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('c')));
+        assert_eq!(picking(&app), crate::claude::Kind::Claude);
     }
 
     #[test]

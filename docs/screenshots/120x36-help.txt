@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────── ● LIVE 2s · 08:18:18 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────── ● LIVE 2s · 14:46:54 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.8% 283/768 GiB          ▅   CPU ██▊        27.4% 53/192 cores          ▅  │
 │ REDASH  19 waiting        █ · oldest 1m55s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
@@ -13,24 +13,24 @@
 │ ▎▸ clickhous│          u  pivot node ↔ user: who is burning the fleet                                  │1    5m20s ✕ │
 │  ▸ clickhous│          s  sort: pressure, memory, CPU, name                                            │0        —   │
 │  ▸ clickhous│          /  filter by node, user, person, SQL or query id · esc clears                   │2      12s   │
-│  ▸ 4 healthy│  1 2 3 4 5  views: nodes · queue · map · tape · claude — 5 to 9 are Claude's sessions    │   ␣ unfold  │
-│             │     ctrl+\  Claude · there, then 1-4 a view, 5-9 a session, n new, r rename, x close     │             │
-│             │    F1 … F9  the same tabs from anywhere, Claude's screen too · or click them             │             │
+│  ▸ 4 healthy│  1 2 3 4 5  views: nodes · queue · map · tape · sessions — 5 to 9 are the sessions       │   ␣ unfold  │
+│             │     ctrl+\  the sessions · there, then 1-4 a view, 5-9 a session, n new (c o t: Claude,  │             │
+│             │             OpenCode, a terminal), r rename, x close                                     │             │
+│             │    F1 … F9  the same tabs from anywhere, a session's screen too · or click them          │             │
 │             │          p  pause: the numbers stop, the clock does not                                  │             │
 │             │  q  ctrl-c  quit                                                                         │             │
 │             │─ ON SCREEN ────────────────────────────────────────────────────────────────────────────  │             │
 │             │        ✖ ▲  critical (red) · warning (amber), by DESIGN.md §7                            │             │
-│             │          ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                      │             │
-│ ─ INSIGHTS ·│          ↯  node not answering — its numbers are unknown, not zero                       │──────────── │
-│  ✖ clickhous│   ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                         │             │
+│ ─ INSIGHTS ·│          ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                      │──────────── │
+│  ✖ clickhous│          ↯  node not answering — its numbers are unknown, not zero                       │             │
+│  ▲ clickhous│   ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                         │             │
 │  ▲ clickhous│      ▁▂▃▅▇  the last 4 minutes, each cell its worst moment                               │             │
-│  ▲ clickhous│        NEW  joined the fleet during this session                                         │             │
-│  ▲ Redash   │                                                                                          │             │
-│  ▲ Redash #7│read-only by design: nothing here can kill or change a query                              │             │
-│  ▲ Redash #8│not in this pass: k kill, a ask Klikas, mouse                                             │             │
-│ ─ clickhouse╰──────────────────────────────────────────────────────────────────────────────────────────╯──────────── │
-│ MEM 58.7/64 GiB  91.7%         ▅ ↑ +2.4%/min    CPU 15.8/16 cores  99.0%         ▇ ↑ +33.9%/min                      │
+│  ▲ Redash   │        NEW  joined the fleet during this session                                         │             │
+│  ▲ Redash #7│                                                                                          │             │
+│  ▲ Redash #8│read-only by design: nothing here can kill or change a query                              │             │
+│ ─ clickhouse│not in this pass: k kill, a ask Klikas, mouse                                             │──────────── │
+│ MEM 58.7/64 ╰──────────────────────────────────────────────────────────────────────────────────────────╯             │
 │ memory: queries 45.6% + server 46.1% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 5.3 GiB = 0.2× a 24.0 GiB query  │
-│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 08:18:38 UTC                             │
+│ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 14:47:14 UTC                             │
 │  ?  close   any other key goes back                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 1029 ms · read-only ╯

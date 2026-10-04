@@ -344,7 +344,9 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
     }
 
     // What follows the keys, when there is room for it.
-    let mut tail = None;
+    let mut tail: Option<String> = None;
+    // What the session on screen runs, for what its keys say.
+    let kind = app.claude.current().map_or(crate::claude::Kind::Claude, |s| s.kind);
     let keys: &[(&str, &str)] = match app.view {
         View::Nodes if app.focus == Focus::Insights => &[
             ("↑↓", "choose"),
@@ -397,11 +399,11 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("esc", "cancel"),
         ],
         View::Claude if matches!(&app.claude.mode, crate::claude::Mode::Opening(p) if p.searching()) => {
-            tail = Some("a click on a folder goes into it");
+            tail = Some("a click on a folder goes into it".into());
             &[("↑↓", "choose"), ("⏎", "open the session there"), ("→", "go in"), ("esc", "clear the search")]
         }
         View::Claude if matches!(app.claude.mode, crate::claude::Mode::Opening(_)) => {
-            tail = Some("type to search · a click on a folder goes into it");
+            tail = Some("type to search · a click on a folder goes into it".into());
             &[("↑↓", "choose"), ("⏎", "open the session there"), ("→", "go in"), ("←", "up"), ("esc", "cancel")]
         }
         View::Claude if app.claude.mode == crate::claude::Mode::Bar => {
@@ -423,7 +425,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             // Every other key is Claude's; the one that is not leads the bar.
             cells.push(" ctrl+\\ ", theme.keycap());
             cells.push(" then", theme.muted());
-            tail = Some("every other key goes to Claude");
+            tail = Some(format!("every other key goes to {}", kind.listener()));
             &[
                 ("1-4", "views"),
                 ("5-9", "sessions"),
@@ -433,13 +435,11 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
                 ("F1-F9", "any tab"),
             ]
         }
-        View::Claude => &[
-            ("⏎", "start Claude"),
-            ("ctrl+\\", "sessions"),
-            ("1", "nodes"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
+        View::Claude => match kind {
+            crate::claude::Kind::Claude => &[("⏎", "start Claude"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+            crate::claude::Kind::OpenCode => &[("⏎", "start OpenCode"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+            crate::claude::Kind::Terminal => &[("⏎", "start the shell"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+        },
     };
     for (key, label) in keys {
         let mut piece = Cells::new();
@@ -472,9 +472,10 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("u", "pivot node ↔ user: who is burning the fleet"),
     ("s", "sort: pressure, memory, CPU, name"),
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
-    ("1 2 3 4 5", "views: nodes · queue · map · tape · claude — 5 to 9 are Claude's sessions"),
-    ("ctrl+\\", "Claude · there, then 1-4 a view, 5-9 a session, n new, r rename, x close"),
-    ("F1 … F9", "the same tabs from anywhere, Claude's screen too · or click them"),
+    ("1 2 3 4 5", "views: nodes · queue · map · tape · sessions — 5 to 9 are the sessions"),
+    ("ctrl+\\", "the sessions · there, then 1-4 a view, 5-9 a session, n new (c o t: Claude,"),
+    ("", "OpenCode, a terminal), r rename, x close"),
+    ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
     ("p", "pause: the numbers stop, the clock does not"),
     ("q  ctrl-c", "quit"),
 ];
