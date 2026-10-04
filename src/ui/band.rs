@@ -124,7 +124,10 @@ pub fn queue_strip(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         match app.queue.error.as_deref() {
             Some(crate::model::QUEUE_NOT_CONFIGURED) => {
                 cells.push("not configured", theme.muted());
-                cells.push(" · set REDASH_URL and REDASH_ADMIN_API_KEY to see the queue", theme.faint());
+                cells.push(
+                    " · add redash: to the --credential file (or set REDASH_URL, REDASH_ADMIN_API_KEY)",
+                    theme.faint(),
+                );
             }
             Some(crate::model::QUEUE_NOT_POLLED) => {
                 cells.push("connecting…", theme.muted());

@@ -518,8 +518,8 @@ fn node_changes(before: &NodeState, now: &NodeState, node: &NodeView<'_>, at: f6
                     .node(name)
                     .plain(" ")
                     .sev(node.node.down_word(), Severity::Crit)
-                    .muted(match &node.node.unreachable_reason {
-                        Some(reason) => format!(" — {reason}"),
+                    .muted(match node.node.down_detail() {
+                        Some(detail) => format!(" — {detail}"),
                         None => String::new(),
                     }),
             ));

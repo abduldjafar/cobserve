@@ -5,7 +5,9 @@
 //! numbers — never as zeros (§2.6).
 
 use crate::config::{ClickHouseConfig, Credentials};
-use crate::model::{attribution_from_sql, FleetSnapshot, NodeSnapshot, QueryRow, NO_LOGIN};
+use crate::model::{
+    attribution_from_sql, FleetSnapshot, NodeSnapshot, QueryRow, LOGIN_REFUSED, NO_ACCESS, NO_LOGIN,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -601,9 +603,10 @@ impl ClickHouseSource {
     }
 }
 
-/// A server's refusal, in words: a refused login names the user (never the password), the
-/// rest keep ClickHouse's first line. ClickHouse answers a wrong password with 403 and
-/// `Code: 516 … (AUTHENTICATION_FAILED)`, a missing one with 401.
+/// A server's refusal, in words. A refused login names the user (never the password); a
+/// missing grant names the grant; anything else keeps the gist of ClickHouse's first line.
+/// ClickHouse answers a wrong password with 403 and `Code: 516 … (AUTHENTICATION_FAILED)`, a
+/// missing one with 401, and a missing grant with `Code: 497 … (ACCESS_DENIED)`.
 fn http_error(status: reqwest::StatusCode, body: &str, login: &Credentials) -> String {
     let refused_login = status == reqwest::StatusCode::UNAUTHORIZED
         || [
@@ -616,12 +619,44 @@ fn http_error(status: reqwest::StatusCode, body: &str, login: &Credentials) -> S
         .iter()
         .any(|marker| body.contains(marker));
     if refused_login {
-        return format!(
-            "login refused for user {} — check this server's user and password",
-            login.user
-        );
+        return format!("{LOGIN_REFUSED} — user {}: check its password on this server", login.user);
     }
-    format!("HTTP {}: {}", status.as_u16(), first_line(body))
+    if body.contains("ACCESS_DENIED") || body.contains("Not enough privileges") {
+        return match needed_grant(body) {
+            Some(grant) => format!("{NO_ACCESS} — {} needs {grant}", login.user),
+            None => format!("{NO_ACCESS} — {} lacks a grant the monitor needs", login.user),
+        };
+    }
+    format!("HTTP {}: {}", status.as_u16(), gist(body, &login.user))
+}
+
+/// `… it's necessary to have the grant SELECT(metric, value) ON system.asynchronous_metrics.
+/// (ACCESS_DENIED)` → `SELECT on system.asynchronous_metrics`: the column list is noise.
+fn needed_grant(body: &str) -> Option<String> {
+    let rest = body.split("necessary to have the grant ").nth(1)?;
+    let grant = rest.lines().next()?.split(" (ACCESS_DENIED)").next()?.trim().trim_end_matches('.');
+    let columns = regex::Regex::new(r"\([^)]*\)").expect("a valid pattern");
+    let grant = columns.replace_all(grant, "").replace(" ON ", " on ");
+    let grant = grant.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!grant.is_empty()).then(|| crate::fmt::truncate(&grant, 80))
+}
+
+/// ClickHouse's first line without its wrapping: `Code: 241. DB::Exception: monitor: Memory
+/// limit (total) exceeded: … (MEMORY_LIMIT_EXCEEDED) (version 24.10…)` → `Memory limit (total)
+/// exceeded: … (MEMORY_LIMIT_EXCEEDED)`, cut to fit a line.
+fn gist(body: &str, user: &str) -> String {
+    let mut text = body.lines().next().unwrap_or_default().trim();
+    if let Some((_, after)) = text.strip_prefix("Code: ").and_then(|rest| rest.split_once(". ")) {
+        text = after;
+    }
+    text = text.strip_prefix("DB::Exception: ").unwrap_or(text);
+    if let Some(after) = text.strip_prefix(user).and_then(|rest| rest.strip_prefix(": ")) {
+        text = after;
+    }
+    if let Some(at) = text.find(" (version ") {
+        text = &text[..at];
+    }
+    crate::fmt::truncate(text.trim(), 120)
 }
 
 /// ClickHouse's ways of saying a column does not exist on this version.
@@ -639,10 +674,6 @@ fn refuses_columns(error: &str) -> bool {
 
 fn positive_or_none(value: u64) -> Option<u64> {
     (value > 0).then_some(value)
-}
-
-fn first_line(body: &str) -> String {
-    body.lines().next().unwrap_or_default().chars().take(200).collect()
 }
 
 /// reqwest errors can echo the URL; the URL has no credential in it, but the password must
@@ -1334,7 +1365,7 @@ mod tests {
         assert!(!shown.contains("Zq9"), "{shown}");
         assert!(shown.contains("mon2") && shown.contains("monitor"), "the users are fine to show: {shown}");
         assert!(source.targets().iter().all(|t| !t.url.contains('@')), "a URL never carries the login");
-        assert!(!first_line("Code: 516. oops").contains("Zq9"));
+        assert!(!gist("Code: 516. oops", "mon2").contains("Zq9"));
     }
 
     #[test]
@@ -1342,14 +1373,43 @@ mod tests {
         let mon2 = login("mon2", "Zq9-seed");
         let body = "Code: 516. DB::Exception: mon2: Authentication failed: password is incorrect, or there is no user with such name. (AUTHENTICATION_FAILED) (version 24.10.4.191 (official build))";
         let said = http_error(reqwest::StatusCode::FORBIDDEN, body, &mon2);
-        assert_eq!(said, "login refused for user mon2 — check this server's user and password");
+        assert_eq!(said, "login refused — user mon2: check its password on this server");
         assert_eq!(http_error(reqwest::StatusCode::UNAUTHORIZED, "", &mon2), said, "no password at all");
+        let node = NodeSnapshot::unreachable("n", said);
+        assert_eq!((node.down_word(), node.down_detail()), ("login refused", Some("user mon2: check its password on this server")));
+    }
+
+    /// What one fleet answered for a user without the grants: a server that answers is not
+    /// "unreachable", and the line names the grant instead of ClickHouse's paragraph.
+    #[test]
+    fn a_missing_grant_reads_no_access_with_the_grant_it_needs() {
+        let sync = login("r_datateam_sync", "p");
+        let body = "Code: 497. DB::Exception: r_datateam_sync: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(metric, value) ON system.asynchronous_metrics. (ACCESS_DENIED) (version 24.11.1.2557 (official build))";
+        let said = http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, body, &sync);
+        assert_eq!(said, "no access — r_datateam_sync needs SELECT on system.asynchronous_metrics");
+        let node = NodeSnapshot::unreachable("posthog", said);
+        assert_eq!(node.down_word(), "no access");
+        assert_eq!(node.down_detail(), Some("r_datateam_sync needs SELECT on system.asynchronous_metrics"));
+
+        let vague = http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "Code: 497. DB::Exception: Not enough privileges", &sync);
+        assert_eq!(vague, "no access — r_datateam_sync lacks a grant the monitor needs");
+    }
+
+    #[test]
+    fn other_errors_keep_the_gist_of_the_first_line() {
+        let monitor = login("monitor", "p");
         let other = http_error(
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            "Code: 241. DB::Exception: Memory limit (total) exceeded\nmore",
-            &mon2,
+            "Code: 241. DB::Exception: monitor: Memory limit (total) exceeded: would use 1.20 TiB. (MEMORY_LIMIT_EXCEEDED) (version 24.10.4.191 (official build))\nmore",
+            &monitor,
         );
-        assert_eq!(other, "HTTP 500: Code: 241. DB::Exception: Memory limit (total) exceeded");
+        assert_eq!(other, "HTTP 500: Memory limit (total) exceeded: would use 1.20 TiB. (MEMORY_LIMIT_EXCEEDED)");
+        assert!(refuses_columns(&http_error(
+            reqwest::StatusCode::NOT_FOUND,
+            "Code: 47. DB::Exception: Missing columns: 'query_kind' while processing query",
+            &monitor
+        )), "the basic-statement switch still recognises a missing column");
+        assert_eq!(NodeSnapshot::unreachable("n", other).down_word(), "unreachable");
     }
 
     #[test]
@@ -1575,7 +1635,7 @@ mod tests {
         assert!(node(&a).reachable && node(&b).reachable);
         assert!(!node(&c).reachable);
         let reason = node(&c).unreachable_reason.clone().unwrap();
-        assert_eq!(reason, "login refused for user carol — check this server's user and password");
+        assert_eq!(reason, "login refused — user carol: check its password on this server");
 
         let users = |seen: &Seen| -> Vec<String> {
             let seen = seen.lock().unwrap();
@@ -1650,7 +1710,7 @@ mod tests {
         let mut source = ClickHouseSource::new(&config(&seeds, None)).unwrap();
 
         let errors = source.discover().await;
-        assert_eq!(errors, [format!("{c}: login refused for user carol — check this server's user and password")]);
+        assert_eq!(errors, [format!("{c}: login refused — user carol: check its password on this server")]);
         let mut hosts: Vec<&str> = source.targets().iter().map(|t| t.host.as_str()).collect();
         hosts.sort();
         assert_eq!(hosts, ["node-a", "node-b"]);

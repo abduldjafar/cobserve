@@ -637,11 +637,14 @@ or from a slope over the last minutes of it.
 
 ### Added
 
-- **Insights** (`src/insight.rs`), under the tree on view 1: hot nodes and whether a person or
-  the server holds them, memory forecasts, queries near their own limit with the time left,
-  the same Redash query running twice, a full queue explained by the workers stuck on runaway
-  queries, lag, unreachable and slow nodes, the heaviest user. `tab` focuses them, `⏎` jumps
-  to the row an insight is about. CPU is judged over 10 s, not one poll.
+- **Insights** (`src/insight.rs`), under the tree on view 1: one short line per subject in
+  trouble — a node, the Redash queue, a Redash query running twice — worst first, its subject in
+  a column of its own. A node's line is its worst finding (down, memory or CPU and who holds
+  it, a forecast, a query near its own limit, long queries, lag) with `+N more` for the rest; no
+  query is named twice. The drawer shows every finding of the chosen line with its numbers.
+  Merely interesting things (the heaviest user, slow polls, new nodes) are left to the screen
+  elsewhere, and a quiet fleet is one line. `tab` focuses them, `⏎` jumps to the row. CPU is
+  judged over 10 s, not one poll.
 - **History** (`src/history.rs`): four minutes of every node, user row, query and queue.
   Sparklines (each cell the worst moment of its slice, gaps left as gaps), trend arrows from a
   least-squares slope over 60 s, forecasts only once 30 s of history exist.
@@ -703,9 +706,14 @@ or from a slope over the last minutes of it.
   answers nor matches, rows nobody has a login for are not added: they may be that seed, and
   would only say "add this host" about a host that is already there.
 - **Unreachable reasons** are said plainly (*name does not resolve from here (DNS)*,
-  *connection refused*, *no answer within 1.5 s*, *login refused for user monitor_ch2 — check
-  this server's user and password*) instead of reqwest's `error sending request for url (…)`
-  or ClickHouse's stack of exception text.
+  *connection refused*, *no answer within 1.5 s*) instead of reqwest's `error sending request
+  for url (…)` or ClickHouse's paragraph. A server that answers is not called unreachable: it
+  reads **no access** with the grant it is missing (*monitor needs SELECT on
+  system.asynchronous_metrics*), **login refused**, or **not polled** when there is no login
+  for it.
+- **A query's own limit** that it is already more than 10% past is not quoted ("1279% of its
+  limit"): the server is evidently holding it to something else, so no forecast is made from
+  it.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
 

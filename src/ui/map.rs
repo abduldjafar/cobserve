@@ -118,8 +118,8 @@ fn tile(frame: &mut Frame, app: &App, theme: &Theme, rect: Rect, node: &NodeView
             format!(" ↯ {}", node.node.down_word()),
             theme.sev(Severity::Crit).add_modifier(Modifier::BOLD),
         )));
-        if let Some(reason) = &node.node.unreachable_reason {
-            lines.push(Line::from(Span::styled(format!(" {}", fmt::truncate(reason, width - 1)), theme.muted())));
+        if let Some(detail) = node.node.down_detail() {
+            lines.push(Line::from(Span::styled(format!(" {}", fmt::truncate(detail, width - 1)), theme.muted())));
         }
         frame.render_widget(Paragraph::new(lines), inner);
         return;

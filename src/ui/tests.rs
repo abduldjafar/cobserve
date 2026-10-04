@@ -193,6 +193,7 @@ fn an_unconfigured_redash_says_how_to_configure_it() {
     ))));
     let screen = render(&app, 120, 36);
     assert!(screen.contains("REDASH  not configured"), "{screen}");
+    assert!(screen.contains("--credential file"), "it says where the settings go: {screen}");
     assert!(!screen.contains("unreachable"), "not configured is not an outage: {screen}");
 }
 
@@ -215,8 +216,8 @@ fn a_host_without_a_login_reads_not_polled() {
     app.update(Event::Snapshot(Box::new(snapshot)));
     let screen = render(&app, 160, 48);
     assert!(screen.contains("↯ not polled"), "the row: {screen}");
-    assert!(screen.contains("ch-x is not polled"), "the insight: {screen}");
-    assert!(!screen.contains("ch-x is unreachable"), "it was never asked, so it is not down: {screen}");
+    assert!(screen.contains("not polled · no login for this host"), "the insight: {screen}");
+    assert!(!screen.contains("unreachable"), "it was never asked, so it is not down: {screen}");
     assert_eq!(crate::model::NodeSnapshot::unreachable("ch-y", "HTTP 502").down_word(), "unreachable");
 }
 
@@ -318,10 +319,14 @@ fn the_insights_name_the_trouble() {
     let insights = insights_of(&app);
     let screen = render(&app, 140, 44);
     assert!(!insights.is_empty());
-    // The first insight is on screen, glyph and all.
-    let first = insights[0].text();
-    let prefix: String = first.chars().take(30).collect();
-    assert!(screen.contains(&prefix), "{prefix}\n{screen}");
+    // The first insight is on screen: what it is about, and its line.
+    let line: String = insights[0].parts.iter().map(|(text, _)| text.as_str()).collect();
+    let prefix: String = line.chars().take(30).collect();
+    let row = screen
+        .lines()
+        .find(|row| row.contains(&prefix))
+        .unwrap_or_else(|| panic!("{prefix}\n{screen}"));
+    assert!(row.contains(&insights[0].label), "{row}");
 }
 
 #[test]
@@ -355,6 +360,96 @@ fn a_paused_screen_says_so_and_a_stale_one_too() {
     app.update(key(KeyCode::Char('p')));
     app.clock = std::time::SystemTime::now() + std::time::Duration::from_secs(30);
     assert!(render(&app, 120, 36).lines().next().unwrap().contains("STALE"));
+}
+
+/// The screen one fleet showed, which the insights were rebuilt for: a node that answers but
+/// refuses the monitor's login a grant, a 27-minute CREATE far past the limit its settings
+/// show, a long report, and three quiet nodes. Three short lines, nothing twice, no raw error.
+#[test]
+fn a_real_fleet_reads_in_a_few_short_lines() {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let node = |name: &str, total_gib: u64, used_gib: f64, cores: f64, busy: f64| crate::model::NodeSnapshot {
+        name: name.into(),
+        host: name.into(),
+        port: 9000,
+        shard: 1,
+        replica: 1,
+        version: "24.11.1.2557".into(),
+        reachable: true,
+        mem_total: Some(total_gib * GIB),
+        mem_used: (used_gib * GIB as f64) as u64,
+        cores: Some(cores),
+        cpu_busy_cores: Some(busy),
+        running: 0,
+        lag_s: 0,
+        active_parts: 100,
+        queries: vec![],
+        uptime_s: Some(1000),
+        server_cpu_time_us: None,
+        max_memory_usage: Some(6_000_000_000),
+        unreachable_reason: None,
+        poll_ms: Some(40),
+    };
+    let query = |id: &str, user: &str, elapsed: f64, gib: f64, sql: &str| {
+        let mut q = crate::model::QueryRow::new(id, user);
+        q.elapsed_s = elapsed;
+        q.memory_bytes = (gib * GIB as f64) as u64;
+        q.memory_limit = Some(6_000_000_000);
+        q.sql = sql.into();
+        q
+    };
+    let mut bi = node("clickhouse-bi.example.net", 252, 58.8, 16.0, 8.7);
+    bi.queries = vec![query("b1", "metabase", 2.0, 0.4, "SELECT 1"), query("b2", "metabase", 1.0, 0.2, "SELECT 2")];
+    let mut ch3 = node("clickhouse3.example.net", 227, 3.5, 8.0, 3.9);
+    ch3.queries = vec![
+        query("c1", "airflow", 166.0, 0.9, "INSERT INTO statistics.daily SELECT 1"),
+        query("c2", "airflow", 3.0, 0.1, "SELECT 1"),
+        query("c3", "airflow", 1.0, 0.1, "SELECT 2"),
+    ];
+    let mut ch2 = node("clickhouse2.example.net", 453, 112.3, 16.0, 3.3);
+    ch2.queries = vec![query(
+        "m1",
+        "ch_user",
+        1670.0,
+        71.5,
+        "CREATE MATERIALIZED VIEW materialized_views.mv_gateway_bank_statement AS SELECT 1",
+    )];
+    let snapshot = crate::model::FleetSnapshot {
+        taken_at: std::time::SystemTime::now(),
+        nodes: vec![
+            bi,
+            ch3,
+            ch2,
+            crate::model::NodeSnapshot::unreachable(
+                "clickhouse-posthog.example.net",
+                "no access — r_datateam_sync needs SELECT on system.asynchronous_metrics",
+            ),
+            node("clickhouse4.example.net", 128, 2.0, 16.0, 0.4),
+            node("clickhouse1.example.net", 128, 3.0, 16.0, 0.4),
+        ],
+    };
+    let mut app = App::new();
+    app.update(Event::Snapshot(Box::new(snapshot)));
+    app.update(Event::Queue(Box::new(crate::model::QueueStatus::unreachable(crate::model::QUEUE_NOT_CONFIGURED))));
+
+    let lines: Vec<String> = insights_of(&app).iter().map(|i| i.text()).collect();
+    assert_eq!(
+        lines,
+        [
+            "clickhouse-posthog  no access · r_datateam_sync needs SELECT on system.asynchronous_metrics",
+            "clickhouse2  long query · ch_user, 27m50s",
+            "clickhouse3  long query · airflow, 2m46s",
+        ]
+    );
+    let screen = render(&app, 160, 40);
+    let panel: Vec<&str> = screen
+        .lines()
+        .skip_while(|l| !l.contains("INSIGHTS"))
+        .skip(1)
+        .take(3)
+        .collect();
+    assert!(panel[0].contains("✖ clickhouse-posthog  no access · r_datateam_sync needs SELECT"), "{screen}");
+    assert!(!screen.contains("1279%") && !screen.contains("DB::Exception"), "{screen}");
 }
 
 #[test]

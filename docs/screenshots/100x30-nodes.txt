@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────── ● LIVE 2s · 01:53:05 UTC   1N   2Q   3M   4T  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────── ● LIVE 2s · 02:16:19 UTC   1N   2Q   3M   4T  ╮
 │ FLEET  9 nodes · 1 hot   MEM ██▏    36.4% 280/768 GiB   CPU █▊     28.7% 55/192 cores            │
 │ REDASH  13 waiting · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in …  [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────── │
@@ -14,15 +14,15 @@
 │  ▸ clickhouse2   ▃▅▆▆▃▅▆▆▃▅   41.8%  ██▌     26.7/64   28.6%  █▊      4.6/16        2      18s   │
 │  ▸ clickhouse5 NEW ▆▅▄▆▆▃▆▆   37.6%↗ ██▎     24.0/64    4.0%  ▎       0.6/16        0        —   │
 │  ▸ 4 healthy nodes folded · ch4 ch6 ch8 ch9 · all ≤ 22%                                ␣ unfold  │
-│ ─ INSIGHTS 2 ✖ 8 ▲ 3 ● · tab to browse all ───────────────────────────────────────────────────── │
-│  ✖ clickhouse3 memory 93.1%, CPU 93.4% — server/caches/merges hold 47% of memory and 37% of CPU… │
-│  ✖ Redash queries: 13 waiting, oldest 3m43s · workers 6/6 busy — 2 on runaway queries (clickhou… │
-│  ▲ j.petrova's query on clickhouse-bi at 88% of its 24.0 GiB memory limit · +209.7 KiB/s         │
-│  ▲ r.simonyte's query on clickhouse7 at 80% of its 64.0 GiB memory limit · +314.6 KiB/s          │
-│  ▲ clickhouse-bi memory climbing +1.8%/min — full in ~18m01s at this rate                        │
-│  ▲ 4 runaway queries · longest r.simonyte 8m56s on clickhouse7 (SELECT · wallet.ledger)          │
-│  ▲ Redash scheduled_queries: 3 waiting, oldest 22s · workers 2/2 busy — none of them stuck in C… │
-│   … 6 more · tab to browse                                                                       │
+│                                                                                                  │
+│                                                                                                  │
+│ ─ INSIGHTS · tab to go to one ────────────────────────────────────────────────────────────────── │
+│  ✖ clickhouse3    memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more                │
+│  ✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 6 workers on long queries  +1 more   │
+│  ▲ clickhouse-bi  memory 67.2% ↗ full in ~18m · j.petrova holds 33%  +1 more                     │
+│  ▲ clickhouse7    r.simonyte's query at 80% of its memory limit  +1 more                         │
+│  ▲ Redash #7711   running 2× · m.kairys                                                          │
+│  ▲ Redash #8585   running 2× · j.petrova                                                         │
 │ ─ clickhouse3 · pay-ch-node-1:9000 ───────────────────────────────────────────────────────────── │
 │ MEM 59.6/64 GiB  93.1% → steady    CPU 14.9/16 cores  93.4% → steady                             │
 │ memory: queries 45.7% + server 47.4% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.4 GiB = 0… │

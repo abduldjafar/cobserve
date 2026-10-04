@@ -65,19 +65,37 @@ pub struct NodeSnapshot {
     pub poll_ms: Option<u32>,
 }
 
-/// Why a node has no numbers when it was never asked: a host only discovery knows, with a
-/// login per server and no default login to use for it. No server is sent another's password.
-pub const NO_LOGIN: &str = "no login for this host — add it to the credential file, or set a default login";
+/// Why a node has no numbers, when the server did answer: its reason reads `<word> — <detail>`,
+/// and the word replaces "unreachable" on screen.
+pub const NO_ACCESS: &str = "no access";
+pub const LOGIN_REFUSED: &str = "login refused";
+pub const NOT_POLLED: &str = "not polled";
+
+/// A host only discovery knows, with a login per server and no default login to use for it: it
+/// is never asked, so no server is sent another's password.
+pub const NO_LOGIN: &str =
+    "not polled — no login for this host: add it to the credential file, or set a default login";
 
 impl NodeSnapshot {
-    /// The word for a node without numbers: `unreachable`, or `not polled` when it was never
-    /// asked because there is no login for it — a gap in the configuration, not an outage.
+    /// The word for a node without numbers: `no access` (it answered, but this login may not
+    /// read what the monitor needs), `login refused`, `not polled` (never asked: there is no
+    /// login for it), or `unreachable`.
     pub fn down_word(&self) -> &'static str {
-        if self.unreachable_reason.as_deref() == Some(NO_LOGIN) {
-            "not polled"
-        } else {
-            "unreachable"
-        }
+        let reason = self.unreachable_reason.as_deref().unwrap_or_default();
+        [NO_ACCESS, LOGIN_REFUSED, NOT_POLLED]
+            .into_iter()
+            .find(|word| reason.strip_prefix(word).is_some_and(|rest| rest.starts_with(" — ")))
+            .unwrap_or("unreachable")
+    }
+
+    /// The reason without its word: what follows `down_word` on screen.
+    pub fn down_detail(&self) -> Option<&str> {
+        let reason = self.unreachable_reason.as_deref()?;
+        let detail = reason
+            .strip_prefix(self.down_word())
+            .and_then(|rest| rest.strip_prefix(" — "))
+            .unwrap_or(reason);
+        Some(detail).filter(|d| !d.is_empty())
     }
 
     /// A node the poll could not reach: it stays in the list (§2.6) with unknown numbers
@@ -181,6 +199,10 @@ pub struct QueryStat<'a> {
     pub eta_s: Option<f64>,
 }
 
+/// A query already this far past the limit it shows is not held by that limit — the server
+/// enforces something else on it — so nothing is measured or forecast against it.
+pub const LIMIT_NOT_HOLDING: f64 = 1.1;
+
 impl QueryStat<'_> {
     /// Memory as a fraction of the limit the server enforces on this query.
     pub fn limit_fraction(&self) -> f64 {
@@ -188,6 +210,11 @@ impl QueryStat<'_> {
             return 0.0;
         }
         self.query.memory_bytes as f64 / self.limit as f64
+    }
+
+    /// Whether `limit` is plausibly what holds this query: not when the query is well past it.
+    pub fn limit_holds(&self) -> bool {
+        self.limit > 0 && self.limit_fraction() <= LIMIT_NOT_HOLDING
     }
 }
 
