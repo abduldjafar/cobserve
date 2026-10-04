@@ -417,6 +417,66 @@ fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
 }
 
 #[test]
+fn the_nodes_are_listed_under_the_sessions_and_a_click_opens_one() {
+    use crate::app::Hit;
+    let mut app = app_with_claude(b"one\r\n");
+    let screen = render(&app, 160, 48);
+    let lines: Vec<&str> = screen.lines().collect();
+    let at = lines.iter().position(|l| l.starts_with("│  NODES")).expect("the list's title");
+    assert!(lines[at].contains("mem") && lines[at].contains("cpu"), "{}", lines[at]);
+    let row = |name: &str| lines.iter().find(|l| l.contains(&format!(" {name} "))).map(|l| l.to_string()).unwrap_or_default();
+    assert!(row("clickhouse3").contains('✖') && row("clickhouse3").contains('%'), "the worst first, marked: {screen}");
+    assert!(lines[at + 1].contains("clickhouse3"), "in view 1's order: {screen}");
+    assert!(row("ch9").contains('●'), "a quiet one: {screen}");
+    assert!(lines[at - 1].trim_matches(['│', ' ']).is_empty(), "a blank line clear of the sessions: {screen}");
+
+    // A node that does not answer says why instead of numbers.
+    let mut down = app.snapshot().unwrap().clone();
+    down.nodes[1] = crate::model::NodeSnapshot::unreachable(&down.nodes[1].name.clone(), "connection refused");
+    let name = down.nodes[1].name.clone();
+    app.update(Event::Snapshot(Box::new(down)));
+    let screen = render(&app, 160, 48);
+    let line = screen.lines().find(|l| l.contains(&format!("↯ {name}"))).unwrap_or_default().to_string();
+    assert!(line.contains("unreachable"), "{screen}");
+
+    // A click on one opens it on view 1; the session goes on where it was.
+    let index = app.viewport.listed_nodes.borrow().iter().position(|n| n == &name).expect("listed");
+    click_on(&mut app, Hit::Node(index));
+    assert_eq!(app.view, View::Nodes);
+    assert_eq!(app.selected(), Some(&crate::tree::RowId::Node(name)));
+
+    // Tight, it shows what fits and says what does not.
+    app.update(key(KeyCode::Char('5')));
+    let short = render(&app, 160, 24);
+    assert!(short.contains("more on view 1"), "{short}");
+    let tiny = render(&app, 160, 14);
+    assert!(!tiny.lines().any(|l| l.starts_with("│  NODES")), "no room, no list: {tiny}");
+}
+
+#[test]
+fn a_shell_scrolled_back_says_how_far() {
+    use crate::claude::Kind;
+    let mut app = app_with_claude(b"one\r\n");
+    app.claude.open_new("~/work/scripts", Kind::Terminal);
+    let lines: String = (1..=80).map(|n| format!("output {n}\r\n")).collect();
+    run_session(&mut app, lines.as_bytes());
+    render(&app, 160, 40);
+    let pane = app.viewport.hits.borrow().iter().find(|(_, h)| *h == crate::app::Hit::Pane).map(|(r, _)| *r).unwrap();
+    for _ in 0..4 {
+        app.update(Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollUp,
+            column: pane.x + 5,
+            row: pane.y + 5,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+    let screen = render(&app, 160, 40);
+    assert!(screen.contains("↑ 12 lines back"), "{screen}");
+    app.update(key(KeyCode::Char('q')));
+    assert!(!render(&app, 160, 40).contains("lines back"), "a key comes back down");
+}
+
+#[test]
 fn a_narrow_terminal_puts_the_sessions_on_a_bar() {
     let app = app_with_claude(b"one\r\n");
     let screen = render(&app, 96, 30);

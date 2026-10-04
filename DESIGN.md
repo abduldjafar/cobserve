@@ -692,7 +692,9 @@ or from a slope over the last minutes of it.
   that is only the program's name, else the folder),
   directory and git branch (read from `.git/HEAD`, a worktree's `.git` file followed, every few
   seconds) — on a narrow terminal a bar of tabs over it; a session that rings while it is not
-  on screen is marked. A new session's folder is chosen in a picker shaped like a file
+  on screen is marked. Under the sessions, the fleet: a line a node in view 1's order, its
+  state and its memory and CPU (§5's numbers, §7's colours; gauges as wide as the list
+  allows), drawn only when its title and two nodes fit, and a click opens the node on view 1. A new session's folder is chosen in a picker shaped like a file
   explorer (`folders.rs`): clickable path, the folders here, a click goes in, a search below by
   name (breadth-first, six levels, bounded in folders read and in time, package and build
   folders skipped, on a thread of its own and dropped when a newer one starts) or a typed path
@@ -763,8 +765,10 @@ or from a slope over the last minutes of it.
   or `ctrl+\` open the sessions.
 - **§3 the mouse**, which v1 left out: a click opens a tab of the header, a session or a new
   one, and in the folder picker goes into a folder or back up the path; the wheel moves the
-  cursor, and over Claude is its page up and down — or, when the program asked for mouse
-  reports, the reports themselves. The terminal's own selection then needs its modifier key;
+  cursor, and over a session is what it would be in a terminal of its own — the reports
+  themselves when the program asked for mouse reports; else Claude's page up and down, the
+  arrow keys for a full-screen program, and for a shell its own past (a thousand lines are
+  kept; a key comes back down). The terminal's own selection then needs its modifier key;
   `MOUSE=0` gives the mouse back to the terminal. With bracketed paste on, a paste is one
   event: into Claude as a paste, into `/` or the picker's search as text, and nowhere else —
   before, a paste was a stream of keys, and a `q` in it quit.

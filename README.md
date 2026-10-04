@@ -101,6 +101,12 @@ that rings while you are elsewhere is marked `●` there and on `5 SESSIONS`; on
 `✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the
 sessions.
 
+Under them, at the bottom of the list, the fleet stays in sight: a line a node in view 1's
+order — its state, its name, and what it uses of its memory and CPU (with bars when the list
+is wide enough, a one-cell gauge when not), red and amber as on view 1. A node that does not
+answer says why instead. A click on one opens it on view 1; when there are more nodes than
+room, the last line says how many more there are.
+
 A new session's folder is picked as in a file explorer, no typing needed: it starts in the
 folder the session on screen works in, a click on a folder goes into it, a click on a step of
 the path above (`~ › work › cobserve`) goes back up to it, and **Open the session here** (or
@@ -122,7 +128,7 @@ completed like a shell does. A repository shows its branch.
 | `ctrl+\` `ctrl+\` | back to the monitor, where you came from |
 | `F1`…`F9` | the same tabs from anywhere, without `ctrl+\` |
 | a click | a tab in the header, a session, **+ new session**, a folder, what to run |
-| the wheel | over a session, its page up and down; elsewhere, the cursor |
+| the wheel | over Claude, its page up and down; over a shell, back through what went past (a key comes back down), and in `less` or `vim` the arrow keys; over OpenCode, what it asked for; elsewhere, the cursor |
 
 From the monitor, `5`…`9` or `ctrl+\` go to the sessions. `ctrl+z` is not passed on to Claude
 or OpenCode — there is no shell around them to bring them back — but it is to a terminal,

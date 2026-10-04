@@ -177,7 +177,7 @@ pub fn analyze(view: &FleetView<'_>, history: &History, queue: &QueueStatus) -> 
 
 /// The domain every node's name ends in (`.example.net`): a label can do without it, the tree
 /// above still has the whole name. None when any name is an address or has no domain.
-fn shared_domain(names: &[&str]) -> Option<String> {
+pub fn shared_domain(names: &[&str]) -> Option<String> {
     let looks_like_address = |n: &str| n.contains(':') || n.trim_matches(['[', ']']).parse::<std::net::IpAddr>().is_ok();
     if names.iter().any(|n| looks_like_address(n) || !n.contains('.')) {
         return None;

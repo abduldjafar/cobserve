@@ -82,6 +82,16 @@ impl Kind {
         }
     }
 
+    /// How many lines scrolled off the top a pane keeps, for the wheel to bring back. A shell
+    /// writes down the screen, so its past is worth keeping; Claude Code and OpenCode draw a
+    /// screen of their own and scroll it themselves.
+    pub fn scrollback(self) -> usize {
+        match self {
+            Kind::Terminal => 1000,
+            Kind::Claude | Kind::OpenCode => 0,
+        }
+    }
+
     /// The next kind round, for shift+tab in the picker.
     pub fn next(self) -> Kind {
         match self {
@@ -225,9 +235,9 @@ impl ClaudePane {
     }
 
     /// Ask for the program to be started — again, after it ended — on a clean screen of
-    /// `rows` × `cols`.
-    pub fn start(&mut self, (rows, cols): (u16, u16)) {
-        self.parser = vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), 0, Replies::default());
+    /// `rows` × `cols` that keeps `scrollback` lines of what scrolls off it.
+    pub fn start(&mut self, (rows, cols): (u16, u16), scrollback: usize) {
+        self.parser = vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), scrollback, Replies::default());
         self.outbox.clear();
         self.title = None;
         self.state = PaneState::Starting;
@@ -247,15 +257,30 @@ impl ClaudePane {
         }
     }
 
-    /// A key for the program, as a terminal would send it.
+    /// A key for the program, as a terminal would send it — and, as a terminal does, back
+    /// down to the bottom from wherever the wheel had scrolled.
     pub fn key(&mut self, key: &KeyEvent) {
+        self.parser.screen_mut().set_scrollback(0);
         let bytes = encode_key(key, self.parser.screen().application_cursor());
         self.outbox.extend(bytes);
+    }
+
+    /// How many lines up the wheel has scrolled the pane's own past; 0 at the bottom.
+    pub fn scrolled_back(&self) -> usize {
+        self.parser.screen().scrollback()
+    }
+
+    /// The pane's own past, `lines` further up (or down, negative), as far as there is one.
+    fn scroll_back(&mut self, lines: isize) {
+        let at = self.parser.screen().scrollback().saturating_add_signed(lines);
+        // The emulator stops at what it kept.
+        self.parser.screen_mut().set_scrollback(at);
     }
 
     /// Pasted text: bracketed when the program asked for it, so a pasted newline is text and
     /// not a press of Enter.
     pub fn paste(&mut self, text: &str) {
+        self.parser.screen_mut().set_scrollback(0);
         if self.parser.screen().bracketed_paste() {
             self.outbox.extend(b"\x1b[200~");
             self.outbox.extend(text.as_bytes());
@@ -595,7 +620,7 @@ impl Sessions {
         let id = self.next_id;
         self.next_id += 1;
         let mut pane = ClaudePane::default();
-        pane.start(self.want_size.get());
+        pane.start(self.want_size.get(), kind.scrollback());
         let dir = if dir.trim().is_empty() { self.default_dir.clone() } else { dir.trim().to_string() };
         self.list.push(Session { id, kind, name: None, dir, branch: None, pane });
         self.select(self.list.len() - 1);
@@ -619,8 +644,10 @@ impl Sessions {
     }
 
     /// The mouse over the pane, for the program on screen: as the program asked for it when it
-    /// asked for mouse reports, else a turn of the wheel as a page — what Claude Code scrolls
-    /// its conversation with.
+    /// asked for mouse reports. Else the wheel does what it would in a terminal of its own:
+    /// for Claude Code a turn is a page, what it scrolls its conversation with; a full-screen
+    /// program (`less`, `vim` in a shell) gets the arrow keys; and a shell's screen scrolls
+    /// back through what went past.
     pub fn mouse(&mut self, event: &MouseEvent) {
         let (top, left) = self.pane_origin.get();
         let wheel = match event.kind {
@@ -636,15 +663,25 @@ impl Sessions {
             session.pane.outbox.extend(bytes);
             return;
         }
-        if wheel != 0 {
-            if self.wheel.signum() != wheel {
-                self.wheel = 0;
+        if wheel == 0 {
+            return;
+        }
+        if session.kind != Kind::Claude {
+            if session.pane.screen().alternate_screen() {
+                let up = KeyEvent::new(if wheel < 0 { KeyCode::Up } else { KeyCode::Down }, KeyModifiers::NONE);
+                session.pane.key(&up);
+            } else {
+                session.pane.scroll_back(-3 * isize::from(wheel));
             }
-            self.wheel += wheel;
-            if self.wheel.abs() >= 3 {
-                self.wheel = 0;
-                session.pane.outbox.extend(if wheel < 0 { b"\x1b[5~" } else { b"\x1b[6~" });
-            }
+            return;
+        }
+        if self.wheel.signum() != wheel {
+            self.wheel = 0;
+        }
+        self.wheel += wheel;
+        if self.wheel.abs() >= 3 {
+            self.wheel = 0;
+            session.pane.outbox.extend(if wheel < 0 { b"\x1b[5~" } else { b"\x1b[6~" });
         }
     }
 
@@ -858,7 +895,7 @@ mod tests {
     #[test]
     fn the_screen_follows_the_output_and_queries_are_answered() {
         let mut pane = ClaudePane::default();
-        pane.start((24, 80));
+        pane.start((24, 80), 0);
         pane.state = PaneState::Running;
         pane.feed(b"\x1b]0;\xe2\x9c\xb3 Fix the parser\x07hello \x1b[31mred\x1b[m\r\n> ", true);
         let screen = pane.screen();
@@ -894,7 +931,7 @@ mod tests {
     fn starting_again_begins_on_a_clean_screen_of_the_drawn_size() {
         let mut pane = ClaudePane::default();
         pane.feed(b"old output", true);
-        pane.start((30, 100));
+        pane.start((30, 100), 0);
         assert_eq!(pane.state, PaneState::Starting);
         assert_eq!(pane.screen().size(), (30, 100));
         assert!(pane.screen().contents().trim().is_empty());
@@ -984,6 +1021,31 @@ mod tests {
         assert_eq!(sessions.current().unwrap().label(), "vim notes.md");
         assert_eq!(Kind::ALL.map(Kind::glyph), ["✻", "▣", "❯"]);
         assert_eq!(Kind::ALL.map(Kind::next), [Kind::OpenCode, Kind::Terminal, Kind::Claude]);
+    }
+
+    #[test]
+    fn the_wheel_scrolls_a_shell_back_and_gives_a_full_screen_program_its_arrows() {
+        let mut sessions = Sessions::default();
+        sessions.open_new("", Kind::Terminal).unwrap();
+        let pane = &mut sessions.current_mut().unwrap().pane;
+        pane.state = PaneState::Running;
+        pane.resize(10, 40);
+        let output: String = (1..=50).map(|n| format!("line {n}\r\n")).collect();
+        pane.feed(output.as_bytes(), true);
+        sessions.pane_origin.set((0, 0));
+        sessions.mouse(&mouse(MouseEventKind::ScrollUp, 5, 5));
+        sessions.mouse(&mouse(MouseEventKind::ScrollUp, 5, 5));
+        let pane = &mut sessions.current_mut().unwrap().pane;
+        assert_eq!(pane.scrolled_back(), 6, "three lines a tick, as a terminal scrolls");
+        assert!(pane.take_outbox().is_empty(), "nothing typed into the shell — no stray ~");
+        assert!(pane.screen().contents().starts_with("line 36\n"), "six lines up from line 42: {}", pane.screen().contents());
+        pane.key(&key(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(pane.scrolled_back(), 0, "a key goes back down");
+        pane.take_outbox();
+        // less, vim: a screen of their own, which the arrows move.
+        pane.feed(b"\x1b[?1049h", true);
+        sessions.mouse(&mouse(MouseEventKind::ScrollDown, 5, 5));
+        assert_eq!(sessions.current_mut().unwrap().pane.take_outbox(), b"\x1b[B");
     }
 
     #[test]

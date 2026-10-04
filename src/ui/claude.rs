@@ -6,13 +6,14 @@
 //! band names the worst thing in the fleet right now — so a node going red is seen without
 //! leaving the conversation.
 
-use super::widgets::{fit, rule, tone_spans, Cells};
+use super::widgets::{bar, fit, rule, tone_spans, Cells};
 use crate::app::{App, Hit};
 use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, MAX_SESSIONS};
 use crate::fmt;
 use crate::folders::Folder;
+use crate::history::spark_glyph;
 use crate::insight::Insight;
-use crate::severity::Severity;
+use crate::severity::{self, Severity};
 use crate::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -29,7 +30,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     let area = if area.width >= SIDEBAR_FROM {
-        let side = (area.width * 22 / 100).clamp(26, 36);
+        let side = (area.width * 22 / 100).clamp(26, 40);
         sidebar(frame, app, theme, Rect::new(area.x, area.y, side, area.height));
         let rule: Vec<Line<'static>> = (0..area.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
         frame.render_widget(Paragraph::new(rule), Rect::new(area.x + side, area.y, 1, area.height));
@@ -77,7 +78,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             lines.extend(how_to_get(session.kind, &program).into_iter().map(|text| Line::from(Span::styled(text, theme.muted()))));
             message(frame, theme, area, lines);
         }
-        PaneState::Running => screen(frame, &session.pane, theme, area, true),
+        PaneState::Running => {
+            screen(frame, &session.pane, theme, area, true);
+            scrolled_note(frame, &session.pane, theme, area);
+        }
         PaneState::Exited(how) => {
             screen(frame, &session.pane, theme, area, false);
             let mut cells = Cells::new();
@@ -108,6 +112,18 @@ fn how_to_get(kind: Kind, program: &str) -> [String; 2] {
             format!("`{program}` would not start — {} chooses another shell; ⏎ tries again.", kind.variable()),
         ],
     }
+}
+
+/// Over a shell scrolled back with the wheel: how far, and the way down.
+fn scrolled_note(frame: &mut Frame, pane: &crate::claude::ClaudePane, theme: &Theme, area: Rect) {
+    let back = pane.scrolled_back();
+    if back == 0 {
+        return;
+    }
+    let text = format!(" ↑ {} back · a key or the wheel comes down ", fmt::plural(back, "line", "lines"));
+    let width = (fmt::width(&text) as u16).min(area.width);
+    let at = Rect::new(area.x + area.width - width, area.y, width, 1);
+    frame.render_widget(Paragraph::new(Line::from(Span::styled(text, theme.keycap()))), at);
 }
 
 /// A kind's mark, in its colour: Claude's orange, OpenCode's white, a shell's green.
@@ -228,8 +244,142 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         full.push(format!("   {MAX_SESSIONS} of {MAX_SESSIONS} open · x closes one"), theme.faint());
         lines.push(full.line(width, Style::default()));
     }
-    drop(hits);
+
+    // The fleet at the bottom of the list, a blank line clear of the sessions.
+    let used = lines.len() as u16 + 1;
     frame.render_widget(Paragraph::new(lines), area);
+    if area.height > used {
+        let free = Rect::new(area.x, area.y + used, width as u16, area.height - used);
+        nodes_panel(frame, app, theme, free, &mut hits);
+    } else {
+        app.viewport.listed_nodes.borrow_mut().clear();
+    }
+}
+
+/// A node as the list under the sessions shows it.
+struct Listed {
+    name: String,
+    label: String,
+    level: Severity,
+    mem: Option<f64>,
+    cpu: Option<f64>,
+    down: Option<&'static str>,
+}
+
+/// The fleet under the sessions, a line a node in view 1's order: its state, its name and
+/// what it uses of its memory and CPU — the bars as wide as the list leaves room for — so the
+/// monitor is in sight without leaving the session. A node that does not answer says why;
+/// a click opens the node on view 1. Drawn at the bottom of `area`, and only when its title
+/// and two nodes fit: below that it would be clutter.
+fn nodes_panel(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, hits: &mut Vec<(Rect, Hit)>) {
+    let listed: Vec<Listed> = app
+        .with_view(|view| {
+            let mut nodes: Vec<&crate::model::NodeView<'_>> = view.nodes.iter().collect();
+            nodes.sort_by(|a, b| crate::model::compare_nodes(a, b, app.tree.sort));
+            let names: Vec<&str> = nodes.iter().map(|n| n.node.name.as_str()).collect();
+            // The domain every node shares says nothing in a list this narrow.
+            let domain = crate::insight::shared_domain(&names);
+            nodes
+                .iter()
+                .map(|node| {
+                    let name = node.node.name.clone();
+                    let label = domain.as_deref().and_then(|d| name.strip_suffix(d)).unwrap_or(&name).to_string();
+                    Listed {
+                        label,
+                        level: super::nodes::severity_of(node),
+                        mem: node.mem_pct,
+                        cpu: node.cpu_pct,
+                        down: (!node.node.reachable).then(|| node.node.down_word()),
+                        name,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let height = area.height as usize;
+    if listed.is_empty() || height < 3 {
+        app.viewport.listed_nodes.borrow_mut().clear();
+        return;
+    }
+    // Every node when they fit; else as many as do, the worst first, and how many are left.
+    let shown = if listed.len() < height { listed.len() } else { height - 2 };
+    let more = listed.len() - shown;
+    let rows = 1 + shown + usize::from(more > 0);
+    let top = area.y + area.height - rows as u16;
+
+    // The columns: the name as long as the longest, then the gauges in what is left — bars
+    // when four cells or more fit, else one cell that rises with the value, else the number.
+    let width = area.width as usize;
+    let name_width = listed.iter().take(shown).map(|n| fmt::width(&n.label)).max().unwrap_or(0).min(20);
+    let rest = width.saturating_sub(4);
+    let gauge = [6, 5, 4, 1].into_iter().find(|g| name_width + 2 * (g + 5) + 2 <= rest).unwrap_or(0);
+    let metric = if gauge > 0 { gauge + 5 } else { 4 };
+    let name_room = rest.saturating_sub(2 * metric + 2).max(1);
+    let metrics_at = 3 + name_room + 1;
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut head = Cells::new();
+    head.push(" NODES", theme.section());
+    for (label, end) in [("mem", metrics_at + metric), ("cpu", metrics_at + 2 * metric + 2)] {
+        if head.width() + 1 > end.saturating_sub(3) {
+            head.push(" ", Style::default());
+        }
+        head.pad_to(end.saturating_sub(3));
+        head.push(label, theme.faint());
+    }
+    lines.push(head.line(width, Style::default()));
+
+    let mut names = Vec::with_capacity(shown);
+    for (index, node) in listed.iter().take(shown).enumerate() {
+        let (glyph, style) = match node.down {
+            Some(_) => ("↯", theme.sev(Severity::Crit).add_modifier(Modifier::BOLD)),
+            None if node.level.is_problem() => (node.level.glyph(), theme.sev(node.level).add_modifier(Modifier::BOLD)),
+            None => ("●", theme.sev(Severity::Ok)),
+        };
+        let mut cells = Cells::new();
+        cells.push(" ", Style::default());
+        cells.push(glyph, style);
+        cells.push(" ", Style::default());
+        let loud = node.down.is_some() || node.level.is_problem();
+        cells.cell(&fmt::truncate(&node.label, name_room), name_room, if loud { theme.strong() } else { theme.text() });
+        cells.push(" ", Style::default());
+        match node.down {
+            Some(word) => {
+                cells.push(word, theme.sev(Severity::Crit));
+            }
+            None => {
+                for (k, pct) in [node.mem, node.cpu].into_iter().enumerate() {
+                    if k > 0 {
+                        cells.push("  ", Style::default());
+                    }
+                    let level = severity::node(pct);
+                    match gauge {
+                        0 => {}
+                        1 => {
+                            let rises = pct.map_or(' ', |v| spark_glyph(v.clamp(0.0, 100.0), 0.0, 100.0));
+                            cells.push(format!("{rises} "), Style::default().fg(theme.bar_fill(level)));
+                        }
+                        cells_of_bar => {
+                            cells.spans(bar(pct, cells_of_bar, theme.bar_fill(level), theme));
+                            cells.push(" ", Style::default());
+                        }
+                    }
+                    let style = if level.is_problem() { theme.sev(level).add_modifier(Modifier::BOLD) } else { theme.text2() };
+                    cells.cell_right(&pct.map_or_else(|| "—".to_string(), fmt::pct0), 4, style);
+                }
+            }
+        }
+        lines.push(cells.line(width, Style::default()));
+        hits.push((Rect::new(area.x, top + 1 + index as u16, area.width, 1), Hit::Node(index)));
+        names.push(node.name.clone());
+    }
+    if more > 0 {
+        let y = top + rows as u16 - 1;
+        lines.push(Line::from(Span::styled(format!("   +{more} more on view 1"), theme.faint())));
+        hits.push((Rect::new(area.x, y, area.width, 1), Hit::View(crate::app::View::Nodes)));
+    }
+    *app.viewport.listed_nodes.borrow_mut() = names;
+    frame.render_widget(Paragraph::new(lines), Rect::new(area.x, top, area.width, rows as u16));
 }
 
 /// The top or the bottom of the framed card.
@@ -606,7 +756,8 @@ fn screen(frame: &mut Frame, pane: &crate::claude::ClaudePane, theme: &Theme, ar
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines).style(theme.text()), area);
-    if live && !screen.hide_cursor() {
+    // Scrolled back, the cursor is somewhere below what is shown.
+    if live && !screen.hide_cursor() && pane.scrolled_back() == 0 {
         let (row, col) = screen.cursor_position();
         if row < area.height && col < area.width {
             frame.set_cursor_position((area.x + col, area.y + row));

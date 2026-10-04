@@ -114,6 +114,8 @@ pub struct Viewport {
     /// What the mouse can click, as last drawn: the header's tabs, the sessions, Claude's pane,
     /// the folder picker's rows.
     pub hits: RefCell<Vec<(Rect, Hit)>>,
+    /// The nodes listed under the sessions, as last drawn, for `Hit::Node`.
+    pub listed_nodes: RefCell<Vec<String>>,
 }
 
 /// Something on screen a click means something on.
@@ -132,6 +134,8 @@ pub enum Hit {
     Cancel,
     /// What the picker will open.
     Kind(Kind),
+    /// A node listed under the sessions, by its place in `Viewport::listed_nodes`.
+    Node(usize),
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -395,7 +399,7 @@ impl App {
     fn start_claude(&mut self) {
         let size = self.claude.want_size.get();
         match self.claude.current_mut() {
-            Some(session) => session.pane.start(size),
+            Some(session) => session.pane.start(size, session.kind.scrollback()),
             None => {
                 self.claude.open_new("", Kind::Claude);
             }
@@ -529,6 +533,15 @@ impl App {
                 Some(Hit::Kind(kind)) => {
                     if let Mode::Opening(picker) = &mut self.claude.mode {
                         picker.kind = kind;
+                    }
+                }
+                // A node under the sessions opens on view 1, as an insight does; the session
+                // goes on where it was.
+                Some(Hit::Node(index)) => {
+                    let name = self.viewport.listed_nodes.borrow().get(index).cloned();
+                    if let Some(name) = name {
+                        self.claude.mode = Mode::Typing;
+                        self.go_to(&Subject::Node(name));
                     }
                 }
                 Some(Hit::Pane) | None => {}
