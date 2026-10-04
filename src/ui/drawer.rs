@@ -9,7 +9,6 @@ use crate::fmt;
 use crate::history::{eta_to, Trend};
 use crate::model::{FleetUser, JobState, NodeView, QueryStat, UserNode, UserSlice};
 use crate::severity::{self, Severity};
-use crate::sqltext::{self, Token};
 use crate::theme::Theme;
 use crate::tree::{Payload, Row, TreeState};
 use ratatui::layout::Rect;
@@ -616,19 +615,7 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
         cells.push(format!(" · {kind}"), theme.faint());
     }
     lines.push(cells.line_unpadded(width));
-
-    // 3: the SQL, without Redash's comment, coloured.
-    let mut cells = Cells::new();
-    for (text, token) in sqltext::highlight(&sqltext::preview(&query.sql)) {
-        let style = match token {
-            Token::Keyword => theme.accent(),
-            Token::String => theme.sev(Severity::Ok),
-            Token::Number => theme.sev(Severity::Warn),
-            Token::Plain => theme.text2(),
-        };
-        cells.push(text, style);
-    }
-    lines.push(cells.line_unpadded(width));
+    // The SQL itself is under the query's row in the tree, where it can scroll.
     (head, lines)
 }
 

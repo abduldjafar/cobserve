@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────── ● LIVE 2s · 02:16:19 UTC   1N   2Q   3M   4T  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────────────── ● LIVE 2s · 03:18:59 UTC   1N   2Q   3M   4T  ╮
 │ FLEET  9 nodes · 1 hot   MEM ██▏    36.4% 280/768 GiB   CPU █▊     28.7% 55/192 cores            │
 │ REDASH  13 waiting · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in …  [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────── │

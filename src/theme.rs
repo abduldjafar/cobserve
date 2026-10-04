@@ -332,6 +332,14 @@ impl Theme {
     }
 
     /// The selected row. Painted when the terminal can show a background, reversed when not.
+    /// A block of code under its row: on the panel colour where the terminal has one.
+    pub fn code(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.panel),
+            _ => Style::default(),
+        }
+    }
+
     pub fn selected(&self) -> Style {
         match self.depth {
             Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.selection),

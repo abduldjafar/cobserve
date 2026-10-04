@@ -316,14 +316,30 @@ pub fn draw_tree(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, termin
 
         let links = connectors(rows);
         let selected = crate::tree::selection_index(rows, app.selected());
-        let offset = scroll_into_view(app.viewport.tree.get(), selected, body_height, rows.len());
+        // The cursor on a query opens its SQL right under it; the window keeps both in view.
+        let block = selected.and_then(|i| match &rows[i].payload {
+            Payload::Query { stat, .. } if app.focus == Focus::Tree => {
+                Some(sql_block(stat, &links[i], app, theme, width, body_height))
+            }
+            _ => None,
+        });
+        let block_height = block.as_ref().map_or(0, Vec::len);
+        let room = body_height.saturating_sub(block_height).max(1);
+        let offset = scroll_into_view(app.viewport.tree.get(), selected, room, rows.len());
         app.viewport.tree.set(offset);
 
         let mut lines = Vec::with_capacity(body_height);
-        for (i, row) in rows.iter().enumerate().skip(offset).take(body_height) {
+        for (i, row) in rows.iter().enumerate().skip(offset) {
+            if lines.len() >= body_height {
+                break;
+            }
             let is_selected = selected == Some(i);
             lines.push(row_line(row, &links[i], app, theme, &grid, width, &totals, is_selected));
+            if is_selected && let Some(block) = &block {
+                lines.extend(block.iter().cloned());
+            }
         }
+        lines.truncate(body_height);
         (header, lines)
     });
 
@@ -347,6 +363,82 @@ pub fn draw_tree(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, termin
     frame.render_widget(Paragraph::new(header), Rect::new(area.x, area.y, area.width, 1));
     let body = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1));
     frame.render_widget(Paragraph::new(lines), body);
+}
+
+/// The selected query's SQL under its row: comments gone, clauses on their own lines, wrapped
+/// to the screen, coloured, and — when it is longer than the room it gets — a scrollbar and the
+/// keys that move it. The tree's lines carry on down the left of it.
+fn sql_block(
+    stat: &QueryStat<'_>,
+    link: &str,
+    app: &App,
+    theme: &Theme,
+    width: usize,
+    body_height: usize,
+) -> Vec<Line<'static>> {
+    let trunk: String = link
+        .chars()
+        .map(|c| match c {
+            '├' | '│' => '│',
+            _ => ' ',
+        })
+        .collect();
+    let lead = format!(" {trunk}");
+    let lead_width = fmt::width(&lead);
+    // The gutter, a space, the text, a space, and the scrollbar.
+    let text_width = width.saturating_sub(lead_width + 4).max(10);
+    let all = crate::sqltext::layout(&stat.query.sql, text_width);
+    let room = (body_height * 45 / 100).clamp(1, 14);
+    let scrollable = all.len() > room;
+    let text_rows = if scrollable { room.saturating_sub(1).max(1) } else { all.len() };
+    let max_scroll = all.len().saturating_sub(text_rows);
+    app.viewport.sql_max.set(max_scroll);
+    let scroll = app.sql_scroll_for(&stat.query.query_id).min(max_scroll);
+
+    // The scrollbar's thumb: as long as the share of the SQL on screen, where that share is.
+    let thumb = (text_rows * text_rows / all.len().max(1)).clamp(1, text_rows);
+    let thumb_at = (scroll * (text_rows - thumb)).checked_div(max_scroll).unwrap_or(0);
+
+    let code = theme.code();
+    let style_of = |token: crate::sqltext::Token| {
+        let fg = match token {
+            crate::sqltext::Token::Keyword => theme.accent(),
+            crate::sqltext::Token::String => theme.sev(Severity::Ok),
+            crate::sqltext::Token::Number => theme.sev(Severity::Warn),
+            crate::sqltext::Token::Plain => theme.text(),
+        };
+        code.patch(fg)
+    };
+    let mut out = Vec::with_capacity(text_rows + 1);
+    for (n, line) in all.iter().skip(scroll).take(text_rows).enumerate() {
+        let mut cells = Cells::new();
+        cells.push(lead.clone(), theme.faint());
+        cells.push("▎", code.patch(theme.accent()));
+        cells.push(" ", code);
+        for (text, token) in line {
+            cells.push(text.clone(), style_of(*token));
+        }
+        let fill = (lead_width + 2 + text_width + 1).saturating_sub(cells.width());
+        cells.push(" ".repeat(fill), code);
+        if scrollable {
+            let on_thumb = (thumb_at..thumb_at + thumb).contains(&n);
+            cells.push(if on_thumb { "┃" } else { "│" }, if on_thumb { theme.accent() } else { theme.faint() });
+        }
+        out.push(cells.line(width, Style::default()));
+    }
+    if scrollable {
+        let mut cells = Cells::new();
+        cells.push(lead.clone(), theme.faint());
+        cells.push("▎", code.patch(theme.accent()));
+        cells.push(
+            format!(" lines {}–{} of {} · J K or shift ↑↓ to scroll", scroll + 1, scroll + text_rows, all.len()),
+            code.patch(theme.muted()),
+        );
+        let fill = (lead_width + 2 + text_width + 1).saturating_sub(cells.width());
+        cells.push(" ".repeat(fill), code);
+        out.push(cells.line(width, Style::default()));
+    }
+    out
 }
 
 fn abs_widths(rows: &[Row<'_>]) -> (usize, usize) {

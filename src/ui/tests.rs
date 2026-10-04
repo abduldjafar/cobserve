@@ -313,6 +313,107 @@ fn selecting_a_query_shows_its_detail() {
     assert!(screen.contains("SELECT ·") || screen.contains("INSERT ·"), "query rows say what they read");
 }
 
+/// One node running one long query with `sql`, and the cursor on that query (through its
+/// insight, as on call would get there).
+fn app_on_query(sql: &str) -> App {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let mut query = crate::model::QueryRow::new("q-long", "analyst");
+    query.elapsed_s = 95.0;
+    query.memory_bytes = GIB;
+    query.sql = sql.into();
+    let node = crate::model::NodeSnapshot {
+        name: "ch-a".into(),
+        host: "ch-a".into(),
+        port: 9000,
+        shard: 1,
+        replica: 1,
+        version: "24.10".into(),
+        reachable: true,
+        mem_total: Some(64 * GIB),
+        mem_used: 10 * GIB,
+        cores: Some(16.0),
+        cpu_busy_cores: Some(2.0),
+        running: 1,
+        lag_s: 0,
+        active_parts: 10,
+        queries: vec![query],
+        uptime_s: Some(100),
+        server_cpu_time_us: None,
+        max_memory_usage: Some(9 * GIB),
+        unreachable_reason: None,
+        poll_ms: Some(20),
+    };
+    let mut app = App::new();
+    app.update(Event::Snapshot(Box::new(crate::model::FleetSnapshot {
+        taken_at: std::time::SystemTime::now(),
+        nodes: vec![node],
+    })));
+    app.update(key(KeyCode::Tab));
+    app.update(key(KeyCode::Enter));
+    assert!(
+        matches!(app.selected_row().map(|(_, id)| id), Some(crate::tree::RowId::Query { .. })),
+        "the long query's insight lands on it"
+    );
+    app
+}
+
+#[test]
+fn the_selected_query_shows_its_sql_right_under_it() {
+    let app = app_on_query("/* Username: someone@example.net */ SELECT region, count() AS ops FROM accounting.bank_record WHERE day = today() GROUP BY region");
+    let screen = render(&app, 140, 44);
+    let lines: Vec<&str> = screen.lines().collect();
+    let row = lines.iter().position(|l| l.contains("▌")).expect("the cursor's row");
+    assert!(lines[row + 1].contains("▎ SELECT region, count() AS ops"), "{screen}");
+    assert!(lines[row + 2].contains("▎ FROM accounting.bank_record"), "a clause a line: {screen}");
+    assert!(lines[row + 3].contains("▎ WHERE day = today()"), "{screen}");
+    assert!(lines[row + 4].contains("▎ GROUP BY region"), "{screen}");
+    assert!(!screen.contains("Username"), "Redash's comment is not part of what to read: {screen}");
+    assert!(!screen.contains("lines 1–"), "four lines fit: no scrolling\n{screen}");
+    let drawer: String = lines[lines.len() - 6..].join("\n");
+    assert!(!drawer.contains("bank_record"), "the drawer no longer repeats the SQL:\n{drawer}");
+
+    // With the cursor in the insights, the tree closes the SQL again.
+    let mut app = app;
+    app.update(key(KeyCode::Tab));
+    assert!(!render(&app, 140, 44).contains("▎ SELECT region"));
+}
+
+#[test]
+fn a_query_longer_than_its_room_scrolls_with_j_and_k() {
+    let columns: Vec<String> = (1..=20).map(|n| format!("  column_{n:02},")).collect();
+    let sql = format!("SELECT\n{}\n  last_column\nFROM wide_table", columns.join("\n"));
+    let mut app = app_on_query(&sql);
+    let window = |app: &App| -> (usize, usize, usize) {
+        let screen = render(app, 120, 34);
+        let re = regex::Regex::new(r"lines (\d+)–(\d+) of (\d+) · J K or shift ↑↓ to scroll").unwrap();
+        let caps = re.captures(&screen).unwrap_or_else(|| panic!("no scroll footer:\n{screen}"));
+        let n = |i: usize| caps[i].parse::<usize>().unwrap();
+        (n(1), n(2), n(3))
+    };
+    let (first, last, total) = window(&app);
+    assert_eq!((first, total), (1, 23), "23 lines, from the top");
+    assert!(last < total);
+    assert!(render(&app, 120, 34).contains("┃"), "a scrollbar");
+
+    app.update(key(KeyCode::Char('J')));
+    app.update(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)));
+    assert_eq!(window(&app).0, 3, "J and shift ↓ each scroll a line");
+
+    for _ in 0..40 {
+        app.update(key(KeyCode::Char('J')));
+    }
+    let (_, last, total) = window(&app);
+    assert_eq!(last, total, "it stops at the last line");
+    for _ in 0..40 {
+        app.update(key(KeyCode::Char('K')));
+    }
+    assert_eq!(window(&app).0, 1, "and at the first");
+    assert!(
+        matches!(app.selected_row().map(|(_, id)| id), Some(crate::tree::RowId::Query { .. })),
+        "scrolling the SQL does not move the cursor"
+    );
+}
+
 #[test]
 fn the_insights_name_the_trouble() {
     let app = app_after(20);

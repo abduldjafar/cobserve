@@ -1,4 +1,4 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────────────────────────── ● LIVE 2s · 02:16:19 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
+╭ ◆ FLEETLENS  ✖ CRITICAL  ──────────────────────────────────────────────── ● LIVE 2s · 03:18:59 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE  ╮
 │ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄   QUERIES 15 · 4 ✕   │
 │ REDASH  13 waiting    ▇████ · oldest 3m43s ✖ · workers ●●●●●● 6/6 busy · 2 failed/5m · +3 in other queues                      [2] queue │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
@@ -7,6 +7,12 @@
 │  ▾ clickhouse-bi     ▆▆▃▅▆▆▄▅▆▆   67.2%  ████████████████▏         43.0/64   71.7%  █████████████████▎       11.5/16     3 ✕1    6m40s ✕ │
 │  ├─ r_redash → j.petrova          33.1%  ████████                     21.2   11.9%  ██▉                         1.90        1    6m40s ✕ │
 │ ▌│  └─ SELECT · open_banking.…    33.1%  ████████                     21.2   11.9%  ██▉                         1.90      95%    6m40s ✕ │
+│  │     ▎ SELECT                                                                                                                          │
+│  │     ▎   toStartOfHour(ts) AS h,                                                                                                       │
+│  │     ▎   countIf(state = 'failed') AS failed                                                                                           │
+│  │     ▎ FROM open_banking.ais                                                                                                           │
+│  │     ▎ WHERE ts >= now() - INTERVAL 6 HOUR                                                                                             │
+│  │     ▎ GROUP BY h                                                                                                                      │
 │  ├─ bi_loader                     20.0%  ████▊                        12.8   20.0%  ████▊                       3.20        1      14s   │
 │  ├─ r_redash → m.kairys           10.7%  ██▌                          6.82    6.9%  █▋                          1.10        1      10s   │
 │  └─ server · caches · merges       3.4%  ▉                            2.21   33.0%  ███████▉                    5.27                     │
@@ -14,12 +20,6 @@
 │  ▸ clickhouse2       ▃▅▆▆▃▅▆▆▃▅   41.8%  ██████████                26.7/64   28.6%  ██████▉                   4.6/16        2      18s   │
 │  ▸ clickhouse5 NEW   ▆▆▃▄▆▆▃▄▆▆   37.6%↗ █████████                 24.0/64    4.0%  █                         0.6/16        0        —   │
 │  ▸ 4 healthy nodes folded · ch4 ch6 ch8 ch9 · all ≤ 22%                                                                        ␣ unfold  │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │
@@ -34,7 +34,7 @@
 │  ▲ Redash #8585   running 2× · j.petrova                                                                                                 │
 │ ─ c3e59c27 · j.petrova @ clickhouse-bi · Redash #8585 ────────────────────────────────────────────────────────────────────────────────── │
 │ ⏱ 6m40s ✕ runaway   MEM 21.2 GiB = 88% of its 24.0 GiB limit ████████▉    CPU 1.90 cores                                                 │
-│ READ 62.3 GiB / 3.0B rows @ 159.5 MiB/s   PROGRESS ███████████▍ 95% of ~3.2B rows · ETA ~20s · started 02:13:35 UTC · Select             │
-│ SELECT toStartOfHour(ts) AS h, countIf(state = 'failed') AS failed FROM open_banking.ais WHERE ts >= now() - INTERVAL 6 HOUR GROUP BY h  │
+│ READ 62.3 GiB / 3.0B rows @ 159.5 MiB/s   PROGRESS ███████████▍ 95% of ~3.2B rows · ETA ~20s · started 03:16:15 UTC · Select             │
+│                                                                                                                                          │
 │  ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help   q  quit              │
 ╰───────────────────────────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯

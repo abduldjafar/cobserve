@@ -83,6 +83,8 @@ pub struct Viewport {
     pub insights: Cell<usize>,
     /// How many tiles fit in a row of the map, so ↑ ↓ can move by a row.
     pub map_columns: Cell<usize>,
+    /// How far the selected query's SQL can scroll, as last drawn.
+    pub sql_max: Cell<usize>,
 }
 
 /// Keep `selected` inside a window of `height` rows starting at `offset`, moving the window as
@@ -157,6 +159,10 @@ pub struct App {
     watch: Watch,
     pub focus: Focus,
     insight_selection: usize,
+    /// How far the SQL under the selected query is scrolled, and which query that is for: a
+    /// new query starts at its first line.
+    sql_scroll: usize,
+    sql_scroll_of: Option<String>,
     map_selection: usize,
     tape_selection: usize,
     /// `POLL_MS`, so the header can say how often it polls and notice when data is late.
@@ -197,6 +203,8 @@ impl App {
             watch: Watch::default(),
             focus: Focus::Tree,
             insight_selection: 0,
+            sql_scroll: 0,
+            sql_scroll_of: None,
             map_selection: 0,
             tape_selection: 0,
             poll_interval: Duration::from_millis(2000),
@@ -489,6 +497,24 @@ impl App {
         self.insight_selection
     }
 
+    /// The first line of `query_id`'s SQL to show under its row.
+    pub fn sql_scroll_for(&self, query_id: &str) -> usize {
+        if self.sql_scroll_of.as_deref() == Some(query_id) { self.sql_scroll } else { 0 }
+    }
+
+    /// `J` `K` (or shift ↑ ↓): scroll the SQL of the selected query, when one is selected.
+    fn scroll_sql(&mut self, delta: isize) {
+        let Some(RowId::Query { query_id, .. }) = self.selected.clone() else {
+            return;
+        };
+        if self.sql_scroll_of.as_deref() != Some(query_id.as_str()) {
+            self.sql_scroll = 0;
+            self.sql_scroll_of = Some(query_id);
+        }
+        let max = self.viewport.sql_max.get() as isize;
+        self.sql_scroll = (self.sql_scroll as isize + delta).clamp(0, max) as usize;
+    }
+
     pub fn map_selection(&self) -> usize {
         self.map_selection
     }
@@ -639,7 +665,7 @@ impl App {
 
         match self.view {
             View::Nodes if self.focus == Focus::Insights => self.on_insights_key(key.code),
-            View::Nodes => self.on_tree_key(key.code),
+            View::Nodes => self.on_tree_key(key),
             View::Queue => self.on_queue_key(key.code),
             View::Map => self.on_map_key(key.code),
             View::Tape => self.on_tape_key(key.code),
@@ -647,8 +673,17 @@ impl App {
         self.sync_view_state();
     }
 
-    fn on_tree_key(&mut self, code: KeyCode) {
-        match code {
+    fn on_tree_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Up => return self.scroll_sql(-1),
+                KeyCode::Down => return self.scroll_sql(1),
+                _ => {}
+            }
+        }
+        match key.code {
+            KeyCode::Char('K') => self.scroll_sql(-1),
+            KeyCode::Char('J') => self.scroll_sql(1),
             KeyCode::Char('s') => self.tree.sort = self.tree.sort.next(),
             KeyCode::Char('u') => {
                 self.tree.pivot = !self.tree.pivot;
