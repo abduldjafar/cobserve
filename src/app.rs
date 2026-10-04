@@ -3,7 +3,8 @@
 //! Everything the UI draws lives here or in the model; sources push `Event`s in and the loop
 //! applies them. Nothing in this file knows that ClickHouse or Redash exist.
 
-use crate::claude::{Mode, PaneState, Sessions};
+use crate::claude::{Mode, PaneState, PickRow, Picker, Sessions};
+use crate::folders::Found;
 use crate::history::{self, History};
 use crate::insight::{self, Insight, Subject};
 use crate::model::{fleet_totals, mark_new_nodes, FleetSnapshot, FleetView, Job, JobState, QueueStatus};
@@ -109,7 +110,8 @@ pub struct Viewport {
     pub map_columns: Cell<usize>,
     /// How far the selected query's SQL can scroll, as last drawn.
     pub sql_max: Cell<usize>,
-    /// What the mouse can click, as last drawn: the header's tabs, the sessions, Claude's pane.
+    /// What the mouse can click, as last drawn: the header's tabs, the sessions, Claude's pane,
+    /// the folder picker's rows.
     pub hits: RefCell<Vec<(Rect, Hit)>>,
 }
 
@@ -121,6 +123,12 @@ pub enum Hit {
     NewSession,
     /// Claude's screen: clicks and the wheel go to the program.
     Pane,
+    /// A row of the folder picker.
+    Pick(PickRow),
+    /// A step of the picker's path, by its place in `Picker::crumbs`.
+    Crumb(usize),
+    /// The picker's way out.
+    Cancel,
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -173,6 +181,8 @@ pub enum Event {
     Paste(String),
     /// A click or a turn of the wheel.
     Mouse(MouseEvent),
+    /// Folders for the picker of a new session (`folders.rs`).
+    Folders(Found),
     Quit,
 }
 
@@ -300,7 +310,10 @@ impl App {
                 }
             }
             Event::Pane(id, bytes) => {
-                let on_screen = self.view == View::Claude && self.claude.current().is_some_and(|s| s.id == id);
+                // The picker covers the pane while a new session's folder is chosen.
+                let on_screen = self.view == View::Claude
+                    && !matches!(self.claude.mode, Mode::Opening(_))
+                    && self.claude.current().is_some_and(|s| s.id == id);
                 if let Some(session) = self.claude.by_id_mut(id) {
                     session.pane.feed(&bytes, on_screen);
                 }
@@ -311,6 +324,11 @@ impl App {
                 }
             }
             Event::Mouse(event) => self.on_mouse(event),
+            Event::Folders(found) => {
+                if let Mode::Opening(picker) = &mut self.claude.mode {
+                    picker.found(found);
+                }
+            }
             Event::Paste(text) => {
                 let line = text.lines().next().unwrap_or_default();
                 if self.view == View::Claude {
@@ -319,7 +337,7 @@ impl App {
                             let room = crate::claude::NAME_MAX.saturating_sub(name.chars().count());
                             name.extend(line.chars().take(room));
                         }
-                        Mode::Opening(dir) => dir.push_str(line),
+                        Mode::Opening(picker) => picker.type_text(line),
                         Mode::Typing => {
                             if let Some(session) = self.claude.current_mut().filter(|s| s.pane.is_running()) {
                                 session.pane.paste(&text);
@@ -381,8 +399,8 @@ impl App {
         }
     }
 
-    /// Ask where a new session should work — the one on screen's directory to start from —
-    /// unless every number is taken.
+    /// Ask where a new session should work — the folder picker, starting where the one on
+    /// screen works — unless every number is taken.
     pub fn ask_new_session(&mut self) {
         if self.claude.list.len() >= crate::claude::MAX_SESSIONS {
             self.notice = Some((
@@ -392,30 +410,74 @@ impl App {
             self.claude.mode = Mode::Typing;
             return;
         }
-        self.claude.mode = Mode::Opening(self.claude.next_dir());
+        let dir = crate::pty::expand(&self.claude.next_dir());
+        self.claude.mode = Mode::Opening(Picker::new(dir));
     }
 
-    /// Typing the directory of a new session.
+    /// The folder picker's keys: ↑ ↓ choose, ⏎ opens the session in the folder under the
+    /// cursor, → goes into it and ← back up; what is typed searches.
     fn on_opening_key(&mut self, key: KeyEvent) {
-        let Mode::Opening(dir) = &mut self.claude.mode else {
+        let Mode::Opening(picker) = &mut self.claude.mode else {
             return;
         };
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
+            // A search first, then the picker.
+            KeyCode::Esc if picker.searching() => picker.clear_query(),
+            KeyCode::Esc => self.claude.mode = Mode::Typing,
             KeyCode::Enter => {
-                let dir = dir.clone();
-                self.claude.mode = Mode::Typing;
-                if self.claude.open_new(&dir).is_none() {
-                    self.ask_new_session();
+                let row = picker.at_cursor();
+                self.pick(row, true);
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                let row = picker.at_cursor();
+                self.pick(row, false);
+            }
+            KeyCode::Left => picker.up(),
+            KeyCode::Up => picker.step(-1),
+            KeyCode::Down => picker.step(1),
+            KeyCode::Char('p') if ctrl => picker.step(-1),
+            KeyCode::Char('n') if ctrl => picker.step(1),
+            KeyCode::PageUp => picker.step(-10),
+            KeyCode::PageDown => picker.step(10),
+            KeyCode::Home => picker.cursor = 0,
+            KeyCode::End => picker.step(isize::MAX),
+            // With nothing left to delete, back up a folder, as a file dialog does.
+            KeyCode::Backspace => {
+                if !picker.backspace() {
+                    picker.up();
                 }
             }
-            KeyCode::Esc => self.claude.mode = Mode::Typing,
-            KeyCode::Backspace => {
-                dir.pop();
-            }
             // ctrl+u clears it, as in a shell.
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => dir.clear(),
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => dir.push(c),
+            KeyCode::Char('u') if ctrl => picker.clear_query(),
+            KeyCode::Char(c) if !ctrl => picker.type_text(&c.to_string()),
             _ => {}
+        }
+    }
+
+    /// A row of the picker acted on: `open` starts the session in its folder (⏎, or a click on
+    /// the first row); otherwise the picker goes into it, as a click on a folder does.
+    fn pick(&mut self, row: Option<PickRow>, open: bool) {
+        let Mode::Opening(picker) = &mut self.claude.mode else {
+            return;
+        };
+        let Some(row) = row else {
+            return;
+        };
+        match (row, picker.path_of(row)) {
+            (PickRow::Up, _) => picker.up(),
+            (PickRow::Here, Some(dir)) if open => self.open_in(&dir),
+            (PickRow::Folder(_), Some(dir)) if open => self.open_in(&dir),
+            (PickRow::Folder(_), Some(dir)) => picker.go_to(dir),
+            _ => {}
+        }
+    }
+
+    /// A new session working in `dir`, on screen.
+    fn open_in(&mut self, dir: &std::path::Path) {
+        self.claude.mode = Mode::Typing;
+        if self.claude.open_new(&crate::pty::tilde(dir)).is_none() {
+            self.ask_new_session();
         }
     }
 
@@ -441,10 +503,21 @@ impl App {
                     self.open_claude();
                     self.claude.select(index);
                 }
+                Some(Hit::NewSession) if matches!(self.claude.mode, Mode::Opening(_)) => {}
                 Some(Hit::NewSession) => {
                     self.open_claude();
                     self.ask_new_session();
                 }
+                // A folder is gone into with a click; the first row opens the session there.
+                Some(Hit::Pick(row)) => self.pick(Some(row), row == PickRow::Here),
+                Some(Hit::Crumb(index)) => {
+                    if let Mode::Opening(picker) = &mut self.claude.mode
+                        && let Some((_, dir)) = picker.crumbs().get(index).cloned()
+                    {
+                        picker.go_to(dir);
+                    }
+                }
+                Some(Hit::Cancel) => self.claude.mode = Mode::Typing,
                 Some(Hit::Pane) | None => {}
             },
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -459,7 +532,12 @@ impl App {
                         let last = self.tape.len().saturating_sub(1);
                         self.tape_selection = self.tape_selection.saturating_add_signed(delta).min(last);
                     }
-                    View::Map | View::Claude => {}
+                    View::Claude => {
+                        if let Mode::Opening(picker) = &mut self.claude.mode {
+                            picker.step(delta * 3);
+                        }
+                    }
+                    View::Map => {}
                 }
             }
             _ => {}
@@ -1967,6 +2045,21 @@ mod tests {
         &mut app.claude.current_mut().expect("a session").pane
     }
 
+    /// The picker's lookup answered as `main.rs` would: these folders in the folder it is in.
+    fn answer(app: &mut App, names: &[&str]) {
+        let Mode::Opening(picker) = &mut app.claude.mode else {
+            panic!("not picking: {:?}", app.claude.mode);
+        };
+        let lookup = picker.lookup().expect("a lookup");
+        assert!(picker.lookup().is_none(), "asked once");
+        let folders = names
+            .iter()
+            .map(|name| crate::folders::Folder { path: lookup.dir.join(name), shown: name.to_string(), hit: None, branch: None })
+            .collect();
+        let found = Found { generation: lookup.generation, dir: Some(lookup.dir.clone()), folders, done: true, ..Found::default() };
+        app.update(Event::Folders(found));
+    }
+
     #[test]
     fn five_opens_claude_and_asks_for_it_to_start() {
         let mut app = app_with_fake();
@@ -2015,14 +2108,20 @@ mod tests {
         pane(&mut app).state = PaneState::Running;
         let first = app.claude.current().unwrap().id;
 
-        // ctrl+\ n asks where; ⏎ opens it there, on screen.
+        // ctrl+\ n opens the picker where the one on screen works; ← goes up a folder, and ⏎
+        // on one opens the session there, on screen.
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('n')));
-        assert_eq!(app.claude.mode, Mode::Opening("~/work/cobserve".into()), "where the one on screen works, to start from");
-        app.update(ctrl('u'));
-        for c in "~/work/airflow".chars() {
-            app.update(key(KeyCode::Char(c)));
-        }
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+        let Mode::Opening(picker) = &app.claude.mode else {
+            panic!("{:?}", app.claude.mode);
+        };
+        assert_eq!(picker.dir, home.join("work/cobserve"), "where the one on screen works, to start from");
+        answer(&mut app, &["docs", "src"]);
+        app.update(key(KeyCode::Left));
+        answer(&mut app, &["airflow", "cobserve"]);
+        app.update(key(KeyCode::Down));
+        app.update(key(KeyCode::Down));
         app.update(key(KeyCode::Enter));
         assert_eq!((app.claude.list.len(), app.claude.active), (2, 1));
         assert_eq!(app.claude.current().unwrap().dir, "~/work/airflow");
@@ -2076,6 +2175,44 @@ mod tests {
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('m')));
         assert_eq!(app.view, View::Tape, "back where it came from");
+    }
+
+    #[test]
+    fn the_picker_s_keys_search_go_up_and_give_up_in_that_order() {
+        let mut app = app_with_fake();
+        app.claude.default_dir = "~/work/cobserve".into();
+        app.open_claude();
+        pane(&mut app).state = PaneState::Running;
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+        let picker = |app: &App| match &app.claude.mode {
+            Mode::Opening(picker) => picker.clone(),
+            other => panic!("not picking: {other:?}"),
+        };
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('n')));
+        answer(&mut app, &["docs", "src", "tests"]);
+        // The wheel moves the cursor, three rows a tick; it stays in the list.
+        let wheel = || Event::Mouse(MouseEvent { kind: MouseEventKind::ScrollDown, column: 50, row: 10, modifiers: KeyModifiers::NONE });
+        app.update(wheel());
+        assert_eq!(picker(&app).at_cursor(), Some(PickRow::Folder(1)));
+        app.update(wheel());
+        assert_eq!(picker(&app).cursor, 4, "the last row");
+        // A paste is a search, as typing is; esc clears it, the next esc gives up.
+        app.update(Event::Paste("src\nmore".into()));
+        assert_eq!(picker(&app).query, "src", "its first line");
+        app.update(key(KeyCode::Esc));
+        assert!(picker(&app).query.is_empty());
+        // Backspace with nothing typed goes up a folder; Tab goes into the one under the cursor.
+        app.update(key(KeyCode::Backspace));
+        assert_eq!(picker(&app).dir, home.join("work"));
+        answer(&mut app, &["cobserve"]);
+        app.update(key(KeyCode::End));
+        app.update(key(KeyCode::Tab));
+        assert_eq!(picker(&app).dir, home.join("work/cobserve"));
+        app.update(key(KeyCode::Esc));
+        assert_eq!(app.claude.mode, Mode::Typing);
+        assert_eq!(app.claude.list.len(), 1, "nothing opened");
+        assert!(pane(&mut app).take_outbox().is_empty(), "and nothing typed into Claude");
     }
 
     #[test]
@@ -2165,6 +2302,11 @@ mod tests {
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('5')));
         assert!(!app.claude.calling(), "seen once it is on screen");
+        // Behind the folder picker it is not on screen either.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('n')));
+        app.update(Event::Pane(first, b"\x07".to_vec()));
+        assert!(app.claude.calling(), "the picker covers it");
     }
 
     #[test]

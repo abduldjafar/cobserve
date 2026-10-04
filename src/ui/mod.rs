@@ -396,11 +396,14 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("⏎", "keep the name"),
             ("esc", "cancel"),
         ],
-        View::Claude if matches!(app.claude.mode, crate::claude::Mode::Opening(_)) => &[
-            ("⏎", "open it there"),
-            ("esc", "cancel"),
-            ("ctrl+u", "clear"),
-        ],
+        View::Claude if matches!(&app.claude.mode, crate::claude::Mode::Opening(p) if p.searching()) => {
+            tail = Some("a click on a folder goes into it");
+            &[("↑↓", "choose"), ("⏎", "open the session there"), ("→", "go in"), ("esc", "clear the search")]
+        }
+        View::Claude if matches!(app.claude.mode, crate::claude::Mode::Opening(_)) => {
+            tail = Some("type to search · a click on a folder goes into it");
+            &[("↑↓", "choose"), ("⏎", "open the session there"), ("→", "go in"), ("←", "up"), ("esc", "cancel")]
+        }
         View::Claude if app.claude.mode == crate::claude::Mode::Bar => {
             // The bar Claude runs under, its ctrl+\ lit and the way back at its end: nothing
             // else moves.

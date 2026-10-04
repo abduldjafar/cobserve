@@ -13,12 +13,16 @@
 //! back to the monitor.
 //!
 //! This module is the sessions' state — emulated screens, bytes owed to each program, what each
-//! program asked of its terminal — and is pure like the rest of `App`. The processes (PTYs,
-//! children, the threads that read them) are `pty.rs`, driven from `main.rs`.
+//! program asked of its terminal — and the folder picker's, and is pure like the rest of `App`.
+//! The processes (PTYs, children, the threads that read them) are `pty.rs`, the folders read for
+//! the picker `folders.rs`, both driven from `main.rs`.
 
 use crate::app::View;
+use crate::folders::{Folder, Found, Lookup};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::cell::Cell;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The number of the first session: the views are 1 to 4, so the sessions go on from 5, and
 /// one number picks any tab, view or session.
@@ -202,17 +206,212 @@ impl Session {
         trimmed.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(trimmed).to_string()
     }
 
-    /// The tab's text: the name, else Claude's own title without its leading glyph, else
-    /// `claude` — the tab's number tells two of those apart.
+    /// The tab's text: the name, else what Claude says it is working on (its title without
+    /// the leading glyph), else the folder — Claude's title before there is a task is only
+    /// its own name, which tells no two sessions apart.
     pub fn label(&self) -> String {
         if let Some(name) = &self.name {
             return name.clone();
         }
         let title = self.pane.title.as_deref().map(|t| t.trim_start_matches(|c: char| !c.is_alphanumeric()).trim());
         match title {
-            Some(title) if !title.is_empty() => title.to_string(),
-            _ => "claude".to_string(),
+            Some(title) if !title.is_empty() && !title.eq_ignore_ascii_case("claude code") => title.to_string(),
+            _ => self.dir_label(),
         }
+    }
+}
+
+/// Where a new session will work, chosen as in a file explorer: a folder at a time — a click
+/// goes in, the path above it goes back up — or a search below it. The folders are read by
+/// `folders.rs` on a thread `main.rs` starts; this is what was asked and what came back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picker {
+    /// The folder looked at: absolute, as the disk has it once the first answer is in.
+    pub dir: PathBuf,
+    /// The search, as typed: a name to find below `dir`, or a path.
+    pub query: String,
+    pub folders: Vec<Folder>,
+    /// The branch of `dir` itself.
+    pub branch: Option<String>,
+    /// An answer for what is on screen is still coming.
+    pub looking: bool,
+    /// The last search stopped at its limits.
+    pub cut_short: bool,
+    pub error: Option<String>,
+    /// The row the cursor is on, in `rows()`.
+    pub cursor: usize,
+    /// The first row on screen, kept by the drawing so the cursor stays in sight.
+    pub scroll: Cell<usize>,
+    generation: u64,
+    asked: u64,
+}
+
+/// A row of the picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickRow {
+    /// Open the session in the folder looked at.
+    Here,
+    /// The folder above.
+    Up,
+    /// One of `folders`.
+    Folder(usize),
+}
+
+/// Lookups are numbered across every picker, so an answer from one closed a moment ago is
+/// never taken for the new one's.
+fn next_generation() -> u64 {
+    static GENERATIONS: AtomicU64 = AtomicU64::new(0);
+    GENERATIONS.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+impl Picker {
+    pub fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            query: String::new(),
+            folders: Vec::new(),
+            branch: None,
+            looking: true,
+            cut_short: false,
+            error: None,
+            cursor: 0,
+            scroll: Cell::new(0),
+            generation: next_generation(),
+            asked: 0,
+        }
+    }
+
+    /// Searching rather than looking at one folder.
+    pub fn searching(&self) -> bool {
+        !self.query.trim().is_empty()
+    }
+
+    /// What the list shows: in a folder, the way to open the session there and the way up
+    /// before its folders; searching, what was found.
+    pub fn rows(&self) -> Vec<PickRow> {
+        let mut rows = Vec::new();
+        if !self.searching() {
+            rows.push(PickRow::Here);
+            if self.dir.parent().is_some() {
+                rows.push(PickRow::Up);
+            }
+        }
+        rows.extend((0..self.folders.len()).map(PickRow::Folder));
+        rows
+    }
+
+    /// The row under the cursor.
+    pub fn at_cursor(&self) -> Option<PickRow> {
+        self.rows().get(self.cursor).copied()
+    }
+
+    /// The folder a row stands for.
+    pub fn path_of(&self, row: PickRow) -> Option<PathBuf> {
+        match row {
+            PickRow::Here => Some(self.dir.clone()),
+            PickRow::Up => self.dir.parent().map(Path::to_path_buf),
+            PickRow::Folder(index) => self.folders.get(index).map(|f| f.path.clone()),
+        }
+    }
+
+    /// What `main.rs` should look up for what is on screen now — once.
+    pub fn lookup(&mut self) -> Option<Lookup> {
+        (self.asked != self.generation).then(|| {
+            self.asked = self.generation;
+            Lookup { generation: self.generation, dir: self.dir.clone(), query: self.query.clone() }
+        })
+    }
+
+    /// An answer, taken when it is for what is on screen.
+    pub fn found(&mut self, found: Found) {
+        if found.generation != self.generation {
+            return;
+        }
+        if let Some(dir) = found.dir {
+            self.dir = dir;
+        }
+        self.branch = found.branch;
+        self.folders = found.folders;
+        self.looking = !found.done;
+        self.cut_short = found.cut_short;
+        self.error = found.error;
+        self.cursor = self.cursor.min(self.rows().len().saturating_sub(1));
+    }
+
+    /// Something to look up changed: the cursor goes back to the top.
+    fn changed(&mut self) {
+        self.generation = next_generation();
+        self.looking = true;
+        self.cut_short = false;
+        self.error = None;
+        self.cursor = 0;
+        self.scroll.set(0);
+    }
+
+    /// Into `dir`, with the search cleared.
+    pub fn go_to(&mut self, dir: PathBuf) {
+        self.dir = dir;
+        self.query.clear();
+        self.folders.clear();
+        self.branch = None;
+        self.changed();
+    }
+
+    /// Up a folder, where there is one.
+    pub fn up(&mut self) {
+        if let Some(parent) = self.dir.parent().map(Path::to_path_buf) {
+            self.go_to(parent);
+        }
+    }
+
+    pub fn type_text(&mut self, text: &str) {
+        if !text.is_empty() {
+            self.query.push_str(text);
+            self.changed();
+        }
+    }
+
+    /// The last character of the search off; `false` when there was none.
+    pub fn backspace(&mut self) -> bool {
+        let had = self.query.pop().is_some();
+        if had {
+            self.changed();
+        }
+        had
+    }
+
+    pub fn clear_query(&mut self) {
+        if !self.query.is_empty() {
+            self.query.clear();
+            self.changed();
+        }
+    }
+
+    /// The cursor `delta` rows on, within the list.
+    pub fn step(&mut self, delta: isize) {
+        let last = self.rows().len().saturating_sub(1);
+        self.cursor = self.cursor.saturating_add_signed(delta).min(last);
+    }
+
+    /// The way back up, `~ › work › cobserve`: each step's name and the folder it opens.
+    pub fn crumbs(&self) -> Vec<(String, PathBuf)> {
+        let home = std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.parent().is_some());
+        let (mut at, rest, first) = match home {
+            Some(home) if self.dir.starts_with(&home) => {
+                let rest = self.dir.strip_prefix(&home).unwrap_or(Path::new("")).to_path_buf();
+                (home, rest, "~")
+            }
+            _ => {
+                let rest = self.dir.strip_prefix("/").unwrap_or(&self.dir).to_path_buf();
+                (PathBuf::from("/"), rest, "/")
+            }
+        };
+        let mut crumbs = vec![(first.to_string(), at.clone())];
+        for part in rest.components() {
+            at.push(part);
+            crumbs.push((part.as_os_str().to_string_lossy().to_string(), at.clone()));
+        }
+        crumbs
     }
 }
 
@@ -225,8 +424,8 @@ pub enum Mode {
     Bar,
     /// Renaming the session on screen; the text so far.
     Naming(String),
-    /// Opening a session: the directory it will work in, as typed so far.
-    Opening(String),
+    /// Opening a session: choosing the folder it will work in.
+    Opening(Picker),
 }
 
 /// Every session of view 5, and which one is on screen.
@@ -621,6 +820,46 @@ mod tests {
     }
 
     #[test]
+    fn the_picker_asks_once_per_change_and_takes_only_its_own_answers() {
+        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+        let work = home.join("work");
+        let folder = |name: &str| Folder { path: work.join(name), shown: name.into(), hit: None, branch: None };
+        let mut picker = Picker::new(work.clone());
+        let first = picker.lookup().expect("the first look");
+        assert_eq!((first.dir.as_path(), first.query.as_str()), (work.as_path(), ""));
+        assert!(picker.lookup().is_none(), "asked once");
+        assert_eq!(picker.rows(), [PickRow::Here, PickRow::Up], "the way to open it here and the way up, before anything is read");
+        let answer = |generation, folders| Found { generation, dir: Some(work.clone()), folders, done: true, ..Found::default() };
+        picker.found(answer(first.generation, vec![folder("airflow"), folder("cobserve")]));
+        assert_eq!(picker.rows().len(), 4);
+        assert!(!picker.looking);
+
+        // Typing searches; an answer to the question before comes too late to be taken.
+        picker.type_text("cob");
+        let search = picker.lookup().expect("a search");
+        assert_eq!(search.query, "cob");
+        picker.found(answer(first.generation, Vec::new()));
+        assert_eq!(picker.folders.len(), 2, "dropped");
+        picker.found(answer(search.generation, vec![folder("cobserve")]));
+        assert_eq!(picker.rows(), [PickRow::Folder(0)], "searching, the list is what was found");
+        assert_eq!(picker.path_of(PickRow::Folder(0)), Some(work.join("cobserve")));
+
+        // In and up again, the search cleared on the way; the path back up.
+        picker.go_to(work.join("cobserve"));
+        assert!(picker.query.is_empty() && picker.looking && picker.cursor == 0);
+        let names = |picker: &Picker| picker.crumbs().into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+        assert_eq!(names(&picker), ["~", "work", "cobserve"]);
+        assert_eq!(picker.crumbs()[1].1, work);
+        picker.up();
+        assert_eq!(picker.dir, work);
+        picker.step(-5);
+        assert_eq!(picker.cursor, 0, "the cursor stays in the list");
+        picker.step(isize::MAX);
+        assert_eq!(picker.cursor, picker.rows().len() - 1);
+        assert_eq!(names(&Picker::new(PathBuf::from("/opt/tools"))), ["/", "opt", "tools"]);
+    }
+
+    #[test]
     fn sessions_open_switch_rename_and_close() {
         let mut sessions = Sessions::default();
         sessions.want_size.set((30, 100));
@@ -644,7 +883,9 @@ mod tests {
         assert_eq!(sessions.current().unwrap().label().len(), NAME_MAX);
         sessions.rename_current("");
         assert_eq!(sessions.current().unwrap().label(), "Tidy the README", "an empty name gives the default back");
-        assert_eq!(sessions.list[0].label(), "claude");
+        assert_eq!(sessions.list[0].label(), "cobserve", "no title yet: the folder");
+        sessions.list[0].pane.feed(b"\x1b]0;\xe2\x9c\xb3 Claude Code\x07", true);
+        assert_eq!(sessions.list[0].label(), "cobserve", "Claude's title before a task is only its name");
         // Numbered on from the views: the first session is tab 5.
         assert_eq!((Sessions::number_of(0), Sessions::number_of(1)), (5, 6));
         assert_eq!((sessions.index_of(5), sessions.index_of(6), sessions.index_of(7), sessions.index_of(4)), (Some(0), Some(1), None, None));
