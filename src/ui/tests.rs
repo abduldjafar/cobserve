@@ -67,7 +67,7 @@ fn the_screen_renders_at_the_target_size() {
     let lines: Vec<&str> = screen.lines().collect();
 
     // The masthead: the name, how the fleet is, the tabs, how fresh and the clock.
-    assert!(lines[0].starts_with("  ◆ fleetlens"), "{}", lines[0]);
+    assert!(lines[0].starts_with("  ◆ cobserve"), "{}", lines[0]);
     assert!(lines[0].contains("● live") || lines[0].contains("○ paused"));
     assert!(lines[0].contains("1 nodes") && lines[0].contains("5 sessions"), "the tabs: {}", lines[0]);
     assert!(lines[0].contains("✖ critical"), "the fake fleet is in trouble: {}", lines[0]);
@@ -551,11 +551,11 @@ fn ten_minutes_before_a_prayer_its_reminder_takes_the_line_until_waved_away() {
 fn the_terminal_s_title_says_how_the_fleet_is_and_the_next_prayer() {
     let mut app = app_after(3);
     at_moment(&mut app, MOMENT);
-    assert_eq!(super::title(&app), "fleetlens ✖ · Maghrib 17:50");
+    assert_eq!(super::title(&app), "cobserve ✖ · Maghrib 17:50");
     at_moment(&mut app, MOMENT + 6504);
-    assert_eq!(super::title(&app), "fleetlens ✖ · ◷ Maghrib in 10 min");
+    assert_eq!(super::title(&app), "cobserve ✖ · ◷ Maghrib in 10 min");
     at_moment(&mut app, MOMENT + 7090);
-    assert_eq!(super::title(&app), "fleetlens ✖ · Maghrib now");
+    assert_eq!(super::title(&app), "cobserve ✖ · Maghrib now");
 }
 
 #[test]

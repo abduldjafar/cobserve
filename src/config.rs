@@ -115,7 +115,7 @@ pub enum Notify {
 }
 
 pub const USAGE: &str = "\
-Usage: pay_monitoring [--credential FILE] [--claude]
+Usage: cobserve [--credential FILE] [--claude]
 
   --credential FILE   the ClickHouse servers with a login for each (and optionally the
                       cluster and Redash) in YAML — see credentials.example.yaml. What the
@@ -217,17 +217,17 @@ impl std::fmt::Display for ConfigError {
                 // order's step 1, the local rig, and the fleet — with a login per server from
                 // a file, or one login for every server.
                 let ways: [(&str, &str); 4] = [
-                    ("FAKE=1 pay_monitoring", "generated fleet, no network"),
+                    ("FAKE=1 cobserve", "generated fleet, no network"),
                     (
-                        "eval \"$(./dev/local-rig.sh env)\" && pay_monitoring",
+                        "eval \"$(./dev/local-rig.sh env)\" && cobserve",
                         "the local CH 24.10 rig",
                     ),
                     (
-                        "pay_monitoring --credential credentials.yaml",
+                        "cobserve --credential credentials.yaml",
                         "the fleet, a login per server (credentials.example.yaml)",
                     ),
                     (
-                        "CH_SEED_URLS=http://host:8123 CH_CLUSTER=ch_cluster CH_USER=u CH_PASSWORD=p pay_monitoring",
+                        "CH_SEED_URLS=http://host:8123 CH_CLUSTER=ch_cluster CH_USER=u CH_PASSWORD=p cobserve",
                         "the fleet, one login for every server",
                     ),
                 ];
@@ -956,7 +956,7 @@ redash:
 
     #[test]
     fn the_named_file_is_read_and_a_readable_one_is_flagged() {
-        let dir = std::env::temp_dir().join(format!("pay_monitoring-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cobserve-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("creds.yaml");
         std::fs::write(&path, FILE).unwrap();

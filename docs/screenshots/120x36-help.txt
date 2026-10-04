@@ -1,4 +1,4 @@
-  ◆ fleetlens   ✖ critical          1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ◆ cobserve   ✖ critical           1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
                ◆ keys · ? closes                                                                                        
   FLEET   9 no                                                                                             15 · 5 ✕     
@@ -32,5 +32,5 @@
   ─ clickhouse                                                                                            ────────────  
   MEM 58.7/64  read-only by design: nothing here can kill or change a query                                             
   memory: quer                                                                                            0 GiB query   
-  shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 06:22:05 WIB                              
+  shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 06:57:55 WIB                              
    ?  close   any other key goes back                                                                                   

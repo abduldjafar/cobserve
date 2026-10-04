@@ -2,9 +2,10 @@
 //! conversation it was in — so the next start shows them again, and each takes its conversation
 //! up where it was left when it is opened.
 //!
-//! Kept in `$XDG_STATE_HOME/fleetlens/sessions.json` (`~/.local/state/fleetlens/` without it),
+//! Kept in `$XDG_STATE_HOME/cobserve/sessions.json` (`~/.local/state/cobserve/` without it),
 //! readable by its owner alone. No credential is in it, and nothing of the conversations
-//! themselves: Claude Code and OpenCode keep those.
+//! themselves: Claude Code and OpenCode keep those. A file of the name the monitor had before
+//! (`fleetlens/`) is read when there is none yet.
 
 use crate::claude::Kind;
 use serde::{Deserialize, Serialize};
@@ -59,16 +60,25 @@ impl From<SavedKind> for Kind {
 
 /// Where the sessions are kept.
 pub fn path() -> Option<PathBuf> {
-    let state = std::env::var_os("XDG_STATE_HOME")
+    Some(state_dir()?.join("cobserve").join("sessions.json"))
+}
+
+/// Where they were kept under the monitor's name before.
+fn old_path() -> Option<PathBuf> {
+    Some(state_dir()?.join("fleetlens").join("sessions.json"))
+}
+
+fn state_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state")))?;
-    Some(state.join("fleetlens").join("sessions.json"))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state")))
 }
 
 /// The sessions of the last run; none when there were none, or the file is not one this reads.
 pub fn load() -> Saved {
-    path().and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+    let read = |path: Option<PathBuf>| std::fs::read_to_string(path?).ok();
+    read(path()).or_else(|| read(old_path())).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
 }
 
 /// Keep `saved` for the next run: written beside the old file and moved over it, so a crash

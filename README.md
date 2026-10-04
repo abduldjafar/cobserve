@@ -158,7 +158,7 @@ earlier run — by title or first prompt, folder and age, newest first; one open
 session in its own folder, as a copy when it is still open in the other terminal. The picker of
 a new session lists the folder's own under **Open the session here**. Only the names of
 conversations are read, and nothing leaves the machine; the list of sessions is kept in
-`~/.local/state/fleetlens/sessions.json`.
+`~/.local/state/cobserve/sessions.json`.
 
 A new session's folder is picked as in a file explorer, no typing needed: it starts in the
 folder the session on screen works in, a click on a folder goes into it, a click on a step of
@@ -245,7 +245,7 @@ clickhouse:
 ```sh
 cp credentials.example.yaml credentials.yaml     # gitignored; fill it in
 chmod 600 credentials.yaml
-pay_monitoring --credential credentials.yaml     # or: cargo run --release -- --credential credentials.yaml
+cobserve --credential credentials.yaml     # or: cargo run --release -- --credential credentials.yaml
 ```
 
 - Each server logs in as its own user, and a password is only ever sent to its own server. A

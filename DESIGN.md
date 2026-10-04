@@ -1,4 +1,4 @@
-# pay_monitoring — View 1 · NODES × USERS
+# cobserve — View 1 · NODES × USERS
 
 **Design + implementation guide.** Written for an implementer with no prior context.
 Read all of it before writing code; §5 (the math) and §10 (tests) are the contract.
@@ -711,7 +711,7 @@ or from a slope over the last minutes of it.
   gets it, for its own jobs.
 - **Sessions kept, and conversations taken up** (`src/saved.rs`, `src/conversations.rs`): the
   list of sessions — what each runs, where, its name and the conversation it is in — is kept in
-  `$XDG_STATE_HOME/fleetlens/sessions.json` (`~/.local/state/fleetlens/` without it, mode 600)
+  `$XDG_STATE_HOME/cobserve/sessions.json` (`~/.local/state/cobserve/` without it, mode 600)
   as it changes, and on the way out, a closed terminal (SIGHUP) or a SIGTERM included. The next
   run lists them again, marked `↻`, and each takes its conversation up when it is first shown:
   `claude --resume <id>` (started under `--session-id`, so its id is known from the start, and

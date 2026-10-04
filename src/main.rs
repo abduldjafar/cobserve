@@ -45,7 +45,7 @@ async fn main() -> color_eyre::Result<()> {
     let args = match config::Args::parse(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(e) => {
-            eprintln!("pay_monitoring: {e}");
+            eprintln!("cobserve: {e}");
             std::process::exit(2);
         }
     };
@@ -54,13 +54,13 @@ async fn main() -> color_eyre::Result<()> {
         return Ok(());
     }
     if args.version {
-        println!("pay_monitoring {}", env!("CARGO_PKG_VERSION"));
+        println!("cobserve {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let config = match Config::load(&args) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("pay_monitoring: {e}");
+            eprintln!("cobserve: {e}");
             std::process::exit(2);
         }
     };
@@ -71,7 +71,7 @@ async fn main() -> color_eyre::Result<()> {
         Ok(terminal) => terminal,
         Err(e) => {
             // Piping this binary into a file is a normal thing to do; a panic is not the answer.
-            eprintln!("pay_monitoring: no terminal to draw on ({e}). Run it in a terminal, or FAKE=1 with a TTY capture.");
+            eprintln!("cobserve: no terminal to draw on ({e}). Run it in a terminal, or FAKE=1 with a TTY capture.");
             std::process::exit(1);
         }
     };
@@ -451,10 +451,10 @@ fn notify(how: config::Notify, text: &str) {
 /// The system's notification, from a program of its own that is not waited for.
 fn system_notification(text: &str) {
     let command: Option<(&str, Vec<String>)> = if cfg!(target_os = "macos") {
-        let script = format!("display notification \"{text}\" with title \"fleetlens\" sound name \"Glass\"");
+        let script = format!("display notification \"{text}\" with title \"cobserve\" sound name \"Glass\"");
         Some(("osascript", vec!["-e".to_string(), script]))
     } else if cfg!(target_os = "linux") {
-        Some(("notify-send", vec!["fleetlens".to_string(), text.to_string()]))
+        Some(("notify-send", vec!["cobserve".to_string(), text.to_string()]))
     } else {
         None
     };

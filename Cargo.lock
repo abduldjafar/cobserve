@@ -232,6 +232,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "cobserve"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "color-eyre",
+ "crossterm",
+ "iana-time-zone",
+ "portable-pty",
+ "ratatui",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "shell-words",
+ "tokio",
+ "unicode-width",
+ "uuid",
+ "vt100",
+]
+
+[[package]]
 name = "color-eyre"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1294,28 +1316,6 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link",
-]
-
-[[package]]
-name = "pay_monitoring"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "color-eyre",
- "crossterm",
- "iana-time-zone",
- "portable-pty",
- "ratatui",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_norway",
- "shell-words",
- "tokio",
- "unicode-width",
- "uuid",
- "vt100",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@
 //! footer, on view 5 the list of sessions — and the work in the well it leaves.
 //!
 //! ```text
-//!   ◆ fleetlens  ▲ degraded       1 nodes   2 queue   3 map   4 tape   5 sessions      ● live 2s   14:12:07 WIB
+//!   ◆ cobserve  ▲ degraded       1 nodes   2 queue   3 map   4 tape   5 sessions      ● live 2s   14:12:07 WIB
 //!   Subuh 04:21 ━━━━━━ Terbit 05:33 ━━━━━━ Dzuhur 11:45 ━━━●┄┄┄┄ Ashar 14:48 · in 2h52m ┄┄┄┄ Maghrib …  Jakarta
 //!
 //!   FLEET   8 nodes · 2 hot   mem ━━━━━━━━╺━━━━━  58%  372/640 GiB ▁▂▃▅   cpu …   QUERIES 14 · 3 ✕
@@ -58,7 +58,7 @@ const DRAWER_TITLE_ONLY: u16 = 24;
 /// its reminder, when it is near. Minutes, not seconds: a title that changes every second is
 /// noise in a tab bar.
 pub fn title(app: &App) -> String {
-    let mut title = "fleetlens".to_string();
+    let mut title = "cobserve".to_string();
     if app.snapshot().is_some() {
         match insight::overall(&app.insights()) {
             Severity::Crit => title.push_str(" ✖"),
@@ -264,7 +264,7 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
 // The masthead
 // ---------------------------------------------------------------------------
 
-/// `◆ fleetlens  ▲ degraded      1 nodes  2 queue  3 map  4 tape  5 sessions      ● live 2s  14:12:07 WIB`
+/// `◆ cobserve  ▲ degraded      1 nodes  2 queue  3 map  4 tape  5 sessions      ● live 2s  14:12:07 WIB`
 ///
 /// The name and how the fleet is, the tabs, and how fresh the numbers are with the clock — a
 /// click on a tab opens it, on the clock flips it between the local zone and UTC. What does not
@@ -280,7 +280,7 @@ fn masthead(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, status: Sev
     let left = |word: bool| {
         let mut cells = Cells::new();
         cells.push("◆ ", theme.accent());
-        cells.push("fleetlens", theme.strong());
+        cells.push("cobserve", theme.strong());
         if app.snapshot().is_some() {
             let (glyph, sev) = match status {
                 Severity::Crit => ("✖", Severity::Crit),
