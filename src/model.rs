@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-/// Paysera's known per-query ceiling, used when `max_memory_usage` cannot be read (§5.4).
+/// The fleet's known per-query ceiling, used when `max_memory_usage` cannot be read (§5.4).
 pub const FALLBACK_MAX_MEMORY_USAGE: u64 = 9 * 1024 * 1024 * 1024;
 
 /// A query is runaway at this elapsed time (§5.4) …
@@ -330,7 +330,7 @@ pub fn user_cpu_pct(cores: f64, node: &NodeSnapshot) -> Option<f64> {
 // §5.4 runaway
 // ---------------------------------------------------------------------------
 
-/// The per-query memory limit on this node, or Paysera's known 9 GiB ceiling when
+/// The per-query memory limit on this node, or the fleet's known 9 GiB ceiling when
 /// `system.settings` could not be read.
 pub fn mem_limit(node: &NodeSnapshot) -> u64 {
     node.max_memory_usage
@@ -1002,7 +1002,7 @@ mod tests {
         q.person = Some(person.to_string());
         q.redash_query_id = Some(redash_id);
         q.sql = format!(
-            "/* Application: Redash */ /* Username: {person}@paysera.net, Redash query_id: {redash_id}, Redash: 10.1.0 */ SELECT 1"
+            "/* Application: Redash */ /* Username: {person}@example.net, Redash query_id: {redash_id}, Redash: 10.1.0 */ SELECT 1"
         );
         q
     }

@@ -54,6 +54,8 @@ async fn main() -> color_eyre::Result<()> {
             std::process::exit(2);
         }
     };
+    // Before any source starts: every person they attribute is displayed with it (§6.4).
+    attrib::set_home_domain(config.email_domain.clone());
 
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,

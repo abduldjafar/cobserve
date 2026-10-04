@@ -59,7 +59,7 @@ eval "$(./dev/local-rig.sh env)" && cargo run --release
 
 cargo run --release -- --credential credentials.yaml     # the fleet, a login per server
 
-CH_SEED_URLS=http://ch-node-1:8123 CH_CLUSTER=ch_paysera \
+CH_SEED_URLS=http://ch-node-1:8123 CH_CLUSTER=ch_cluster \
 CH_USER=monitor CH_PASSWORD=… cargo run --release        # the fleet, one login for all
 ```
 
@@ -70,12 +70,12 @@ on the command line. [`credentials.example.yaml`](credentials.example.yaml) is t
 
 ```yaml
 clickhouse:
-  cluster: ch_paysera
+  cluster: ch_cluster
   servers:
-    - url: http://clickhouse1.paysera.net:8123
+    - url: http://clickhouse1.example.net:8123
       user: monitor_ch1
       password: "…"
-    - url: http://clickhouse2.paysera.net:8123
+    - url: http://clickhouse2.example.net:8123
       user: monitor_ch2
       password: "…"
 ```
@@ -94,7 +94,7 @@ pay_monitoring --credential credentials.yaml     # or: cargo run --release -- --
   YAML's own rules apply: quote one that starts with a quote, `#`, `{`, `[`, `&`, `*`, `!`, `|`,
   `>`, `%` or `@`, or holds ` #`.
 - What the file says wins over the environment; `CH_SEED_URLS` adds servers to its list. An
-  optional `redash:` section holds `url`, `api_key` and `redis_url`.
+  optional `redash:` section holds `url`, `api_key`, `redis_url` and `email_domain`.
 - A wrong password shows on its node as *login refused for user monitor_ch2* — the user,
   never the password. A file other users can read gets a warning in the footer. A mistake in
   the file is reported with its key and line, never with the value in it.
@@ -113,6 +113,7 @@ have a user the other one does not know.
 | `CH_HTTP_PORT` | HTTP port for discovered hosts | `8123` |
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — the strip says *not configured* |
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |
+| `EMAIL_DOMAIN` | your organisation's e-mail domain: people there are shown by name alone (`grigol.gankava`), everyone else by the whole address | unset — every address whole |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `THEME` | `dark`, `light` or `mono` | `dark` |
 | `NO_COLOR` | any value: no colour at all (glyphs still carry severity) | unset |

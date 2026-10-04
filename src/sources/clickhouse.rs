@@ -113,8 +113,8 @@ ORDER BY elapsed DESC
 
 /// §6.2, plus the two columns that say which row is the server answering: `is_local`, and
 /// the server's own `hostName()` for when `is_local` cannot tell (a NAT, a container). Without
-/// them a seed reached as `clickhouse1.paysera.net` and listed by its cluster as
-/// `pay-ch-node-1.paysera.lan` is two nodes, one of them unreachable.
+/// them a seed reached as `clickhouse1.example.net` and listed by its cluster as
+/// `pay-ch-node-1.example.lan` is two nodes, one of them unreachable.
 const CLUSTERS_SQL: &str = r#"
 SELECT cluster, shard_num, replica_num, host_name, host_address, port, is_local,
        hostName() AS self_host
@@ -751,7 +751,7 @@ fn is_ip_literal(host: &str) -> bool {
 }
 
 /// Two names for one host: equal ignoring case, or the same first label
-/// (`pay-ch-node-1` and `pay-ch-node-1.paysera.lan`). Addresses only ever match exactly.
+/// (`pay-ch-node-1` and `pay-ch-node-1.example.lan`). Addresses only ever match exactly.
 fn same_host(a: &str, b: &str) -> bool {
     if a.is_empty() || b.is_empty() {
         return false;
@@ -1012,12 +1012,12 @@ mod tests {
 {"server_memory_total_bytes":0.0,"server_memory_used_bytes":418078720.0,"server_cpu_percent":null,"server_cpu_cores":null,"server_cpu_time_us":12,"active_queries":0,"replica_lag_s":null,"active_parts":0,"max_memory_usage":0,"version":"24.10.4.191","uptime_s":7}
 "#;
 
-    const PROCESSES_FIXTURE: &str = r#"{"query_id":"c3e51cb5","user":"r_redash","query":"/* Application: Redash */ /* Username: grigol.gankava@paysera.net, Redash query_id: 7438, Redash: */ SELECT count() FROM accounting_lt.bank_record","elapsed_s":275.4,"memory_usage":17380000000,"read_rows":1900000000,"read_bytes":41200000000,"cpu_time_us":853600000,"redash_user":"grigol.gankava@paysera.net","redash_query_id":"7438"}
+    const PROCESSES_FIXTURE: &str = r#"{"query_id":"c3e51cb5","user":"r_redash","query":"/* Application: Redash */ /* Username: grigol.gankava@example.net, Redash query_id: 7438, Redash: */ SELECT count() FROM accounting_lt.bank_record","elapsed_s":275.4,"memory_usage":17380000000,"read_rows":1900000000,"read_bytes":41200000000,"cpu_time_us":853600000,"redash_user":"grigol.gankava@example.net","redash_query_id":"7438"}
 {"query_id":"beef0001","user":"airflow","query":"INSERT INTO statistics.daily_rollup SELECT 1","elapsed_s":12.0,"memory_usage":1000000,"read_rows":10,"read_bytes":2048,"cpu_time_us":3000000,"redash_user":"","redash_query_id":null}
 "#;
 
-    const CLUSTERS_FIXTURE: &str = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1","host_address":"172.16.17.132","port":9000}
-{"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2","host_address":"172.16.17.133","port":9000}
+    const CLUSTERS_FIXTURE: &str = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1","host_address":"172.16.17.132","port":9000}
+{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2","host_address":"172.16.17.133","port":9000}
 "#;
 
     #[test]
@@ -1046,7 +1046,7 @@ mod tests {
         let redash = &queries[0];
         assert_eq!(redash.query_id, "c3e51cb5");
         assert_eq!(redash.user, "r_redash");
-        assert_eq!(redash.person.as_deref(), Some("grigol.gankava"), "local part of paysera.net");
+        assert_eq!(redash.person.as_deref(), Some("grigol.gankava"), "the local part at the home domain");
         assert_eq!(redash.redash_query_id, Some(7438));
         assert_eq!(redash.memory_bytes, 17380000000);
         assert_eq!(redash.cpu_time_us, 853600000, "kept for the next poll's delta");
@@ -1060,7 +1060,7 @@ mod tests {
     fn attribution_falls_back_to_the_server_side_extract() {
         // A user whose SQL the server could not parse still has its comment picked up here.
         let queries = parse_processes(
-            r#"{"query_id":"x","user":"r_redash","query":"/* Username: m.kairys@paysera.net, */ SELECT 1","elapsed_s":1,"memory_usage":1,"read_rows":1,"read_bytes":1,"cpu_time_us":1,"redash_user":"","redash_query_id":null}
+            r#"{"query_id":"x","user":"r_redash","query":"/* Username: m.kairys@example.net, */ SELECT 1","elapsed_s":1,"memory_usage":1,"read_rows":1,"read_bytes":1,"cpu_time_us":1,"redash_user":"","redash_query_id":null}
 "#,
         );
         assert_eq!(queries[0].person.as_deref(), Some("m.kairys"));
@@ -1123,7 +1123,7 @@ mod tests {
     #[test]
     fn a_seed_wins_over_the_assumed_port() {
         let mut targets = vec![seed("http://127.0.0.1:8124")];
-        let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"127.0.0.1","host_address":"127.0.0.1","port":9000}
+        let body = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"127.0.0.1","host_address":"127.0.0.1","port":9000}
 "#;
         let answers = [SeedAnswer { url: "http://127.0.0.1:8124".into(), hosts: parse_clusters(body).unwrap() }];
         merge_discovered(&mut targets, &answers, 8123, &|_| true, &SeedClues::default(), None);
@@ -1142,26 +1142,26 @@ mod tests {
     #[test]
     fn seeds_with_other_names_than_their_cluster_are_still_one_node_each() {
         let mut targets = vec![
-            seed("http://clickhouse1.paysera.net:8123"),
-            seed("http://clickhouse2.paysera.net:8123"),
+            seed("http://clickhouse1.example.net:8123"),
+            seed("http://clickhouse2.example.net:8123"),
         ];
         let rows = |local: u8| {
             format!(
-                r#"{{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":{}}}
-{{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":{}}}
+                r#"{{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.example.lan","host_address":"10.0.0.11","port":9000,"is_local":{}}}
+{{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.example.lan","host_address":"10.0.0.12","port":9000,"is_local":{}}}
 "#,
                 u8::from(local == 1),
                 u8::from(local == 2)
             )
         };
         let answers = [
-            SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&rows(1)).unwrap() },
-            SeedAnswer { url: "http://clickhouse2.paysera.net:8123".into(), hosts: parse_clusters(&rows(2)).unwrap() },
+            SeedAnswer { url: "http://clickhouse1.example.net:8123".into(), hosts: parse_clusters(&rows(1)).unwrap() },
+            SeedAnswer { url: "http://clickhouse2.example.net:8123".into(), hosts: parse_clusters(&rows(2)).unwrap() },
         ];
         merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
 
-        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
-        assert_eq!(targets[0].host, "pay-ch-node-1.paysera.lan", "the cluster's name, for the drawer");
+        assert_eq!(names(&targets), vec!["clickhouse1.example.net", "clickhouse2.example.net"]);
+        assert_eq!(targets[0].host, "pay-ch-node-1.example.lan", "the cluster's name, for the drawer");
         assert_eq!((targets[0].shard, targets[0].replica), (1, 1));
         assert_eq!((targets[1].shard, targets[1].replica), (1, 2));
         assert!(targets.iter().all(|t| t.seed));
@@ -1169,15 +1169,15 @@ mod tests {
 
     #[test]
     fn without_is_local_the_servers_own_name_says_which_row_it_is() {
-        let mut targets = vec![seed("http://clickhouse1.paysera.net:8123")];
-        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":0,"self_host":"pay-ch-node-1"}
-{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":0,"self_host":"pay-ch-node-1"}
+        let mut targets = vec![seed("http://clickhouse1.example.net:8123")];
+        let body = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.example.lan","host_address":"10.0.0.11","port":9000,"is_local":0,"self_host":"pay-ch-node-1"}
+{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.example.lan","host_address":"10.0.0.12","port":9000,"is_local":0,"self_host":"pay-ch-node-1"}
 "#;
         let hosts = parse_clusters(body).unwrap();
         assert!(hosts[0].is_self && !hosts[1].is_self);
-        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts }];
+        let answers = [SeedAnswer { url: "http://clickhouse1.example.net:8123".into(), hosts }];
         merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
-        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "pay-ch-node-2.paysera.lan"]);
+        assert_eq!(names(&targets), vec!["clickhouse1.example.net", "pay-ch-node-2.example.lan"]);
         // The other node's name does not resolve here, so it is reached by its address.
         assert_eq!(targets[1].url, "http://10.0.0.12:8123");
     }
@@ -1185,11 +1185,11 @@ mod tests {
     #[test]
     fn a_phantom_from_an_earlier_round_is_folded_back_into_its_seed() {
         let mut targets = vec![
-            seed("http://clickhouse1.paysera.net:8123"),
+            seed("http://clickhouse1.example.net:8123"),
             NodeTarget {
-                name: "pay-ch-node-1.paysera.lan".into(),
-                url: "http://pay-ch-node-1.paysera.lan:8123".into(),
-                host: "pay-ch-node-1.paysera.lan".into(),
+                name: "pay-ch-node-1.example.lan".into(),
+                url: "http://pay-ch-node-1.example.lan:8123".into(),
+                host: "pay-ch-node-1.example.lan".into(),
                 port: 9000,
                 shard: 1,
                 replica: 1,
@@ -1197,18 +1197,18 @@ mod tests {
                 credentials: None,
             },
         ];
-        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
+        let body = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.example.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
 "#;
-        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        let answers = [SeedAnswer { url: "http://clickhouse1.example.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
         merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
-        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net"]);
+        assert_eq!(names(&targets), vec!["clickhouse1.example.net"]);
     }
 
     #[test]
     fn a_seed_given_as_an_address_takes_its_cluster_name() {
         let mut targets = vec![seed("http://172.18.0.3:8123")];
-        let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000,"is_local":1}
-{"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000,"is_local":0}
+        let body = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000,"is_local":1}
+{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000,"is_local":0}
 "#;
         let answers = [SeedAnswer { url: "http://172.18.0.3:8123".into(), hosts: parse_clusters(body).unwrap() }];
         merge_discovered(&mut targets, &answers, 8123, &|name| name == "ch-b", &SeedClues::default(), None);
@@ -1223,34 +1223,34 @@ mod tests {
     #[test]
     fn a_seed_that_is_down_is_recognised_by_its_address() {
         let mut targets = vec![
-            seed("http://clickhouse1.paysera.net:8123"),
-            seed("http://clickhouse2.paysera.net:8123"),
+            seed("http://clickhouse1.example.net:8123"),
+            seed("http://clickhouse2.example.net:8123"),
         ];
-        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
-{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":0}
+        let body = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.example.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
+{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.example.lan","host_address":"10.0.0.12","port":9000,"is_local":0}
 "#;
-        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        let answers = [SeedAnswer { url: "http://clickhouse1.example.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
         let addresses: HashMap<String, Vec<String>> = [
-            ("http://clickhouse1.paysera.net:8123".to_string(), vec!["10.0.0.11".to_string()]),
-            ("http://clickhouse2.paysera.net:8123".to_string(), vec!["10.0.0.12".to_string()]),
+            ("http://clickhouse1.example.net:8123".to_string(), vec!["10.0.0.11".to_string()]),
+            ("http://clickhouse2.example.net:8123".to_string(), vec!["10.0.0.12".to_string()]),
         ]
         .into();
         let clues = SeedClues { addresses, ..Default::default() };
         merge_discovered(&mut targets, &answers, 8123, &|_| false, &clues, None);
-        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
-        assert_eq!(targets[1].host, "pay-ch-node-2.paysera.lan");
+        assert_eq!(names(&targets), vec!["clickhouse1.example.net", "clickhouse2.example.net"]);
+        assert_eq!(targets[1].host, "pay-ch-node-2.example.lan");
     }
 
     #[test]
     fn a_seed_bound_once_stays_bound_while_it_is_down() {
         let mut targets = vec![
-            seed("http://clickhouse1.paysera.net:8123"),
-            seed("http://clickhouse2.paysera.net:8123"),
+            seed("http://clickhouse1.example.net:8123"),
+            seed("http://clickhouse2.example.net:8123"),
         ];
         let both = |local: u8| {
             format!(
-                r#"{{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":{}}}
-{{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":{}}}
+                r#"{{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.example.lan","host_address":"10.0.0.11","port":9000,"is_local":{}}}
+{{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.example.lan","host_address":"10.0.0.12","port":9000,"is_local":{}}}
 "#,
                 u8::from(local == 1),
                 u8::from(local == 2)
@@ -1258,14 +1258,14 @@ mod tests {
         };
         // Round one: both answer.
         let answers = [
-            SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() },
-            SeedAnswer { url: "http://clickhouse2.paysera.net:8123".into(), hosts: parse_clusters(&both(2)).unwrap() },
+            SeedAnswer { url: "http://clickhouse1.example.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() },
+            SeedAnswer { url: "http://clickhouse2.example.net:8123".into(), hosts: parse_clusters(&both(2)).unwrap() },
         ];
         merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
         // Round two: clickhouse2 is down and DNS says nothing useful.
-        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() }];
+        let answers = [SeedAnswer { url: "http://clickhouse1.example.net:8123".into(), hosts: parse_clusters(&both(1)).unwrap() }];
         merge_discovered(&mut targets, &answers, 8123, &|_| false, &SeedClues::default(), None);
-        assert_eq!(names(&targets), vec!["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
+        assert_eq!(names(&targets), vec!["clickhouse1.example.net", "clickhouse2.example.net"]);
     }
 
     #[test]
@@ -1280,9 +1280,9 @@ mod tests {
 
     #[test]
     fn host_names_match_on_their_first_label_and_addresses_exactly() {
-        assert!(same_host("pay-ch-node-1.paysera.lan", "pay-ch-node-1"));
+        assert!(same_host("pay-ch-node-1.example.lan", "pay-ch-node-1"));
         assert!(same_host("CH-A", "ch-a"));
-        assert!(!same_host("pay-ch-node-1.paysera.lan", "pay-ch-node-2"));
+        assert!(!same_host("pay-ch-node-1.example.lan", "pay-ch-node-2"));
         assert!(!same_host("10.0.0.1", "10.0.0.12"));
         assert!(!same_host("", "ch-a"));
         assert!(is_ip_literal("172.18.0.3") && is_ip_literal("[::1]") && !is_ip_literal("ch-a"));
@@ -1399,20 +1399,20 @@ mod tests {
     #[test]
     fn a_seed_that_refuses_the_login_is_recognised_by_the_name_it_gives() {
         let mut targets = vec![
-            seed("http://clickhouse1.paysera.net:8123"),
-            seed("http://clickhouse2.paysera.net:8123"),
+            seed("http://clickhouse1.example.net:8123"),
+            seed("http://clickhouse2.example.net:8123"),
         ];
-        let body = r#"{"cluster":"paysera","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.paysera.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
-{"cluster":"paysera","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.paysera.lan","host_address":"10.0.0.12","port":9000,"is_local":0}
+        let body = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"pay-ch-node-1.example.lan","host_address":"10.0.0.11","port":9000,"is_local":1}
+{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"pay-ch-node-2.example.lan","host_address":"10.0.0.12","port":9000,"is_local":0}
 "#;
-        let answers = [SeedAnswer { url: "http://clickhouse1.paysera.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
+        let answers = [SeedAnswer { url: "http://clickhouse1.example.net:8123".into(), hosts: parse_clusters(body).unwrap() }];
         let clues = SeedClues {
-            names: [("http://clickhouse2.paysera.net:8123".to_string(), "pay-ch-node-2".to_string())].into(),
+            names: [("http://clickhouse2.example.net:8123".to_string(), "pay-ch-node-2".to_string())].into(),
             ..Default::default()
         };
         merge_discovered(&mut targets, &answers, 8123, &|_| true, &clues, Some(&login("monitor", "p")));
-        assert_eq!(names(&targets), ["clickhouse1.paysera.net", "clickhouse2.paysera.net"]);
-        assert_eq!(targets[1].host, "pay-ch-node-2.paysera.lan");
+        assert_eq!(names(&targets), ["clickhouse1.example.net", "clickhouse2.example.net"]);
+        assert_eq!(targets[1].host, "pay-ch-node-2.example.lan");
         assert_eq!((targets[1].shard, targets[1].replica), (1, 2));
     }
 
@@ -1441,8 +1441,8 @@ mod tests {
             ..seed(url)
         };
         let fleet = || vec![own("http://127.0.0.1:8123", "monitor"), own("http://127.0.0.1:8124", "r_redash")];
-        let body = r#"{"cluster":"ch_paysera","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000,"is_local":1}
-{"cluster":"ch_paysera","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000,"is_local":0}
+        let body = r#"{"cluster":"ch_cluster","shard_num":1,"replica_num":1,"host_name":"ch-a","host_address":"172.18.0.3","port":9000,"is_local":1}
+{"cluster":"ch_cluster","shard_num":1,"replica_num":2,"host_name":"ch-b","host_address":"172.18.0.4","port":9000,"is_local":0}
 "#;
         let answers = [SeedAnswer { url: "http://127.0.0.1:8123".into(), hosts: parse_clusters(body).unwrap() }];
 

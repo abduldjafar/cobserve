@@ -271,7 +271,7 @@ pub fn highlight(sql: &str) -> Vec<(String, Token)> {
 mod tests {
     use super::*;
 
-    const REDASH: &str = "/* Application: Redash */ /* Username: grigol.gankava@paysera.net, Redash query_id: 7438, Redash: 10.1.0 */ WITH BankRecord AS (\n  SELECT BillOpId, Bank FROM accounting_lt.bank_record\n  WHERE EventDate >= today() - 30\n)\nSELECT region, count() FROM BankRecord GROUP BY region";
+    const REDASH: &str = "/* Application: Redash */ /* Username: grigol.gankava@example.net, Redash query_id: 7438, Redash: 10.1.0 */ WITH BankRecord AS (\n  SELECT BillOpId, Bank FROM accounting_lt.bank_record\n  WHERE EventDate >= today() - 30\n)\nSELECT region, count() FROM BankRecord GROUP BY region";
 
     #[test]
     fn comments_are_stripped_but_strings_are_not() {
@@ -297,7 +297,7 @@ mod tests {
         assert_eq!((insert.verb, insert.target.as_deref()), ("INSERT", Some("statistics.daily_rollup")));
 
         let function = summary(
-            "SELECT host_name FROM clusterAllReplicas('ch_paysera', system.parts) GROUP BY host_name",
+            "SELECT host_name FROM clusterAllReplicas('ch_cluster', system.parts) GROUP BY host_name",
         );
         assert_eq!(function.target.as_deref(), Some("clusterAllReplicas()"));
 
