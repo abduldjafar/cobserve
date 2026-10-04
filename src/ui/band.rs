@@ -133,8 +133,19 @@ pub fn queue_strip(app: &App, theme: &Theme, width: usize) -> Line<'static> {
                 cells.push("connecting…", theme.muted());
             }
             other => {
+                // A Redash that answered is not unreachable: it refused the key, failed, or
+                // sent something that is not the queue.
                 let reason = other.unwrap_or("no answer");
-                cells.push(format!("unreachable ({reason})"), theme.sev(Severity::Warn));
+                let (word, detail) = if let Some(detail) = reason.strip_prefix(crate::sources::redash::UNREADABLE) {
+                    ("unreadable", detail)
+                } else if reason.starts_with("HTTP 401") || reason.starts_with("HTTP 403") {
+                    ("refused", reason)
+                } else if reason.starts_with("HTTP ") {
+                    ("error", reason)
+                } else {
+                    ("unreachable", reason)
+                };
+                cells.push(format!("{word} ({detail})"), theme.sev(Severity::Warn));
             }
         }
         return cells.line(width, theme.text());

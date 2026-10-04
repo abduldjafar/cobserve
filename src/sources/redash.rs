@@ -30,58 +30,181 @@ const HEARTBEAT_STALE: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Deserialize)]
 struct RqStatus {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_queues")]
     queues: HashMap<String, RqQueue>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_list")]
     workers: Vec<RqWorker>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RqQueue {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_text")]
     name: String,
     /// Redash ≥ 10 with RQ reports a count here, not a list of jobs.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_count")]
     queued: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_list")]
     started: Vec<RqJob>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RqJob {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_text")]
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_text")]
     origin: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_opt_text")]
     started_at: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_meta")]
     meta: Option<RqMeta>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct RqMeta {
     #[serde(default)]
-    query_id: Option<u64>,
-    #[serde(default)]
+    query_id: QueryRef,
+    #[serde(default, deserialize_with = "lenient_id")]
     user_id: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_id")]
     data_source_id: Option<u64>,
+}
+
+/// What a job's `query_id` says: a saved query's number, or `"adhoc"` — a query run from the
+/// editor without being saved, which has no number at all.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum QueryRef {
+    #[default]
+    Unknown,
+    Saved(u64),
+    Adhoc,
+}
+
+impl QueryRef {
+    fn from_value(value: &serde_json::Value) -> QueryRef {
+        match value {
+            serde_json::Value::Number(n) => n.as_u64().map_or(QueryRef::Unknown, QueryRef::Saved),
+            serde_json::Value::String(text) if text.trim().eq_ignore_ascii_case("adhoc") => QueryRef::Adhoc,
+            serde_json::Value::String(text) => text.trim().parse().map_or(QueryRef::Unknown, QueryRef::Saved),
+            _ => QueryRef::Unknown,
+        }
+    }
+
+    fn id(self) -> Option<u64> {
+        match self {
+            QueryRef::Saved(id) => Some(id),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for QueryRef {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let value = Option::<serde_json::Value>::deserialize(d)?;
+        Ok(value.as_ref().map_or(QueryRef::Unknown, QueryRef::from_value))
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct RqWorker {
     /// The worker id RQ registers; the healthcheck and the heartbeat are per worker.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_text")]
     name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_text")]
     state: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_opt_text")]
     current_job: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_text")]
     queues: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_opt_text")]
     last_heartbeat: Option<String>,
+}
+
+// The endpoint's shape moves between Redash versions and with what is running — an ad-hoc
+// query's `query_id` is the text "adhoc" — and one field of an unexpected type used to fail
+// the whole answer ("error decoding response body"). Every field is read for what it can
+// give, and what it cannot give is left out instead.
+
+/// A number, or a number written as text; anything else — `"adhoc"`, `null` — is none.
+fn lenient_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.and_then(|v| match v {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }))
+}
+
+/// A count: a number, a number as text, or the list it counts.
+fn lenient_count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match value {
+        Some(serde_json::Value::Number(n)) => n.as_u64().map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX)),
+        Some(serde_json::Value::String(text)) => text.trim().parse().unwrap_or(0),
+        Some(serde_json::Value::Array(items)) => u32::try_from(items.len()).unwrap_or(u32::MAX),
+        _ => 0,
+    })
+}
+
+/// Text from whatever it came as: a number written out, a list joined with commas, null empty.
+fn lenient_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.map(text_of).unwrap_or_default())
+}
+
+fn lenient_opt_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.map(text_of).filter(|text| !text.is_empty()))
+}
+
+fn text_of(value: serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text,
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Array(items) => items.into_iter().map(text_of).collect::<Vec<_>>().join(","),
+        _ => String::new(),
+    }
+}
+
+/// The entries of a list that read as `T`; anything that is not a list is an empty one.
+fn lenient_list<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match value {
+        Some(serde_json::Value::Array(items)) => items
+            .into_iter()
+            .filter_map(|item| serde_json::from_value(item).ok())
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
+fn lenient_meta<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<RqMeta>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value
+        .filter(serde_json::Value::is_object)
+        .and_then(|v| serde_json::from_value(v).ok()))
+}
+
+/// Queues by name: an object of queues as Redash 10 sends it, or a list of them.
+fn lenient_queues<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HashMap<String, RqQueue>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    let entries: Vec<(Option<String>, serde_json::Value)> = match value {
+        Some(serde_json::Value::Object(map)) => map.into_iter().map(|(k, v)| (Some(k), v)).collect(),
+        Some(serde_json::Value::Array(items)) => items.into_iter().map(|v| (None, v)).collect(),
+        _ => Vec::new(),
+    };
+    Ok(entries
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let queue: RqQueue = serde_json::from_value(value).ok()?;
+            let name = key.unwrap_or_else(|| queue.name.clone());
+            (!name.is_empty()).then_some((name, queue))
+        })
+        .collect())
 }
 
 /// Redash < 10 is Celery, and the endpoint is `/api/admin/queries/tasks` (§6.3). The shape is
@@ -108,16 +231,17 @@ struct ApiUser {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ApiQuery {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_opt_text")]
     name: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_id")]
     data_source_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ApiDataSource {
-    id: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_id")]
+    id: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_opt_text")]
     name: Option<String>,
 }
 
@@ -132,11 +256,25 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Error::Http(code @ (401 | 403)) => write!(f, "HTTP {code} · the API key has to be an admin's"),
+            Error::Http(404) => write!(f, "HTTP 404 · no such endpoint — is the url Redash's own?"),
             Error::Http(code) => write!(f, "HTTP {code}"),
             Error::Connection(e) => write!(f, "{e}"),
-            Error::Body(e) => write!(f, "{e}"),
+            Error::Body(e) => write!(f, "{UNREADABLE}{e}"),
         }
     }
+}
+
+/// How an answer that could not be read starts, for the band to word it as such.
+pub const UNREADABLE: &str = "unreadable answer: ";
+
+/// Why an answer is not what the endpoint sends, in words — never with the key (§9).
+fn why_unreadable(body: &str, error: &serde_json::Error) -> String {
+    if body.trim_start().starts_with('<') {
+        // A wrong or non-admin key is redirected to the login page, which is HTML.
+        return "a web page, not JSON — check the url and that the API key is an admin's".to_string();
+    }
+    short(&error.to_string())
 }
 
 pub struct RedashSource {
@@ -297,7 +435,7 @@ impl RedashSource {
                     queue: if started.origin.is_empty() { name.clone() } else { started.origin.clone() },
                     user: Some(attrib::REDASH_USER.to_string()),
                     person,
-                    redash_query_id: started.meta.as_ref().and_then(|m| m.query_id),
+                    redash_query_id: started.meta.as_ref().and_then(|m| m.query_id.id()),
                     query_name,
                     data_source,
                     age_s,
@@ -390,7 +528,7 @@ impl RedashSource {
         let query_id = payload
             .first()
             .and_then(|entry| entry.get("query_id"))
-            .and_then(|v| v.as_u64());
+            .map_or(QueryRef::Unknown, QueryRef::from_value);
         let user_id = payload
             .first()
             .and_then(|entry| entry.get("user_id"))
@@ -401,7 +539,7 @@ impl RedashSource {
             .and_then(|v| v.as_u64());
 
         let meta = RqMeta {
-            query_id: meta.query_id.or(query_id),
+            query_id: if meta.query_id == QueryRef::Unknown { query_id } else { meta.query_id },
             user_id: meta.user_id.or(user_id),
             data_source_id: meta.data_source_id.or(data_source_id),
         };
@@ -413,7 +551,7 @@ impl RedashSource {
             queue: queue.to_string(),
             user: Some(attrib::REDASH_USER.to_string()),
             person,
-            redash_query_id: meta.query_id,
+            redash_query_id: meta.query_id.id(),
             query_name,
             data_source,
             age_s,
@@ -435,14 +573,19 @@ impl RedashSource {
             None => None,
         };
         let query = match meta.query_id {
-            Some(id) => self.query(id).await,
-            None => None,
+            QueryRef::Saved(id) => self.query(id).await,
+            _ => None,
         };
-        let data_source = match query.as_ref().and_then(|q| q.data_source_id) {
+        // An ad-hoc query has no saved query to take a data source from; the job names its own.
+        let data_source = match query.as_ref().and_then(|q| q.data_source_id).or(meta.data_source_id) {
             Some(id) => self.data_source_name(id).await,
             None => None,
         };
-        (person, query.and_then(|q| q.name), data_source)
+        let name = match meta.query_id {
+            QueryRef::Adhoc => Some("ad-hoc query (not saved)".to_string()),
+            _ => query.and_then(|q| q.name),
+        };
+        (person, name, data_source)
     }
 
     async fn user_name(&self, id: u64) -> Option<String> {
@@ -475,8 +618,8 @@ impl RedashSource {
         }
         let all: Vec<ApiDataSource> = self.get_json("/api/data_sources").await.ok()?;
         for source in all {
-            if let Some(name) = &source.name {
-                self.data_sources.lock().expect("data source cache").insert(source.id, name.clone());
+            if let (Some(id), Some(name)) = (source.id, &source.name) {
+                self.data_sources.lock().expect("data source cache").insert(id, name.clone());
             }
         }
         self.data_sources.lock().expect("data source cache").get(&id).cloned()
@@ -496,10 +639,11 @@ impl RedashSource {
         if !status.is_success() {
             return Err(Error::Http(status.as_u16()));
         }
-        response
-            .json::<T>()
+        let body = response
+            .text()
             .await
-            .map_err(|e| Error::Body(short(&e.to_string())))
+            .map_err(|e| Error::Connection(short(&e.to_string())))?;
+        serde_json::from_str::<T>(&body).map_err(|e| Error::Body(why_unreadable(&body, &e)))
     }
 }
 
@@ -814,7 +958,7 @@ mod tests {
         let queue = status.queues.get("queries").unwrap();
         assert_eq!(queue.queued, 3);
         assert_eq!(queue.started.len(), 1);
-        assert_eq!(queue.started[0].meta.as_ref().unwrap().query_id, Some(7438));
+        assert_eq!(queue.started[0].meta.as_ref().unwrap().query_id.id(), Some(7438));
         assert_eq!(queue.started[0].meta.as_ref().unwrap().user_id, Some(42));
 
         // The heartbeat in the fixture is 2026-10-03T12:40:00Z; 30 s later the worker counts.
@@ -918,7 +1062,7 @@ mod tests {
 
     #[test]
     fn errors_print_without_the_key() {
-        assert_eq!(Error::Http(401).to_string(), "HTTP 401");
+        assert_eq!(Error::Http(401).to_string(), "HTTP 401 · the API key has to be an admin's");
 
         // §9: a message that carries a URL must not carry a credential either. The key goes in
         // a header, never in a query string, and the scrubber drops the query part anyway.
@@ -977,5 +1121,60 @@ mod tests {
         assert!(source.celery_from_version(&v("2.0.0")));
         // No version at all: assume the modern shape and let the endpoint answer for itself.
         assert!(!source.celery_from_version(&serde_json::json!({})));
+    }
+
+    /// What a busy Redash sends while someone runs a query from the editor without saving it:
+    /// `query_id` is the text "adhoc". One such job used to fail the whole answer with
+    /// "error decoding response body".
+    const BUSY: &str = r#"{
+      "queues": {
+        "queries": {
+          "name": "queries",
+          "queued": "2",
+          "started": [
+            {"id": "j-adhoc", "name": "redash.tasks.queries.execution.execute_query", "origin": "queries",
+             "enqueued_at": "2026-10-04T03:00:00.000", "started_at": "2026-10-04T03:00:01.000",
+             "meta": {"data_source_id": 3, "org_id": 1, "scheduled": false, "query_id": "adhoc", "user_id": 7}},
+            {"id": "j-saved", "origin": "queries", "started_at": "2026-10-04T03:00:02.000",
+             "meta": {"data_source_id": "3", "query_id": 8585, "user_id": null}},
+            {"id": "j-odd", "origin": "queries", "started_at": 1759546800, "meta": "not a map"},
+            "not a job at all"
+          ]
+        },
+        "scheduled_queries": {"name": "scheduled_queries", "queued": [{"id": "a"}, {"id": "b"}, {"id": "c"}], "started": 0}
+      },
+      "workers": [
+        {"name": "w1", "queues": ["queries", "scheduled_queries"], "state": "busy", "last_heartbeat": "2026-10-04T03:00:05.000", "pid": 12, "current_job": "j-adhoc (execute_query)"},
+        {"name": "w2", "queues": "queries", "state": "idle", "last_heartbeat": null}
+      ]
+    }"#;
+
+    #[test]
+    fn an_ad_hoc_query_does_not_break_the_answer() {
+        let status: RqStatus = serde_json::from_str(BUSY).expect("every field is read for what it can give");
+        let queries = &status.queues["queries"];
+        assert_eq!(queries.queued, 2, "a count written as text");
+        assert_eq!(queries.started.len(), 3, "the entry that is not a job is skipped, the others kept");
+        let adhoc = queries.started[0].meta.as_ref().unwrap();
+        assert_eq!(adhoc.query_id, QueryRef::Adhoc);
+        assert_eq!((adhoc.user_id, adhoc.data_source_id), (Some(7), Some(3)));
+        let saved = queries.started[1].meta.as_ref().unwrap();
+        assert_eq!((saved.query_id.id(), saved.data_source_id, saved.user_id), (Some(8585), Some(3), None));
+        assert!(queries.started[2].meta.is_none() && queries.started[2].started_at.as_deref() == Some("1759546800"));
+        assert_eq!(status.queues["scheduled_queries"].queued, 3, "a list counts its entries");
+        assert!(status.queues["scheduled_queries"].started.is_empty());
+        assert_eq!(status.workers[0].queues, "queries,scheduled_queries", "a list of queues is joined");
+        assert_eq!(status.workers[1].last_heartbeat, None);
+    }
+
+    #[test]
+    fn an_answer_that_is_not_the_queue_says_what_it_is() {
+        let html = "<!DOCTYPE html><html><head><title>Login to Redash</title></head></html>";
+        let error = serde_json::from_str::<RqStatus>(html).unwrap_err();
+        let said = Error::Body(why_unreadable(html, &error)).to_string();
+        assert_eq!(said, "unreadable answer: a web page, not JSON — check the url and that the API key is an admin's");
+        assert_eq!(Error::Http(403).to_string(), "HTTP 403 · the API key has to be an admin's");
+        assert!(Error::Http(404).to_string().contains("is the url Redash's own"));
+        assert_eq!(Error::Http(502).to_string(), "HTTP 502");
     }
 }

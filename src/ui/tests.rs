@@ -200,9 +200,11 @@ fn an_unconfigured_redash_says_how_to_configure_it() {
 #[test]
 fn an_unreachable_queue_still_says_something() {
     let mut app = App::new();
-    app.update(Event::Queue(Box::new(crate::model::QueueStatus::unreachable("HTTP 401"))));
+    app.update(Event::Queue(Box::new(crate::model::QueueStatus::unreachable(
+        crate::sources::redash::Error::Http(401).to_string(),
+    ))));
     let screen = render(&app, 120, 36);
-    assert!(screen.contains("unreachable (HTTP 401)"), "{screen}");
+    assert!(screen.contains("refused (HTTP 401 · the API key has to be an admin's)"), "{screen}");
 }
 
 #[test]
