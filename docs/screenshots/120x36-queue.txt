@@ -1,36 +1,36 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────── ● LIVE 2s · 22:21:45 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
-│ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
-│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
-│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
-│  redash.example.net · Redash 10.1.0 · 7 workers, 6 busy                                                              │
-│                                                                                                                      │
-│  QUEUE              RUNNING  WAITING  OLDEST   WORKERS               STALE   WAITING · last 4 min                    │
-│  queries                  4       13  3m43s ✖  ●●●● 4/4 busy             3          ▇█▇▆██▅██                        │
-│  scheduled_queries        2        3  1m01s ▲  ●● 2/2 busy               ·          ▃▃▃▃▃▃▃▃▃                        │
-│  default · emails · periodic · schemas  idle                                                                         │
-│                                                                                                                      │
-│ ─ RUNNING · 6 on a worker ────────────────────────────────────────────────────────────────────────────────────────── │
-│   FOR        WHO             QUERY                                SOURCE          IN CLICKHOUSE · mem · cores · done │
-│     6m38s ✕  grigol.gankava  #7438 Gateway transfers              clickhouse3     → clickhouse3 16.3G 3.1c 57%       │
-│ ▌   5m38s ✕  j.petrova       #8585 AML dashboard                  clickhouse-bi   → clickhouse-bi 21.2G 1.9c 95%     │
-│     ▎ SELECT                                                                                                         │
-│     ▎   toStartOfHour(ts) AS h,                                                                                      │
-│     ▎   countIf(state = 'failed') AS failed                                                                          │
-│     ▎ FROM open_banking.ais                                                                                          │
-│     ▎ WHERE ts >= now() - INTERVAL 6 HOUR                                                                            │
-│     ▎ GROUP BY h                                                                                                     │
-│     4m38s    m.kairys        #7711 FX exposure                    clickhouse2     → clickhouse2 15.4G 1.2c 64%       │
-│     4m23s ✕  r.simonyte      #8091 July close pack                clickhouse7     → clickhouse7 51.4G 2.2c 77%       │
-│     2m51s    d.zaleckas      #6120 Gateway refunds · open         gateway-mysql   mysql · not ClickHouse             │
-│       51s    a.vaitkus       #8470 Merchant risk · rollup         Query Results   runs inside Redash                 │
-│                                                                                                                      │
-│ ─ WAITING · 16 in the queues · 7 named ───────────────────────────────────────────────────────────────────────────── │
-│   WAIT              WHO             QUERY                                                           SOURCE           │
-│     3m43s ✖ ██████  r.simonyte      #8093 July close pack · by country                              clickhouse-bi    │
-│     3m25s ✖ ██████  j.petrova       #8113 AML dashboard · by country                                clickhouse3      │
-│ ─ job · queries · j.petrova ──────────────────────────────────────────────────────────────────────────────────────── │
-│ 6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is … │
-│ running 5m38s → clickhouse-bi · c3e59c27 ✕ runaway · ⏎ jumps to the query on view 1                                  │
-│ j.petrova@example.net · on clickhouse-bi (clickhouse) · #8585 AML dashboard · SQL as ClickHouse runs it · job run-2  │
-│  ↑↓  move   ⏎  jump to ClickHouse   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit                        │
-╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯
+  ◆ fleetlens   ✖ critical          1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4% 280/768 GiB   cpu ━━━╺━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   redash.example.net · Redash 10.1.0 · 7 workers, 6 busy                                                               
+                                                                                                                        
+   QUEUE              RUNNING  WAITING  OLDEST   WORKERS               STALE   WAITING · last 4 min                     
+   queries                  4       13  3m43s ✖  ●●●● 4/4 busy             3          ▇█▇▆██▅██                         
+   scheduled_queries        2        3  1m01s ▲  ●● 2/2 busy               ·          ▃▃▃▃▃▃▃▃▃                         
+   default · emails · periodic · schemas  idle                                                                          
+                                                                                                                        
+  ─ RUNNING · 6 on a worker ──────────────────────────────────────────────────────────────────────────────────────────  
+    FOR        WHO             QUERY                                SOURCE          IN CLICKHOUSE · mem · cores · done  
+      6m38s ✕  grigol.gankava  #7438 Gateway transfers              clickhouse3     → clickhouse3 16.3G 3.1c 57%        
+  ▌   5m38s ✕  j.petrova       #8585 AML dashboard                  clickhouse-bi   → clickhouse-bi 21.2G 1.9c 95%      
+      ▎ SELECT                                                                                                          
+      ▎   toStartOfHour(ts) AS h,                                                                                       
+      ▎   countIf(state = 'failed') AS failed                                                                           
+      ▎ FROM open_banking.ais                                                                                           
+      ▎ WHERE ts >= now() - INTERVAL 6 HOUR                                                                             
+      ▎ GROUP BY h                                                                                                      
+      4m38s    m.kairys        #7711 FX exposure                    clickhouse2     → clickhouse2 15.4G 1.2c 64%        
+      4m23s ✕  r.simonyte      #8091 July close pack                clickhouse7     → clickhouse7 51.4G 2.2c 77%        
+      2m51s    d.zaleckas      #6120 Gateway refunds · open         gateway-mysql   mysql · not ClickHouse              
+        51s    a.vaitkus       #8470 Merchant risk · rollup         Query Results   runs inside Redash                  
+                                                                                                                        
+  ─ WAITING · 16 in the queues · 7 named ─────────────────────────────────────────────────────────────────────────────  
+    WAIT              WHO             QUERY                                                           SOURCE            
+      3m43s ✖ ━━━━━━  r.simonyte      #8093 July close pack · by country                              clickhouse-bi     
+  ─ job · queries · j.petrova ────────────────────────────────────────────────────────────────────────────────────────  
+  6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is …  
+  running 5m38s → clickhouse-bi · c3e59c27 ✕ runaway · ⏎ jumps to the query on view 1                                   
+  j.petrova@example.net · on clickhouse-bi (clickhouse) · #8585 AML dashboard · SQL as ClickHouse runs it · job run-2   
+   ↑↓  move   ⏎  jump to ClickHouse   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit                         

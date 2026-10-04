@@ -87,6 +87,31 @@ pub struct Config {
     /// Clicks and the wheel (`MOUSE=0` turns them off, and with them the terminal's own
     /// selection comes back without a modifier key).
     pub mouse: bool,
+    /// The prayer times on the day line.
+    pub prayer: PrayerConfig,
+    /// `TIME=utc`: the clock starts on UTC rather than the machine's own zone.
+    pub utc: bool,
+    /// How a prayer's reminder reaches you off the screen.
+    pub notify: Notify,
+}
+
+/// Where and whether: `PRAYER_CITY` (a city by name) or `PRAYER_AT` (`lat,lon`), else the city
+/// of the machine's time zone; `PRAYER=off` leaves them out. `PRAYER_REMIND` is how many minutes
+/// ahead the reminder comes (10; 0 for none).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrayerConfig {
+    pub off: bool,
+    pub place: Option<crate::prayer::Place>,
+    pub remind_minutes: u32,
+}
+
+/// `NOTIFY`: `off`, `bell` (the terminal's bell only) or, by default, `desktop` — the bell, the
+/// terminal's own notification and the system's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notify {
+    Off,
+    Bell,
+    Desktop,
 }
 
 pub const USAGE: &str = "\
@@ -103,7 +128,10 @@ Everything else comes from the environment (DESIGN.md §9): CH_SEED_URLS, CH_CLU
 CH_USER, CH_PASSWORD, CH_HTTP_PORT, REDASH_URL, REDASH_ADMIN_API_KEY, REDIS_URL,
 EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, CLAUDE_CMD,
 OPENCODE_CMD and SHELL_CMD for what view 5's sessions run (default: claude, opencode, $SHELL),
-and MOUSE=0 to leave the mouse to the terminal.
+MOUSE=0 to leave the mouse to the terminal, TIME=utc for a UTC clock (the machine's own
+zone otherwise), PRAYER_CITY (e.g. Bandung) or PRAYER_AT (lat,lon) for where the prayer
+times are for (the time zone's city otherwise), PRAYER_REMIND for how many minutes ahead
+the reminder comes (10; 0 for none), PRAYER=off, and NOTIFY=bell or NOTIFY=off.
 ";
 
 /// `variable` as a command and its arguments, quotes as a shell reads them; `default` when it
@@ -464,6 +492,7 @@ impl Config {
             }
         };
         let mut config = Self::assemble(file.as_ref(), &Env(env))?;
+        warnings.append(&mut config.warnings);
         config.warnings = warnings;
         Ok(config)
     }
@@ -531,6 +560,7 @@ impl Config {
             }
         };
 
+        let mut warnings = Vec::new();
         let redash = file.and_then(|f| f.contents.redash.as_ref());
         let pick = |in_file: Option<&String>, name: &str| {
             in_file
@@ -551,7 +581,6 @@ impl Config {
             // The fake fleet's people are at a domain of its own.
             email_domain: pick(redash.and_then(|r| r.email_domain.as_ref()), "EMAIL_DOMAIN")
                 .or_else(|| fake.then(|| crate::fake::DOMAIN.to_string())),
-            warnings: Vec::new(),
             claude_command: command("CLAUDE_CMD", env.get("CLAUDE_CMD"), "claude")?,
             opencode_command: command("OPENCODE_CMD", env.get("OPENCODE_CMD"), "opencode")?,
             // A terminal runs the shell the user logs in with.
@@ -564,8 +593,49 @@ impl Config {
                 env.get("MOUSE").map(|m| m.trim().to_ascii_lowercase()).as_deref(),
                 Some("0" | "off" | "false" | "no")
             ),
+            prayer: prayer_config(env, &mut warnings)?,
+            utc: env.get("TIME").is_some_and(|t| t.eq_ignore_ascii_case("utc")),
+            notify: match env.get("NOTIFY").map(|n| n.to_ascii_lowercase()).as_deref() {
+                None | Some("desktop" | "on" | "1") => Notify::Desktop,
+                Some("bell") => Notify::Bell,
+                Some("off" | "0" | "none" | "no") => Notify::Off,
+                Some(other) => return Err(ConfigError::Bad("NOTIFY", format!("{other:?} is not off, bell or desktop"))),
+            },
+            warnings,
         })
     }
+}
+
+/// The prayer settings. A city nobody here knows is worth a word in the footer, not a refusal to
+/// start: the time zone's city stands in.
+fn prayer_config(env: &Env<'_>, warnings: &mut Vec<String>) -> Result<PrayerConfig, ConfigError> {
+    use crate::prayer::{self, Place, PlaceFrom};
+    let off = env.get("PRAYER").is_some_and(|p| matches!(p.to_ascii_lowercase().as_str(), "off" | "0" | "no" | "false"));
+    let city = env.get("PRAYER_CITY");
+    let at = env.get("PRAYER_AT");
+    let place = match (&city, &at) {
+        (_, Some(raw)) => match prayer::coordinates(raw) {
+            Some((lat, lon)) => Some(Place {
+                name: city.clone().unwrap_or_else(|| format!("{lat:.2}, {lon:.2}")),
+                lat,
+                lon,
+                from: PlaceFrom::Chosen,
+            }),
+            None => {
+                warnings.push("PRAYER_AT is not lat,lon (e.g. -6.91,107.61) — the time zone's city stands in".to_string());
+                None
+            }
+        },
+        (Some(name), None) => {
+            let place = prayer::city(name);
+            if place.is_none() {
+                warnings.push(format!("PRAYER_CITY {name} is not a city known here — PRAYER_AT=lat,lon gives any place"));
+            }
+            place
+        }
+        (None, None) => None,
+    };
+    Ok(PrayerConfig { off, place, remind_minutes: env.number("PRAYER_REMIND", 10u32)? })
 }
 
 #[cfg(test)]

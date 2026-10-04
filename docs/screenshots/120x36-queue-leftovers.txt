@@ -1,36 +1,36 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────── ● LIVE 2s · 22:21:45 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
-│ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
-│ REDASH  0 waiting · 1 running · ●●●○○○○○○ 3/9 workers busy · 5 stale                                       [2] queue │
-│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
-│  redash.example.net · Redash 10.1.0 · 9 workers, 3 busy                                                              │
-│                                                                                                                      │
-│  QUEUE              RUNNING  WAITING  WORKERS               STALE                                                    │
-│  queries                  0        0  ○ 1 idle                  5                                                    │
-│  scheduled_queries        1        0  ●●○○○○ 2/6 busy           ·                                                    │
-│  default · emails · periodic · schemas  idle                                                                         │
-│                                                                                                                      │
-│ ─ RUNNING · 1 on a worker · scheduled_queries ────────────────────────────────────────────────────────────────────── │
-│   FOR        WHO             QUERY                                SOURCE          IN CLICKHOUSE · mem · cores · done │
-│ ▌   2m20s ✕  r.simonyte      #8091 July close pack                clickhouse7     → clickhouse7 51.4G 2.2c 77%       │
-│     ▎ SELECT merchant_id, sum(amount) AS july, sum(if(month = 7, amount, 0)) AS delta                                │
-│     ▎ FROM wallet.ledger                                                                                             │
-│     ▎ GROUP BY merchant_id                                                                                           │
-│     ▎ HAVING delta > 1000                                                                                            │
-│     ▎ ORDER BY delta DESC                                                                                            │
-│                                                                                                                      │
-│ ─ STALE · 5 in RQ's started list that no worker runs · queries ───────────────────────────────────────────────────── │
-│   AGE        WHO             QUERY                                                SOURCE          WHY                │
-│   177d10h    grigol.gankava  #5120 Transfers · weekly summary                     clickhouse-bi   over a day old     │
-│   173d17h    a.vaitkus       #6301 Card margin · by day                           payments-mysql  cancelled          │
-│   172d13h    j.petrova       #6302 Ledger export · full                           clickhouse-bi   over a day old     │
-│    12m52s    d.zaleckas      #161 Replica health check 2                          Query Results   no worker holds it │
-│    12m22s    d.zaleckas      #162 Replica health check 1                          Query Results   no worker holds it │
-│     their worker died, or a cancel never reached one · they hold no worker · a Redash admin can clear them           │
-│                                                                                                                      │
-│                                                                                                                      │
-│ ─ job · scheduled_queries · r.simonyte ───────────────────────────────────────────────────────────────────────────── │
-│ 3/9 workers busy · 1 of them holds a runaway ClickHouse query (clickhouse7)                                          │
-│ running 2m20s → clickhouse7 · c3e5f9d8 ✕ runaway · ⏎ jumps to the query on view 1                                    │
-│ r.simonyte · scheduled refresh · on clickhouse7 (clickhouse) · #8091 July close pack · SQL as ClickHouse runs it · … │
-│  ↑↓  move   ⏎  jump to ClickHouse   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit                        │
-╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯
+  ◆ fleetlens   ✖ critical          1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4% 280/768 GiB   cpu ━━━╺━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  0 waiting · 1 running · ●●●○○○○○○ 3/9 workers busy · 5 stale                                       [2] queue  
+                                                                                                                        
+   redash.example.net · Redash 10.1.0 · 9 workers, 3 busy                                                               
+                                                                                                                        
+   QUEUE              RUNNING  WAITING  WORKERS               STALE                                                     
+   queries                  0        0  ○ 1 idle                  5                                                     
+   scheduled_queries        1        0  ●●○○○○ 2/6 busy           ·                                                     
+   default · emails · periodic · schemas  idle                                                                          
+                                                                                                                        
+  ─ RUNNING · 1 on a worker · scheduled_queries ──────────────────────────────────────────────────────────────────────  
+    FOR        WHO             QUERY                                SOURCE          IN CLICKHOUSE · mem · cores · done  
+  ▌   2m20s ✕  r.simonyte      #8091 July close pack                clickhouse7     → clickhouse7 51.4G 2.2c 77%        
+      ▎ SELECT merchant_id, sum(amount) AS july, sum(if(month = 7, amount, 0)) AS delta                                 
+      ▎ FROM wallet.ledger                                                                                              
+      ▎ GROUP BY merchant_id                                                                                            
+      ▎ HAVING delta > 1000                                                                                             
+      ▎ ORDER BY delta DESC                                                                                             
+                                                                                                                        
+  ─ STALE · 5 in RQ's started list that no worker runs · queries ─────────────────────────────────────────────────────  
+    AGE        WHO             QUERY                                                SOURCE          WHY                 
+    177d10h    grigol.gankava  #5120 Transfers · weekly summary                     clickhouse-bi   over a day old      
+    173d17h    a.vaitkus       #6301 Card margin · by day                           payments-mysql  cancelled           
+    172d13h    j.petrova       #6302 Ledger export · full                           clickhouse-bi   over a day old      
+     12m52s    d.zaleckas      #161 Replica health check 2                          Query Results   no worker holds it  
+     12m22s    d.zaleckas      #162 Replica health check 1                          Query Results   no worker holds it  
+      their worker died, or a cancel never reached one · they hold no worker · a Redash admin can clear them            
+                                                                                                                        
+  ─ job · scheduled_queries · r.simonyte ─────────────────────────────────────────────────────────────────────────────  
+  3/9 workers busy · 1 of them holds a runaway ClickHouse query (clickhouse7)                                           
+  running 2m20s → clickhouse7 · c3e5f9d8 ✕ runaway · ⏎ jumps to the query on view 1                                     
+  r.simonyte · scheduled refresh · on clickhouse7 (clickhouse) · #8091 July close pack · SQL as ClickHouse runs it · …  
+   ↑↓  move   ⏎  jump to ClickHouse   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit                         

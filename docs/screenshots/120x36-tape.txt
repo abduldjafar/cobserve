@@ -1,36 +1,36 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────── ● LIVE 2s · 22:21:46 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
-│ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
-│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
-│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
-│  TAPE · 29 events · 8 ✖ · 18 ▲ · newest first · ↑↓ scroll · ⏎ go to it                                               │
-│    TIME UTC  KIND   WHAT HAPPENED                                                                                    │
-│ ▌▲ 22:25:32  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i… │
-│  ✖ 22:25:22  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                             │
-│  ▲ 22:24:50  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx… │
-│  ▲ 22:24:30  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i… │
-│  ✖ 22:23:07  QUEUE  Redash queries backed up: 9 waiting, oldest 3m01s                                                │
-│  ✖ 22:24:20  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                             │
-│  ✔ 22:24:16  NODE   ch6 answering again                                                                              │
-│  ▲ 22:23:48  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx… │
-│  ✖ 22:23:46  NODE   ch6 unreachable — connection timed out after 1.5 s                                               │
-│  ▲ 22:23:28  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i… │
-│  ✖ 22:23:18  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                             │
-│  ▲ 22:22:46  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx… │
-│  ▲ 22:22:16  QUEUE  Redash scheduled_queries backed up: 3 waiting, oldest 1m01s                                      │
-│  ▲ 22:22:26  QUERY  ended m.kairys on clickhouse-bi after ≥ 59s · peak 8.9 GiB · probably killed (was at 99% of its… │
-│  ✖ 22:22:18  QUERY  m.kairys's query on clickhouse-bi at 96% of its 9.0 GiB memory limit                             │
-│  ● 22:22:06  NODE   clickhouse5 joined the fleet                                                                     │
-│  ✖ 22:21:52  NODE   clickhouse3 CPU 92.1% (≥ 90%)                                                                    │
-│  ▲ 22:21:49  QUEUE  Redash schemas: 0 waiting, oldest —, workers 2/2 busy at start                                   │
-│  ▲ 22:21:49  QUEUE  Redash scheduled_queries: 3 waiting, oldest 34s, workers 2/2 busy at start                       │
-│  ▲ 22:21:49  QUEUE  Redash queries: 13 waiting, oldest 1m43s, workers 4/4 busy at start                              │
-│  ▲ 22:21:48  QUERY  runaway r.simonyte on clickhouse7 — 5m02s running · 51.3 GiB · SELECT · wallet.ledger            │
-│  ▲ 22:21:48  QUERY  runaway m.kairys on clickhouse-bi — 82% of its 9.0 GiB limit · 7.4 GiB · SELECT · statistics.fx… │
-│  ▲ 22:21:48  QUERY  runaway j.petrova on clickhouse-bi — 2m46s running · 21.2 GiB · SELECT · open_banking.ais        │
-│  ▲ 22:21:48  QUERY  runaway j.petrova on clickhouse3 — 2m46s running · 8.2 GiB · SELECT · open_banking.ais           │
-│ ─ 22:25:32 UTC · QUERY ───────────────────────────────────────────────────────────────────────────────────────────── │
-│ ▲ ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of its limit) · SELECT  │
-│ · statistics.fx_exposure · c3ee64bf                                                                                  │
-│ ⏎ goes to what it is about                                                                                           │
-│  ↑↓  scroll   ⏎  go to it   1  nodes   p  pause   ?  help   q  quit                                                  │
-╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯
+  ◆ fleetlens   ✖ critical          1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4% 280/768 GiB   cpu ━━━╺━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   TAPE · 29 events · 8 ✖ · 18 ▲ · newest first · ↑↓ scroll · ⏎ go to it                                                
+     TIME WIB  KIND   WHAT HAPPENED                                                                                     
+  ▌▲ 06:25:30  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i…  
+   ✖ 06:25:20  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                              
+   ▲ 06:24:48  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx…  
+   ▲ 06:24:28  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i…  
+   ✖ 06:23:05  QUEUE  Redash queries backed up: 9 waiting, oldest 3m01s                                                 
+   ✖ 06:24:18  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                              
+   ✔ 06:24:14  NODE   ch6 answering again                                                                               
+   ▲ 06:23:46  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx…  
+   ✖ 06:23:44  NODE   ch6 unreachable — connection timed out after 1.5 s                                                
+   ▲ 06:23:26  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i…  
+   ✖ 06:23:16  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                              
+   ▲ 06:22:44  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx…  
+   ▲ 06:22:14  QUEUE  Redash scheduled_queries backed up: 3 waiting, oldest 1m01s                                       
+   ▲ 06:22:24  QUERY  ended m.kairys on clickhouse-bi after ≥ 59s · peak 8.9 GiB · probably killed (was at 99% of its…  
+   ✖ 06:22:16  QUERY  m.kairys's query on clickhouse-bi at 96% of its 9.0 GiB memory limit                              
+   ● 06:22:04  NODE   clickhouse5 joined the fleet                                                                      
+   ✖ 06:21:50  NODE   clickhouse3 CPU 92.1% (≥ 90%)                                                                     
+   ▲ 06:21:47  QUEUE  Redash schemas: 0 waiting, oldest —, workers 2/2 busy at start                                    
+   ▲ 06:21:47  QUEUE  Redash scheduled_queries: 3 waiting, oldest 34s, workers 2/2 busy at start                        
+   ▲ 06:21:47  QUEUE  Redash queries: 13 waiting, oldest 1m43s, workers 4/4 busy at start                               
+   ▲ 06:21:46  QUERY  runaway r.simonyte on clickhouse7 — 5m02s running · 51.3 GiB · SELECT · wallet.ledger             
+   ▲ 06:21:46  QUERY  runaway m.kairys on clickhouse-bi — 82% of its 9.0 GiB limit · 7.4 GiB · SELECT · statistics.fx…  
+   ▲ 06:21:46  QUERY  runaway j.petrova on clickhouse-bi — 2m46s running · 21.2 GiB · SELECT · open_banking.ais         
+  ─ 06:25:30 WIB · QUERY ─────────────────────────────────────────────────────────────────────────────────────────────  
+  ▲ ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of its limit) · SELECT   
+  · statistics.fx_exposure · c3ee64bf                                                                                   
+  ⏎ goes to what it is about                                                                                            
+   ↑↓  scroll   ⏎  go to it   1  nodes   p  pause   ?  help   q  quit      9 nodes polled · slowest 955 ms · read-only  

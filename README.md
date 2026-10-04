@@ -1,8 +1,10 @@
 # cobserve
 
 A terminal monitor for on call: the ClickHouse fleet and the Redash queue on one screen,
-**who** is using each node, and — new in this version — **what it means**: ranked insights,
-trends and forecasts, a fleet map, and a tape of everything that changed.
+**who** is using each node, and **what it means**: ranked insights, trends and forecasts, a
+fleet map, a tape of everything that changed — and Claude Code, OpenCode or a shell in the
+same window. Around it all, the **day**: your local time, the prayer times where you are, and a
+reminder ten minutes before each.
 
 ![NODES view](docs/screenshots/120x36-nodes.png)
 
@@ -16,7 +18,7 @@ on top of it and are listed in `DESIGN.md` §13.
 |---|---|---|
 | **NODES** | `1` | Every node's memory and CPU against its own capacity, and who holds it: user rows (a query from Redash resolved to the person behind it) plus the server's own share always add up to the node (§5.3). Below the tree, **insights**; below them, the **drawer** for the selected row. |
 | **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL. |
-| **MAP** | `3` | The whole fleet as tiles framed in their severity colour, with bars and history. A forty-node fleet on one screen. |
+| **MAP** | `3` | The whole fleet as cards, marked by their severity, with bars and history. A forty-node fleet on one screen. |
 | **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
 | **SESSIONS** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, or your own shell, in as many named sessions as you need, for any work at all, while the fleet and the Redash queue stay in sight above them. |
 
@@ -72,11 +74,43 @@ and SQL) and `/api/data_sources` for what it runs on (name and type).
 
 ![Redash with leftovers in its started list](docs/screenshots/120x36-queue-leftovers.png)
 
+### The day, and prayer times
+
+The line under the masthead is the day where you are, from Subuh to Isya: every prayer time a
+stop on it, the present a point moving between them — the way behind solid, the way ahead
+dotted — and the next stop saying how far off it is.
+
+```text
+━ Subuh 04:21 ━━━━━━━ Terbit 05:33 ━━━━━━━ Dzuhur 11:45 ━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄  Jakarta
+```
+
+Ten minutes before a prayer its reminder takes the line — `◷ Maghrib in 9:29 · 17:50 WIB` — and
+is said once beyond the screen: the terminal's bell and a notification of your desktop (through
+iTerm2, Ghostty or WezTerm themselves, through macOS or `notify-send` elsewhere). At its time it
+says so for five minutes. `d` waves it away (`ctrl+\ d` in a session), as does a click on ✕.
+The terminal's own title carries the next prayer, for a tab in the background.
+
+- The times are computed here, from the sun, by **Kemenag**'s criteria — Subuh at 20°, Isya at
+  18°, Maghrib 1° below the horizon, Ashar Shafi'i, two minutes of *ihtiyat* — and match its
+  published tables to the minute; on a Friday the noon prayer is **Jumat**. Nothing is asked of
+  a service.
+- **Where**: `PRAYER_CITY=Bandung` (most Indonesian cities by name, and Kuala Lumpur, Singapore,
+  Mecca, Medina), or `PRAYER_AT=-6.91,107.61` for anywhere; without either, the city of your
+  machine's time zone (Jakarta for WIB, Makassar for WITA, Jayapura for WIT), followed when the
+  zone changes. Set it: a city 300 km from the zone's is minutes off.
+- `PRAYER_REMIND=15` for another lead (`0` for none), `NOTIFY=bell` for the bell alone,
+  `NOTIFY=off` for the screen alone, `PRAYER=off` for no prayer times.
+- **The clock** is your local time, named WIB, WITA or WIT in Indonesia, and follows the
+  machine's zone as it changes; `z` or a click on it shows UTC — the servers' own — and back.
+  `TIME=utc` starts on UTC. The tape and the drawer follow the clock; prayer times stay local.
+
+![The reminder ten minutes before Maghrib](docs/screenshots/120x36-reminder.png)
+
 ### Claude, OpenCode and a terminal in the monitor
 
 View 5 runs programs in a terminal inside the monitor — the official `claude`, `opencode`, or
-your own shell: the header, the FLEET and REDASH lines and a line with every node stay on top,
-the session gets the rest. Each is the same as in a terminal tab of its own — any
+your own shell: the shelf — the FLEET and REDASH lines and a card for every node — stays on
+top, the session gets the rest. Each is the same as in a terminal tab of its own — any
 project, any question, its own permission prompts.
 
 - **Claude** is Claude Code signed in with your **Pro or Max plan**: install it and sign in once
@@ -94,10 +128,10 @@ project, any question, its own permission prompts.
   `--claude` opens on view 5.
 
 Up to five sessions run side by side, each its own program with its own conversation, listed
-beside it like a terminal's tabs, the one on screen framed: what it runs (`✻` Claude, `▣`
+beside it like a terminal's tabs, the one on screen raised: what it runs (`✻` Claude, `▣`
 OpenCode, `❯` a terminal), its name — the one you gave it, what the program says it is working
 on, or else its folder — and number, and under them the folder and its git branch. A session
-that rings while you are elsewhere is marked `●` there and on `5 SESSIONS`; one that ended,
+that rings while you are elsewhere is marked `●` there and on `5 sessions`; one that ended,
 `✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the
 sessions.
 
@@ -113,8 +147,18 @@ its CPU, a thin bar and the share each:
 
 A node that does not answer says why (`↯ no access`). As many cards as the width holds, then
 how many more and how high the rest go; a click on a card opens its node on view 1. On a
-terminal under 28 rows the cards give way to the line under the band, each node in a few
-words: `✖ clickhouse3 mem 91% cpu 95%`.
+terminal under 28 rows the cards give way to one line on the shelf, each node in a few words:
+`✖ clickhouse3 mem 91% cpu 95%`.
+
+**Sessions are kept.** Quit — or close the terminal — and the next start lists them again,
+marked `↻`; each takes its conversation up where it was when you open it (`claude --resume`,
+`opencode --session`). **Past conversations** (`ctrl+\ p`, or the entry under the sessions)
+lists the conversations Claude Code and OpenCode had anywhere — in another terminal, in an
+earlier run — by title or first prompt, folder and age, newest first; one opens in a new
+session in its own folder, as a copy when it is still open in the other terminal. The picker of
+a new session lists the folder's own under **Open the session here**. Only the names of
+conversations are read, and nothing leaves the machine; the list of sessions is kept in
+`~/.local/state/fleetlens/sessions.json`.
 
 A new session's folder is picked as in a file explorer, no typing needed: it starts in the
 folder the session on screen works in, a click on a folder goes into it, a click on a step of
@@ -131,12 +175,14 @@ completed like a shell does. A repository shows its branch.
 | `ctrl+\` then `5`…`9` | that session |
 | `ctrl+\` then `n` | a new session, of the kind on screen: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `shift+tab` changes what it runs, `esc` clears the search or gives up |
 | `ctrl+\` then `c` · `o` · `t` | a new Claude, OpenCode or terminal session, the same way |
+| `ctrl+\` then `p` | past conversations, from any folder or terminal, to take up in a new session |
 | `ctrl+\` then `r` | rename the one on screen (an empty name gives the default back) |
-| `ctrl+\` then `x` `x` | close it — `claude --resume` finds the conversation later |
+| `ctrl+\` then `x` `x` | close it — its conversation is still in **past conversations** |
+| `ctrl+\` then `z` · `d` | the clock local ↔ UTC · a prayer's reminder away |
 | `ctrl+\` then `esc` | back to the session |
 | `ctrl+\` `ctrl+\` | back to the monitor, where you came from |
 | `F1`…`F9` | the same tabs from anywhere, without `ctrl+\` |
-| a click | a tab in the header, a session, **+ new session**, a folder, what to run |
+| a click | a tab in the masthead, the clock, a session, **+ new session**, **past conversations**, a folder, what to run, a node's card, the reminder's ✕ |
 | the wheel | over Claude, its page up and down; over a shell, back through what went past (a key comes back down), and in `less` or `vim` the arrow keys; over OpenCode, what it asked for; elsewhere, the cursor |
 
 From the monitor, `5`…`9` or `ctrl+\` go to the sessions. `ctrl+z` is not passed on to Claude
@@ -159,9 +205,11 @@ terminal altogether.
 | `↗ ↑ ↘ ↓` | rising · rising fast · falling, over the last minute |
 | `▁▂▃▅▇` | the last 4 minutes, each cell its worst moment, coloured by severity |
 | `NEW` | joined the fleet during this session |
+| `━━●┄┄` | the day: behind, now, ahead — prayer times at the place |
+| `↻` | a session kept from the last run, or a conversation to take up |
 
-Bars have eighth-cell resolution and share one scale per column, so a node's bar is the sum of
-the bars under it.
+Bars are thin lines with half-cell resolution and share one scale per column, so a node's bar
+is the sum of the bars under it.
 
 ## Running it
 

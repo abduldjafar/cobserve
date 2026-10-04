@@ -23,25 +23,33 @@ use ratatui::Frame;
 /// it, a bar of tabs over the pane.
 const SIDEBAR_FROM: u16 = 100;
 
-/// Where the line beside the sessions runs, from the left of view 5's area; none when the
-/// terminal is too narrow for the list beside.
-pub fn divider_at(width: u16) -> Option<u16> {
-    (width >= SIDEBAR_FROM).then(|| (width * 22 / 100).clamp(26, 36))
+/// How wide the list of sessions is, its margin included; none when the terminal is too narrow
+/// for a list beside the pane.
+pub fn sidebar_width(width: u16) -> Option<u16> {
+    (width >= SIDEBAR_FROM).then(|| (width * 22 / 100).clamp(28, 38))
 }
 
-pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    if area.height == 0 || area.width == 0 {
+/// View 5 in the well under the shelf, `well` edge to edge: the list of sessions on the
+/// chrome's surface from the left edge, the pane in the dark beside it.
+pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, well: Rect, margin: u16) {
+    if well.height == 0 || well.width == 0 {
         return;
     }
-    let area = if let Some(side) = divider_at(area.width) {
-        sidebar(frame, app, theme, Rect::new(area.x, area.y, side, area.height));
-        let rule: Vec<Line<'static>> = (0..area.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
-        frame.render_widget(Paragraph::new(rule), Rect::new(area.x + side, area.y, 1, area.height));
-        Rect::new(area.x + side + 2, area.y, area.width.saturating_sub(side + 2), area.height)
+    let area = if let Some(side) = sidebar_width(well.width) {
+        frame.render_widget(ratatui::widgets::Block::new().style(theme.surface()), Rect::new(well.x, well.y, side, well.height));
+        sidebar(frame, app, theme, Rect::new(well.x + margin, well.y, side.saturating_sub(margin + 1), well.height));
+        if !theme.paints_background() {
+            let rule: Vec<Line<'static>> = (0..well.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
+            frame.render_widget(Paragraph::new(rule), Rect::new(well.x + side, well.y, 1, well.height));
+        }
+        let x = well.x + side + 2;
+        Rect::new(x, well.y + 1, (well.x + well.width).saturating_sub(x + margin), well.height.saturating_sub(1))
     } else {
-        let bar = Rect::new(area.x, area.y, area.width, 1);
-        frame.render_widget(Paragraph::new(session_bar(app, theme, bar)), bar);
-        Rect::new(area.x, area.y + 1, area.width, area.height - 1)
+        let bar = Rect::new(well.x, well.y, well.width, 1);
+        frame.render_widget(ratatui::widgets::Block::new().style(theme.surface()), bar);
+        let inset = Rect::new(well.x + margin, well.y, well.width.saturating_sub(2 * margin), 1);
+        frame.render_widget(Paragraph::new(session_bar(app, theme, inset)), inset);
+        Rect::new(well.x + margin, well.y + 1, well.width.saturating_sub(2 * margin), well.height - 1)
     };
     if area.height == 0 || area.width == 0 {
         return;
@@ -138,9 +146,12 @@ fn kind_style(kind: Kind, theme: &Theme) -> Style {
     }
 }
 
-/// A session's state at a glance: `●` it rang while not on screen, `✕` its program ended.
+/// A session's state at a glance: `●` it rang while not on screen, `✕` its program ended, `↻`
+/// kept from the last run, waiting to take its conversation up.
 fn mark(session: &Session) -> &'static str {
-    if session.pane.attention {
+    if session.waiting() {
+        "↻"
+    } else if session.pane.attention {
         "●"
     } else if matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_)) {
         "✕"
@@ -155,41 +166,38 @@ fn mark(session: &Session) -> &'static str {
 /// and so is a new one while its folder is chosen.
 fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let sessions = &app.claude;
-    // A column short of the rule beside it, so a frame never runs into it.
-    let width = (area.width as usize).saturating_sub(1);
+    let width = area.width as usize;
+    // The bar at the left of a card, and the card's own margin either side.
     let inner = width.saturating_sub(4);
     let mut hits = app.viewport.hits.borrow_mut();
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
     let picking = matches!(sessions.mode, Mode::Opening(_));
     let lit = sessions.mode == Mode::Bar;
 
     let mut title = Cells::new();
-    title.push(" SESSIONS", theme.section());
+    title.push("SESSIONS", theme.section());
     if lit {
         title.push("  which one?", theme.strong());
+    } else if !sessions.list.is_empty() {
+        title.push(format!("  {}", sessions.list.len()), theme.faint());
     }
-    lines.push(title.line(width, if lit { theme.selected() } else { Style::default() }));
+    lines.push(title.line(width, Style::default()));
+    lines.push(Line::from(""));
 
-    // The framed card: the session on screen, or the new one being opened.
-    let framed = if picking { Some(sessions.list.len()) } else { (!sessions.list.is_empty()).then_some(sessions.active) };
-    let edge = |index: usize| match framed {
-        Some(f) if f == index => card_edge(width, true, theme),
-        Some(f) if f + 1 == index => card_edge(width, false, theme),
-        _ => Line::from(""),
-    };
-
+    // The card that is lit: the session on screen, or the new one being opened.
+    let lit_card = if picking { Some(sessions.list.len()) } else { (!sessions.list.is_empty()).then_some(sessions.active) };
     for (index, session) in sessions.list.iter().enumerate() {
-        lines.push(edge(index));
         let y = area.y + lines.len() as u16;
-        let on_screen = framed == Some(index);
+        let on_screen = lit_card == Some(index);
         let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
 
-        // Claude's mark and the name; at the right, what it rang for and its number, a key
-        // to press once ctrl+\ asks which.
+        // Its mark and name; at the right, what it rang for and its number — a key to press
+        // once ctrl+\ asks which.
         let mut right = Cells::new();
         match mark(session) {
             "●" => right.push("● ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
             "✕" => right.push("✕ ", theme.faint()),
+            "↻" => right.push("↻ ", theme.accent()),
             _ => &mut right,
         };
         let number = Sessions::number_of(index).to_string();
@@ -206,7 +214,7 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 first.push(format!("{}▏", fmt::truncate(name, room)), theme.keycap());
             }
             _ => {
-                let style = if on_screen { theme.strong() } else if ended { theme.faint() } else { theme.text() };
+                let style = if on_screen { theme.strong() } else if ended || session.waiting() { theme.muted() } else { theme.text() };
                 first.push(fmt::truncate(&session.label(), room), style);
             }
         }
@@ -223,17 +231,17 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             place(&mut second, &session.dir, session.branch.as_deref(), inner, theme);
         }
         lines.push(card_row(second, width, on_screen, theme));
+        lines.push(Line::from(""));
         hits.push((Rect::new(area.x, y, area.width, 2), Hit::Session(index)));
     }
 
-    // A new session is one more card at the end of the list.
+    // A new session, and one that takes a conversation up again, at the end of the list.
     let next = sessions.list.len();
-    lines.push(edge(next));
     if picking || next < MAX_SESSIONS {
         let y = area.y + lines.len() as u16;
         let mut first = Cells::new();
         first.push("+  ", theme.accent().add_modifier(Modifier::BOLD));
-        first.push("new session", if picking { theme.strong() } else { theme.muted() });
+        first.push("new session", if picking { theme.strong() } else { theme.text2() });
         lines.push(card_row(first, width, picking, theme));
         if picking {
             let mut second = Cells::new();
@@ -241,7 +249,14 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             lines.push(card_row(second, width, true, theme));
         }
         hits.push((Rect::new(area.x, y, area.width, if picking { 2 } else { 1 }), Hit::NewSession));
-        lines.push(edge(next + 1));
+        if !picking {
+            let y = area.y + lines.len() as u16;
+            let mut resume = Cells::new();
+            resume.push("↻  ", theme.accent());
+            resume.push("past conversations", theme.muted());
+            lines.push(card_row(resume, width, false, theme));
+            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Resume));
+        }
     } else {
         let mut full = Cells::new();
         full.push(format!("   {MAX_SESSIONS} of {MAX_SESSIONS} open · x closes one"), theme.faint());
@@ -252,31 +267,23 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// The top or the bottom of the framed card.
-fn card_edge(width: usize, top: bool, theme: &Theme) -> Line<'static> {
-    let run = "─".repeat(width.saturating_sub(2));
-    let text = if top { format!("╭{run}╮") } else { format!("╰{run}╯") };
-    Line::from(Span::styled(text, theme.border()))
-}
-
-/// A line of a card: inside the frame and painted, for the card on screen; set in by as much
-/// for the others, so nothing moves when the frame does.
-fn card_row(inner: Cells, width: usize, framed: bool, theme: &Theme) -> Line<'static> {
+/// A line of a card: on a raised surface with a bar of the accent at its left, for the card on
+/// screen; set in by as much for the others, so nothing moves when the light does.
+fn card_row(inner: Cells, width: usize, lit: bool, theme: &Theme) -> Line<'static> {
     let body = width.saturating_sub(4);
-    if !framed {
+    if !lit {
         let mut cells = Cells::new();
         cells.push("  ", Style::default());
         cells.spans(fit(inner.into_spans(), body, false));
         return cells.line(width, Style::default());
     }
-    let fill = theme.selected();
-    let mut spans = vec![Span::styled("│", theme.border()), Span::styled(" ", fill)];
+    let fill = theme.raised();
+    let mut spans = vec![Span::styled("▎", theme.accent().patch(fill)), Span::styled(" ", fill)];
     spans.extend(fit(inner.into_spans(), body, true).into_iter().map(|span| {
         let style = fill.patch(span.style);
         Span::styled(span.content, style)
     }));
-    spans.push(Span::styled(" ", fill));
-    spans.push(Span::styled("│", theme.border()));
+    spans.push(Span::styled("  ", fill));
     Line::from(spans)
 }
 
@@ -380,7 +387,10 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
         kind => format!("New {} session", kind.title()),
     };
     head.push(what, theme.strong());
-    head.push("  ·  where should it work?", theme.muted());
+    head.push(
+        if picker.everywhere { "  ·  take a conversation up, from any folder" } else { "  ·  where should it work?" },
+        theme.muted(),
+    );
     let cancel = " ✕ cancel ";
     let at = width.saturating_sub(fmt::width(cancel));
     head.pad_to(at);
@@ -392,19 +402,31 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
     // What it will run, a click to change.
     let y = area.y + lines.len() as u16;
     let mut kinds = Cells::new();
-    kinds.push(" run  ", theme.muted());
+    kinds.push("run   ", theme.muted());
     for kind in Kind::ALL {
         let chip = format!(" {} {} ", kind.glyph(), kind.title());
         let x = area.x + kinds.width() as u16;
         hits.push((Rect::new(x, y, fmt::width(&chip) as u16, 1), Hit::Kind(kind)));
-        kinds.push(chip, if kind == picker.kind { theme.tab_active() } else { theme.keycap() });
+        kinds.push(chip, if kind == picker.kind { theme.tab_active() } else { theme.text2() });
         kinds.push("  ", Style::default());
     }
-    kinds.push(" shift+tab switches", theme.faint());
+    kinds.push("  shift+tab switches", theme.faint());
     lines.push(kinds.line(width, Style::default()));
     lines.push(Line::from(""));
 
-    // The search, in a box of its own; what it found so far on its right.
+    if picker.everywhere {
+        let mut back = Cells::new();
+        back.push("←  ", theme.accent());
+        back.push("back to the folders", theme.muted());
+        if picker.looking_for_conversations() {
+            back.push("   looking…", theme.faint());
+        }
+        lines.push(back.line(width, Style::default()));
+        lines.push(Line::from(""));
+        return rows_and_note(frame, app, theme, area, picker, lines, hits);
+    }
+
+    // The search, on a raised field of its own; what it found so far on its right.
     let inner = width.saturating_sub(4);
     let count = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
     let status = if picker.looking {
@@ -415,7 +437,7 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
         count(picker.folders.len(), "folder", "folders")
     };
     let mut field = Cells::new();
-    field.push("⌕  ", theme.accent());
+    field.push("  ⌕  ", theme.accent());
     if picker.query.is_empty() {
         field.push("▏", theme.accent());
         field.push("search the folders below here, or type a path", theme.faint());
@@ -424,10 +446,9 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
         field.push("▏", theme.accent());
     }
     field.pad_to(inner.saturating_sub(fmt::width(&status)));
-    field.push(status, theme.faint());
-    lines.push(card_edge(width, true, theme));
-    lines.push(boxed(field, width, theme));
-    lines.push(card_edge(width, false, theme));
+    field.push(format!("{status}  "), theme.faint());
+    lines.push(if theme.paints_background() { raised_line(field, width, theme) } else { boxed(field, width, theme) });
+    lines.push(Line::from(""));
 
     // Where it is: every step of the path a click back up.
     let y = area.y + lines.len() as u16;
@@ -459,8 +480,27 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
     }
     lines.push(path.line(width, Style::default()));
     lines.push(Line::from(""));
+    rows_and_note(frame, app, theme, area, picker, lines, hits);
+}
 
-    // The rows, the cursor kept in sight; a line left at the bottom for what to say about them.
+/// A line on the raised surface, edge to edge of `width`.
+fn raised_line(inner: Cells, width: usize, theme: &Theme) -> Line<'static> {
+    let fill = theme.raised();
+    Line::from(fit(inner.into_spans(), width, true).into_iter().map(|span| Span::styled(span.content, fill.patch(span.style))).collect::<Vec<_>>())
+}
+
+/// The picker's rows under what `lines` already holds, the cursor kept in sight, and a line at
+/// the bottom for what to say about them.
+fn rows_and_note(
+    frame: &mut Frame,
+    app: &App,
+    theme: &Theme,
+    area: Rect,
+    picker: &Picker,
+    mut lines: Vec<Line<'static>>,
+    mut hits: std::cell::RefMut<'_, Vec<(Rect, Hit)>>,
+) {
+    let width = area.width as usize;
     let rows = picker.rows();
     let room = (area.height as usize).saturating_sub(lines.len() + 1);
     let cursor = picker.cursor.min(rows.len().saturating_sub(1));
@@ -475,10 +515,14 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
     picker.scroll.set(scroll);
     for (index, row) in rows.iter().enumerate().skip(scroll).take(room) {
         let y = area.y + lines.len() as u16;
-        lines.push(pick_line(*row, picker, index == cursor, width, theme));
+        lines.push(pick_line(*row, picker, index == cursor, width, app.now(), theme));
         hits.push((Rect::new(area.x, y, area.width, 1), Hit::Pick(*row)));
     }
-    let note = if let Some(error) = &picker.error {
+    let note = if picker.everywhere && rows.is_empty() && !picker.looking_for_conversations() {
+        Some((format!("no {} conversation to take up", picker.kind.title()), theme.faint()))
+    } else if picker.everywhere {
+        None
+    } else if let Some(error) = &picker.error {
         Some((error.clone(), theme.sev(Severity::Warn)))
     } else if picker.looking {
         None
@@ -525,21 +569,48 @@ fn crumbs_shown(crumbs: &[(String, std::path::PathBuf)], room: usize) -> Vec<Opt
     shown
 }
 
-/// A line inside the picker's search box.
+/// Where no background is painted, the search field between brackets instead.
 fn boxed(inner: Cells, width: usize, theme: &Theme) -> Line<'static> {
-    let mut spans = vec![Span::styled("│ ", theme.border())];
+    let mut spans = vec![Span::styled("[ ", theme.border())];
     spans.extend(fit(inner.into_spans(), width.saturating_sub(4), true));
-    spans.push(Span::styled(" │", theme.border()));
+    spans.push(Span::styled(" ]", theme.border()));
     Line::from(spans)
 }
 
 /// One row of the picker: the first opens the session here, the next goes up, the rest are
 /// folders — a repository's with its branch.
-fn pick_line(row: PickRow, picker: &Picker, on: bool, width: usize, theme: &Theme) -> Line<'static> {
+fn pick_line(row: PickRow, picker: &Picker, on: bool, width: usize, now: i64, theme: &Theme) -> Line<'static> {
     let mut cells = Cells::new();
     cells.push(if on { "▌" } else { " " }, theme.accent());
     let mut branch = None;
     match row {
+        PickRow::Conversation(index) => {
+            let Some(conversation) = picker.conversations_shown().get(index) else {
+                return Line::from("");
+            };
+            let mut tag = String::new();
+            if picker.everywhere {
+                // The folder gives way to the title: its last part is what says where.
+                tag.push_str(&shorten_left(&crate::pty::tilde(&conversation.dir), (width / 3).max(12)));
+                tag.push_str(" · ");
+            }
+            tag.push_str(&fmt::ago(now - conversation.updated));
+            if conversation.open {
+                tag.push_str(" · open in another terminal");
+            }
+            let tag = format!("{tag} ");
+            let room = width.saturating_sub(5 + fmt::width(&tag) + 2);
+            cells.push(" ↻  ", theme.accent());
+            cells.push(fmt::truncate(&conversation.title, room), theme.text());
+            let at = width.saturating_sub(fmt::width(&tag));
+            cells.pad_to(at);
+            cells.push(tag, if conversation.open { theme.sev(Severity::Warn) } else { theme.muted() });
+            return cells.line(width, if on { theme.selected() } else { Style::default() });
+        }
+        PickRow::Everywhere => {
+            cells.push(" ↻  ", theme.muted());
+            cells.push("conversations in every folder…", theme.text2());
+        }
         PickRow::Here => {
             cells.push(" ", Style::default());
             cells.push(" ⏎  Open the session here ", theme.keycap());
@@ -745,15 +816,14 @@ const CARD_MAX: usize = 26;
 ///       ✖ clickhouse3          ▲ clickhouse7  lag 12s  ● clickhouse-bi        +6 more
 /// mem   ━━━━━━━━━━━━━━━━  93%  ━━━━━━━━━━╺━━━━━━  60%  ━━━━━━━━━━━╺━━━━  67%  ≤ 42%
 /// cpu   ━━━━━━━━━━━━━━━━  93%  ━━━━━━━╸━━━━━━━━━  44%  ━━━━━━━━━━━━╺━━━  72%  ≤ 29%
-/// ──────────────────────────┬──────────────────────────────────────────────────────────
 /// ```
 ///
 /// The cards are all as wide as the widest of them needs — a name and its lag whole — and
 /// wider when there is room, so their bars can be compared at a glance. As many as fit, then
 /// one saying how many more and how high the rest go. A click on a card opens its node on
-/// view 1; the rule under the cards meets the line beside the sessions.
+/// view 1.
 pub fn fleet_strip(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    if area.height < 4 || area.width == 0 {
+    if area.height < 3 || area.width == 0 {
         return;
     }
     let width = area.width as usize;
@@ -832,12 +902,6 @@ pub fn fleet_strip(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     for (y, row) in (area.y..).zip(rows) {
         frame.render_widget(Paragraph::new(row.line(width, Style::default())), Rect::new(area.x, y, area.width, 1));
     }
-    let mut rule: Vec<&str> = vec!["─"; width];
-    if let Some(at) = divider_at(area.width).map(usize::from).filter(|&at| at < width) {
-        rule[at] = "┬";
-    }
-    let line = Line::from(Span::styled(rule.concat(), theme.rule()));
-    frame.render_widget(Paragraph::new(line), Rect::new(area.x, area.y + 3, area.width, 1));
 }
 
 /// How wide a node's card has to be for its mark, its name and its lag to be whole.

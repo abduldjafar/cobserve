@@ -1,48 +1,48 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ─────────────────────────────────────────────────────── ● LIVE 2s · 22:21:45 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 SESSIONS  ╮
-│ FLEET  9 nodes · 1 hot   MEM █████▏         36.4% 280/768 GiB ▄▄▄▄▄▅▅▅▅▅▅▅▅▅▄▄   CPU ████           28.7% 55/192 cores ▅▄▄▄▄▄▄▄▅▄▅▄▄▄▄▄   QUERIES 15 · 4 ✕   │
-│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue │
-│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
-│       ✖ clickhouse3          ▲ clickhouse7 lag 12s  ● clickhouse-bi        ● clickhouse2          ● clickhouse5          ● ch4                  +3 more      │
-│  mem  ━━━━━━━━━━━━━━━╺  93%  ━━━━━━━━━╸━━━━━━  60%  ━━━━━━━━━━━╺━━━━  67%  ━━━━━━╸━━━━━━━━━  42%  ━━━━━━╺━━━━━━━━━  38%  ━━━╸━━━━━━━━━━━━  21%  ≤ 19%        │
-│  cpu  ━━━━━━━━━━━━━━━╺  93%  ━━━━━━━╺━━━━━━━━  44%  ━━━━━━━━━━━╸━━━━  72%  ━━━━╸━━━━━━━━━━━  29%  ╸━━━━━━━━━━━━━━━   4%  ━━╸━━━━━━━━━━━━━  16%  ≤ 9%         │
-│ ──────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
-│  SESSIONS                         │ ✻ New Claude session  ·  where should it work?                                                                 ✕ cancel  │
-│                                   │                                                                                                                          │
-│   ✻  billing export           5   │  run   ✻ Claude    ▣ OpenCode    ❯ Terminal    shift+tab switches                                                        │
-│      ~/work/billing  ⎇ main       │                                                                                                                          │
-│                                   │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
-│   ▣  late partitions        ● 6   │ │ ⌕  ▏search the folders below here, or type a path                                                          7 folders │ │
-│      ~/work/pipelines  ⎇ fix-l…   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│                                   │  ~ › work                                                                                                                │
-│   ✻  weekly totals            7   │                                                                                                                          │
-│      ~/work/reports  ⎇ add-wee…   │    ⏎  Open the session here                                                                                              │
-│                                   │   ↰  ..  up to ~                                                                                                         │
-│   ❯  make totals              8   │   ▸  billing                                                                                                     ⎇ main  │
-│      ~/work/reports  ⎇ add-wee…   │   ▸  dotfiles                                                                                                  ⎇ master  │
-│ ╭───────────────────────────────╮ │   ▸  infra-notes                                                                                                         │
-│ │ +  new session                │ │ ▌ ▸  pipelines                                                                                    ⎇ fix-late-partitions  │
-│ │    choose its folder →        │ │   ▸  reports                                                                                        ⎇ add-weekly-totals  │
-│ ╰───────────────────────────────╯ │   ▸  sandbox                                                                                                             │
-│                                   │   ▸  website                                                                                                 ⎇ redesign  │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│                                   │                                                                                                                          │
-│  ↑↓  choose   ⏎  open the session there   →  go in   ←  up   esc  cancel   type to search · a click on a folder goes into it                                 │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯
+  ◆ fleetlens   ✖ critical                              1 nodes   2 queue   3 map   4 tape   5 sessions                               ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━━━━━━━━ Terbit 05:33 ━━━━━━━━━━ Dzuhur 11:45 ━━━━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
+                                                                                                                                                                
+  FLEET   9 nodes · 1 hot   mem ━━━━╸━━━━━━━ 36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   cpu ━━━╸━━━━━━━━ 28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄   queries 15 · 4 ✕                   
+  REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue  
+                                                                                                                                                                
+        ✖ clickhouse3          ▲ clickhouse7 lag 12s  ● clickhouse-bi        ● clickhouse2          ● clickhouse5          ● ch4                  +3 more       
+   mem  ━━━━━━━━━━━━━━━╺  93%  ━━━━━━━━━╸━━━━━━  60%  ━━━━━━━━━━━╺━━━━  67%  ━━━━━━╸━━━━━━━━━  42%  ━━━━━━╺━━━━━━━━━  38%  ━━━╸━━━━━━━━━━━━  21%  ≤ 19%         
+   cpu  ━━━━━━━━━━━━━━━╺  93%  ━━━━━━━╺━━━━━━━━  44%  ━━━━━━━━━━━╸━━━━  72%  ━━━━╸━━━━━━━━━━━  29%  ╸━━━━━━━━━━━━━━━   4%  ━━╸━━━━━━━━━━━━━  16%  ≤ 9%          
+                                                                                                                                                                
+                                                                                                                                                                
+  SESSIONS  4                        ✻ New Claude session  ·  where should it work?                                                                  ✕ cancel   
+                                                                                                                                                                
+    ✻  billing export          5     run    ✻ Claude    ▣ OpenCode    ❯ Terminal     shift+tab switches                                                         
+       ~/work/billing  ⎇ main                                                                                                                                   
+                                       ⌕  ▏search the folders below here, or type a path                                                         7 folders      
+    ▣  late partitions       ● 6                                                                                                                                
+       ~/work/pipelines  ⎇ fix-…      ~ › work                                                                                                                  
+                                                                                                                                                                
+    ✻  weekly totals           7        ⏎  Open the session here                                                                                                
+       ~/work/reports  ⎇ add-we…       ↻  conversations in every folder…                                                                                        
+                                       ↰  ..  up to ~                                                                                                           
+    ❯  make totals             8       ▸  billing                                                                                                      ⎇ main   
+       ~/work/reports  ⎇ add-we…       ▸  dotfiles                                                                                                   ⎇ master   
+                                     ▌ ▸  infra-notes                                                                                                           
+  ▎ +  new session                     ▸  pipelines                                                                                     ⎇ fix-late-partitions   
+  ▎    choose its folder →             ▸  reports                                                                                         ⎇ add-weekly-totals   
+                                       ▸  sandbox                                                                                                               
+                                       ▸  website                                                                                                  ⎇ redesign   
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+   ↑↓  choose   ⏎  open the session there   →  go in   ←  up   esc  cancel   type to search · a click on a folder goes into it                                  

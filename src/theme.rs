@@ -9,7 +9,7 @@
 //!   then carried by bold and by the glyphs, which every screen in this app prints anyway.
 //!
 //! `THEME=light` swaps the palette for light terminals. Everything else in the UI asks this
-//! module for a *role* (`muted`, `crit`, `track`), never for a colour, so the choice is made
+//! module for a *role* (`muted`, `crit`, `surface`), never for a colour, so the choice is made
 //! in exactly one place.
 
 use crate::severity::Severity;
@@ -35,6 +35,7 @@ pub enum Variant {
 struct Palette {
     bg: (u8, u8, u8),
     panel: (u8, u8, u8),
+    raised: (u8, u8, u8),
     selection: (u8, u8, u8),
     border: (u8, u8, u8),
     rule: (u8, u8, u8),
@@ -49,15 +50,18 @@ struct Palette {
     warn: (u8, u8, u8),
     crit: (u8, u8, u8),
     info: (u8, u8, u8),
-    track: (u8, u8, u8),
     bar: (u8, u8, u8),
     server_bar: (u8, u8, u8),
     keycap: (u8, u8, u8),
+    tint_ok: (u8, u8, u8),
+    tint_warn: (u8, u8, u8),
+    tint_crit: (u8, u8, u8),
 }
 
 const DARK: Palette = Palette {
     bg: (15, 18, 25),
     panel: (24, 29, 39),
+    raised: (33, 39, 53),
     selection: (35, 48, 74),
     border: (70, 82, 104),
     rule: (50, 59, 76),
@@ -72,15 +76,18 @@ const DARK: Palette = Palette {
     warn: (236, 183, 64),
     crit: (250, 108, 98),
     info: (78, 205, 196),
-    track: (36, 42, 55),
     bar: (82, 146, 222),
     server_bar: (96, 106, 124),
     keycap: (46, 55, 72),
+    tint_ok: (22, 49, 37),
+    tint_warn: (60, 47, 20),
+    tint_crit: (66, 29, 31),
 };
 
 const LIGHT: Palette = Palette {
     bg: (250, 251, 253),
     panel: (238, 241, 246),
+    raised: (226, 231, 239),
     selection: (214, 228, 252),
     border: (200, 207, 218),
     rule: (222, 227, 234),
@@ -95,10 +102,12 @@ const LIGHT: Palette = Palette {
     warn: (166, 110, 0),
     crit: (207, 34, 46),
     info: (14, 125, 125),
-    track: (226, 230, 237),
     bar: (60, 118, 204),
     server_bar: (158, 166, 178),
     keycap: (222, 227, 236),
+    tint_ok: (218, 241, 226),
+    tint_warn: (251, 238, 204),
+    tint_crit: (251, 223, 221),
 };
 
 /// Every colour role the UI uses.
@@ -107,6 +116,8 @@ pub struct Theme {
     pub depth: Depth,
     pub bg: Color,
     pub panel: Color,
+    /// A surface on the surface: the session on screen, a tile under the cursor.
+    pub raised: Color,
     pub selection: Color,
     pub border: Color,
     pub rule: Color,
@@ -122,10 +133,13 @@ pub struct Theme {
     pub warn: Color,
     pub crit: Color,
     pub info: Color,
-    pub track: Color,
     pub bar: Color,
     pub server_bar: Color,
     pub keycap: Color,
+    /// Backgrounds a severity colours: a reminder, a status.
+    pub tint_ok: Color,
+    pub tint_warn: Color,
+    pub tint_crit: Color,
 }
 
 impl Theme {
@@ -144,6 +158,7 @@ impl Theme {
                     depth,
                     bg: c(p.bg),
                     panel: c(p.panel),
+                    raised: c(p.raised),
                     selection: c(p.selection),
                     border: c(p.border),
                     rule: c(p.rule),
@@ -158,10 +173,12 @@ impl Theme {
                     warn: c(p.warn),
                     crit: c(p.crit),
                     info: c(p.info),
-                    track: c(p.track),
                     bar: c(p.bar),
                     server_bar: c(p.server_bar),
                     keycap: c(p.keycap),
+                    tint_ok: c(p.tint_ok),
+                    tint_warn: c(p.tint_warn),
+                    tint_crit: c(p.tint_crit),
                 }
             }
             // 16 colours: the terminal's own background stays, so nothing here paints one.
@@ -169,6 +186,7 @@ impl Theme {
                 depth,
                 bg: Color::Reset,
                 panel: Color::Reset,
+                raised: Color::Reset,
                 selection: Color::Reset,
                 border: Color::DarkGray,
                 rule: Color::DarkGray,
@@ -183,15 +201,18 @@ impl Theme {
                 warn: Color::Yellow,
                 crit: Color::Red,
                 info: Color::Cyan,
-                track: Color::Reset,
                 bar: Color::Blue,
                 server_bar: Color::DarkGray,
                 keycap: Color::Reset,
+                tint_ok: Color::Reset,
+                tint_warn: Color::Reset,
+                tint_crit: Color::Reset,
             },
             Depth::Mono => Theme {
                 depth,
                 bg: Color::Reset,
                 panel: Color::Reset,
+                raised: Color::Reset,
                 selection: Color::Reset,
                 border: Color::Reset,
                 rule: Color::Reset,
@@ -206,16 +227,18 @@ impl Theme {
                 warn: Color::Reset,
                 crit: Color::Reset,
                 info: Color::Reset,
-                track: Color::Reset,
                 bar: Color::Reset,
                 server_bar: Color::Reset,
                 keycap: Color::Reset,
+                tint_ok: Color::Reset,
+                tint_warn: Color::Reset,
+                tint_crit: Color::Reset,
             },
         }
     }
 
-    /// Whether backgrounds are painted at all. Without them a bar's empty track has to be
-    /// drawn with a glyph (`░`) instead of a coloured cell.
+    /// Whether backgrounds are painted at all: without them the chrome has no surface, and
+    /// lines take its place.
     pub fn paints_background(&self) -> bool {
         matches!(self.depth, Depth::TrueColor | Depth::Ansi256)
     }
@@ -308,20 +331,6 @@ impl Theme {
         }
     }
 
-    /// A pill: dark text on the severity colour (`▲ DEGRADED`).
-    pub fn pill(&self, sev: Severity) -> Style {
-        match self.depth {
-            Depth::TrueColor | Depth::Ansi256 => Style::default()
-                .fg(self.bg)
-                .bg(self.sev_fg(sev))
-                .add_modifier(Modifier::BOLD),
-            Depth::Ansi16 => Style::default()
-                .fg(self.sev_fg(sev))
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-            Depth::Mono => Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
-        }
-    }
-
     /// The active view tab.
     pub fn tab_active(&self) -> Style {
         match self.depth {
@@ -350,6 +359,38 @@ impl Theme {
         match self.depth {
             Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.panel),
             _ => Style::default(),
+        }
+    }
+
+    /// The chrome's surface — the shelf at the top, the list beside the sessions, the footer —
+    /// above the well the work is drawn in. Nothing where the terminal paints no background.
+    pub fn surface(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.panel),
+            _ => Style::default(),
+        }
+    }
+
+    /// A surface on the surface: the session on screen.
+    pub fn raised(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.raised),
+            _ => Style::default().add_modifier(Modifier::BOLD),
+        }
+    }
+
+    /// A background in a severity's colour, for what has to be seen — a prayer's reminder, a
+    /// status — with text in that colour on it. Reversed where backgrounds are not painted.
+    pub fn tint(&self, sev: Severity) -> Style {
+        let bg = match sev {
+            Severity::Crit => self.tint_crit,
+            Severity::Warn => self.tint_warn,
+            _ => self.tint_ok,
+        };
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().fg(self.sev_fg(sev)).bg(bg),
+            Depth::Ansi16 => Style::default().fg(self.sev_fg(sev)).add_modifier(Modifier::REVERSED),
+            Depth::Mono => Style::default().add_modifier(Modifier::REVERSED),
         }
     }
 

@@ -1,25 +1,32 @@
 //! Rendering. `draw` reads `App` and nothing else (§8): no I/O, no network, and no panic on
 //! resize — every width and height below is a number we clamp, not an assumption.
 //!
-//! The frame, top to bottom:
+//! The screen, top to bottom: the chrome on a surface of its own — a shelf across the top, the
+//! footer, on view 5 the list of sessions — and the work in the well it leaves.
 //!
 //! ```text
-//! ╭ ◆ FLEETLENS ▲ DEGRADED ─────────────── ● LIVE 2s · 15:32:28 UTC  1 NODES 2 QUEUE 3 MAP 4 TAPE ╮
-//! │ FLEET 8 nodes · 2 hot   MEM ▕████▍ ▏ 58.1% 372/640 GiB ▁▂▃▅   CPU …   QUERIES 14 · 3 ✕       │
-//! │ REDASH 12 waiting ▁▂▅▇ · oldest 1m43s ▲ · workers ●●●●●● 6/6 busy · 2 failed/5m  [2] queue │
-//! │ ──────────────────────────────────────────────────────────────────────────────────────── │
-//! │ view 5 only: a card for every node — mark, name, memory and CPU — and a rule under them    │
-//! │ the view: the tree, the queue, the map, the tape or the sessions                           │
-//! │ ─ INSIGHTS 2 ✖ 4 ▲ ─────────────────── (view 1 only)                                       │
-//! │ ─ the selected row ─────────────────── the drawer, 3 lines                                 │
-//! │  ↑↓ move  ⏎ open  tab insights  …                                    the keys that work now │
-//! ╰──────────────────────────────────────────────────────────────── updated 1s ago · read-only ╯
+//!   ◆ fleetlens  ▲ degraded       1 nodes   2 queue   3 map   4 tape   5 sessions      ● live 2s   14:12:07 WIB
+//!   Subuh 04:21 ━━━━━━ Terbit 05:33 ━━━━━━ Dzuhur 11:45 ━━━●┄┄┄┄ Ashar 14:48 · in 2h52m ┄┄┄┄ Maghrib …  Jakarta
+//!
+//!   FLEET   8 nodes · 2 hot   mem ━━━━━━━━╺━━━━━  58%  372/640 GiB ▁▂▃▅   cpu …   QUERIES 14 · 3 ✕
+//!   REDASH  12 waiting ▁▂▅▇ · oldest 1m43s ▲ · 6 running · ●●●●●● 6/6 workers busy            [2] queue
+//!         ✖ clickhouse3      ▲ clickhouse7 lag 12s  ● clickhouse-bi        view 5: a card per node
+//!    mem  ━━━━━━━━━━━  93%   ━━━━━━━━╺━━━━━  60%    ━━━━━━━╺━━━━━━  67%
+//!    cpu  ━━━━━━━━━━━  95%   ━━━━━╸━━━━━━━━  44%    ━━━━━━━━╸━━━━━  72%
+//!
+//!   the view: the tree, the queue, the map, the tape or the sessions
+//!   ─ INSIGHTS 2 ✖ 4 ▲ ───────────────── view 1 only
+//!   ─ the selected row ───────────────── the drawer, 3 lines
+//!   ↑↓ move  ⏎ open  tab insights  …                          9 nodes polled · slowest 955 ms · read-only
 //! ```
 //!
-//! Colour comes from `theme.rs`; this module asks for roles, never for colours.
+//! The line under the header is the day at the place prayer times are for (`day.rs`), and a
+//! prayer's reminder in its place when one is near. Colour comes from `theme.rs`; this module
+//! asks for roles, never for colours.
 
 mod band;
 mod claude;
+mod day;
 mod drawer;
 mod map;
 mod nodes;
@@ -38,78 +45,131 @@ use crate::theme::{self, Theme};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
-use widgets::{keycap, pill, rule, Cells};
+use widgets::{keycap, rule, Cells};
 
-/// Height of the frame's inner area below which the drawer shrinks to its title (§7: below a
-/// 30-row terminal), and below which it disappears.
-const DRAWER_FULL: u16 = 28;
-const DRAWER_TITLE_ONLY: u16 = 22;
+/// Terminal heights below which the drawer shrinks to its title (§7: below a 30-row terminal),
+/// and below which it disappears.
+const DRAWER_FULL: u16 = 30;
+const DRAWER_TITLE_ONLY: u16 = 24;
 
-/// Height of the frame's inner area from which view 5 shows a card for every node under the
-/// band; below it the rule under the band carries them, in a few words each.
-const CARDS_FROM: u16 = 26;
+/// The terminal's own title, for a tab in the background: how the fleet is and the next prayer —
+/// its reminder, when it is near. Minutes, not seconds: a title that changes every second is
+/// noise in a tab bar.
+pub fn title(app: &App) -> String {
+    let mut title = "fleetlens".to_string();
+    if app.snapshot().is_some() {
+        match insight::overall(&app.insights()) {
+            Severity::Crit => title.push_str(" ✖"),
+            Severity::Warn => title.push_str(" ▲"),
+            _ => {}
+        }
+    }
+    let now = app.now();
+    match (app.prayer_alert(), app.prayers.schedule.as_ref().and_then(|s| s.next_prayer(now))) {
+        (Some(crate::prayer::Alert::Soon { moment, left }), _) => {
+            title.push_str(&format!(" · ◷ {} in {} min", moment.name(), (left + 59) / 60));
+        }
+        (Some(crate::prayer::Alert::Now { moment, .. }), _) => title.push_str(&format!(" · {} now", moment.name())),
+        (None, Some(next)) => title.push_str(&format!(" · {} {}", next.name(), app.time.local_hm(next.at))),
+        (None, None) => {}
+    }
+    title
+}
+
+/// The terminal height from which view 5 shows a card for every node on the shelf; below it,
+/// one line says them in a few words each.
+const CARDS_FROM: u16 = 28;
+
+/// From this height the shelf has room to breathe: a blank row above and below what is on it.
+const SHELF_PADDED_FROM: u16 = 30;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_with(frame, app, theme::current());
 }
 
-/// Regions of the frame, in drawing order.
+/// The margin either side of everything drawn, by the terminal's width.
+fn gutter(width: u16) -> u16 {
+    if width >= 100 {
+        2
+    } else if width >= 60 {
+        1
+    } else {
+        0
+    }
+}
+
+/// Regions of the screen, in drawing order.
 #[derive(Debug, Clone, Copy)]
 struct Areas {
+    masthead: Rect,
+    day: Rect,
+    /// The shelf, edge to edge, and in it the band and, on view 5, the fleet.
+    shelf: Rect,
     band: Rect,
-    band_rule: Rect,
-    /// View 5's node cards and the rule under them.
-    cards: Rect,
+    fleet: Rect,
+    /// The well, edge to edge — view 5 lays its list of sessions out from the edge — and inside
+    /// the margins.
+    well: Rect,
     body: Rect,
     insights: Rect,
     drawer: Rect,
     footer: Rect,
 }
 
-fn areas(content: Rect, view: View, insights_len: usize, body_need: usize) -> Areas {
-    let h = content.height;
-    let row = |y: u16, height: u16| Rect::new(content.x, y, content.width, height);
-    let mut top = content.y;
-    let mut bottom = content.y + h;
+fn areas(screen: Rect, view: View, insights_len: usize, body_need: usize) -> Areas {
+    let h = screen.height;
+    let margin = gutter(screen.width);
+    let full = |y: u16, height: u16| Rect::new(screen.x, y, screen.width, height);
+    let inset = |r: Rect| Rect::new(r.x + margin, r.y, r.width.saturating_sub(2 * margin), r.height);
+    let mut top = screen.y;
+    let mut bottom = screen.y + h;
 
     let footer = if h >= 3 {
         bottom -= 1;
-        row(bottom, 1)
+        full(bottom, 1)
     } else {
-        row(bottom, 0)
+        full(bottom, 0)
     };
+    let masthead = full(top, h.min(1));
+    top += masthead.height;
+    let day = full(top, if h >= 10 { 1 } else { 0 });
+    top += day.height;
 
-    let band_height = if h >= 12 { 2 } else if h >= 6 { 1 } else { 0 };
-    let band = row(top, band_height);
+    let shelf_top = top;
+    let padded = h >= SHELF_PADDED_FROM;
+    top += u16::from(padded);
+    let band_height = if h >= 14 { 2 } else if h >= 8 { 1 } else { 0 };
+    let band = inset(full(top, band_height));
     top += band_height;
-    let band_rule = if band_height > 0 && h >= 12 {
-        top += 1;
-        row(top - 1, 1)
-    } else {
-        row(top, 0)
+    let fleet_height = match view {
+        View::Claude if band_height > 0 && h >= CARDS_FROM => 3,
+        View::Claude if band_height > 0 && h >= 12 => 1,
+        _ => 0,
     };
-    let cards_height = if view == View::Claude && band_rule.height > 0 && h >= CARDS_FROM { 4 } else { 0 };
-    let cards = row(top, cards_height);
-    top += cards_height;
+    top += u16::from(padded && fleet_height == 3);
+    let fleet = inset(full(top, fleet_height));
+    top += fleet_height;
+    top += u16::from(padded && band_height > 0);
+    let shelf = full(shelf_top, top - shelf_top);
 
     // §7: below a 30-row terminal the drawer is its title alone, then nothing.
-    let drawer_body = if h >= 32 {
+    let drawer_body = if h >= 34 {
         3
     } else if h >= DRAWER_FULL {
         2
     } else {
         0
     };
-    // View 5 gives Claude every row the band leaves; its rows say all there is to say.
+    // View 5 gives its sessions every row the shelf leaves; their rows say all there is to say.
     let drawer_height = if view != View::Claude && h >= DRAWER_TITLE_ONLY { 1 + drawer_body } else { 0 };
-    bottom = bottom.saturating_sub(drawer_height);
-    let drawer = row(bottom, drawer_height);
+    bottom = bottom.saturating_sub(drawer_height).max(top);
+    let drawer = inset(full(bottom, drawer_height.min(screen.y + h - bottom)));
 
     // The insights get their usual share, plus whatever the tree does not need.
-    let insights_height = if view == View::Nodes && insights_len > 0 && h >= 14 {
-        let usual: u16 = if h >= 32 { 5 } else if h >= 28 { 3 } else if h >= 20 { 2 } else { 1 };
+    let insights_height = if view == View::Nodes && insights_len > 0 && h >= 16 {
+        let usual: u16 = if h >= 34 { 5 } else if h >= 30 { 3 } else if h >= 22 { 2 } else { 1 };
         let free = bottom.saturating_sub(top) as usize;
         let spare = free.saturating_sub(body_need + usual as usize + 1);
         let lines = (usual as usize + spare).min(insights_len) as u16;
@@ -117,15 +177,18 @@ fn areas(content: Rect, view: View, insights_len: usize, body_need: usize) -> Ar
     } else {
         0
     };
-    bottom = bottom.saturating_sub(insights_height);
-    let insights = row(bottom, insights_height);
+    bottom = bottom.saturating_sub(insights_height).max(top);
+    let insights = inset(full(bottom, insights_height.min(drawer.y.saturating_sub(bottom))));
 
-    let body = row(top, bottom.saturating_sub(top));
+    let well = full(top, bottom.saturating_sub(top));
     Areas {
+        masthead,
+        day,
+        shelf,
         band,
-        band_rule,
-        cards,
-        body,
+        fleet,
+        well,
+        body: inset(well),
         insights,
         drawer,
         footer,
@@ -147,56 +210,40 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     } else {
         Severity::None
     };
-
-    // A notice on the bottom border comes before the counts beside it: they make way for it,
-    // and what is still too long is cut with … rather than run into them.
-    let mut right = bottom_right(app, theme, true);
-    let room = |right: &Line<'_>| (area.width as usize).saturating_sub(2 + right.width() + 2);
-    if app.notice().is_some_and(|n| fmt::width(n) + 4 > room(&right)) {
-        right = bottom_right(app, theme, false);
-    }
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border())
-        .title_top(header_left(app, theme, status, area.width))
-        .title_top(header_right(app, theme, area.width).right_aligned())
-        .title_bottom(bottom_left(app, theme, room(&right)))
-        .title_bottom(right.right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    tab_hits(frame, app, area);
-    // One cell of breathing room on each side, when there is room to breathe.
-    let content = if inner.width > 40 {
-        Rect::new(inner.x + 1, inner.y, inner.width - 2, inner.height)
-    } else {
-        inner
-    };
-    if content.width == 0 || content.height == 0 {
-        return;
-    }
-
     let body_need = app.with_rows(|_, rows| rows.len() + 1).unwrap_or(2);
-    let a = areas(content, app.view, insights.len(), body_need);
+    let a = areas(area, app.view, insights.len(), body_need);
+    let margin = gutter(area.width);
 
+    // The chrome's surface: the shelf from the top edge down, and the footer.
+    let chrome = Rect::new(area.x, area.y, area.width, a.shelf.y + a.shelf.height - area.y);
+    frame.render_widget(Block::new().style(theme.surface()), chrome);
+    frame.render_widget(Block::new().style(theme.surface()), a.footer);
+
+    masthead(frame, app, theme, a.masthead, status, margin);
+    if a.day.height > 0 {
+        day::draw(frame, app, theme, Rect::new(a.day.x + margin, a.day.y, a.day.width.saturating_sub(2 * margin), 1));
+    }
     band::draw(frame, app, theme, a.band);
-    if a.band_rule.height > 0 {
-        let line = if app.view == View::Claude && a.cards.height == 0 {
-            // On view 5 with no room for the cards, the rule carries every node in a few words.
-            claude::fleet_line(app, theme, a.band_rule)
-        } else {
-            Line::from(Span::styled("─".repeat(a.band_rule.width as usize), theme.rule()))
-        };
-        frame.render_widget(Paragraph::new(line), a.band_rule);
+    if a.fleet.height >= 3 {
+        claude::fleet_strip(frame, app, theme, a.fleet);
+    } else if a.fleet.height > 0 {
+        frame.render_widget(Paragraph::new(claude::fleet_line(app, theme, a.fleet)), a.fleet);
     }
-    if a.cards.height > 0 {
-        claude::fleet_strip(frame, app, theme, a.cards);
+    // Without a painted surface, a hairline says where the shelf ends.
+    if !theme.paints_background() && a.shelf.height > 0 && a.well.height > 0 {
+        let y = a.shelf.y + a.shelf.height - 1;
+        if y > a.band.y + a.band.height.saturating_sub(1) && y >= a.fleet.y + a.fleet.height {
+            let line = Line::from(Span::styled("─".repeat(a.band.width as usize), theme.rule()));
+            frame.render_widget(Paragraph::new(line), Rect::new(a.band.x, y, a.band.width, 1));
+        }
     }
+
     match app.view {
         View::Nodes => nodes::draw_tree(frame, app, theme, a.body, area.width),
         View::Queue => queue::draw(frame, app, theme, a.body),
         View::Map => map::draw(frame, app, theme, a.body),
         View::Tape => tape::draw(frame, app, theme, a.body),
-        View::Claude => claude::draw(frame, app, theme, a.body),
+        View::Claude => claude::draw(frame, app, theme, a.well, margin),
     }
     if a.insights.height > 0 {
         nodes::draw_insights(frame, app, theme, a.insights, &insights);
@@ -205,7 +252,8 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         drawer::draw(frame, app, theme, a.drawer);
     }
     if a.footer.height > 0 {
-        frame.render_widget(Paragraph::new(footer_line(app, theme, a.footer.width as usize)), a.footer);
+        let inner = Rect::new(a.footer.x + margin, a.footer.y, a.footer.width.saturating_sub(2 * margin), 1);
+        frame.render_widget(Paragraph::new(footer_line(app, theme, inner.width as usize)), inner);
     }
     if app.help {
         draw_help(frame, area, theme);
@@ -213,119 +261,139 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
 }
 
 // ---------------------------------------------------------------------------
-// Header and border
+// The masthead
 // ---------------------------------------------------------------------------
 
-/// The header's tabs, found where the border drew them, so a click on one opens it.
-fn tab_hits(frame: &mut Frame, app: &App, area: Rect) {
-    let buffer = frame.buffer_mut();
-    let row: Vec<String> = (area.x..area.x + area.width).map(|x| buffer[(x, area.y)].symbol().to_string()).collect();
-    let mut hits = app.viewport.hits.borrow_mut();
-    for view in View::ALL {
-        let long = format!("{} {}", view.number(), view.title());
-        let short = format!("{}{}", view.number(), &view.title()[..1]);
-        for label in [long, short] {
-            let wanted: Vec<String> = label.chars().map(|c| c.to_string()).collect();
-            if let Some(at) = row.windows(wanted.len()).position(|w| w == wanted.as_slice()) {
-                // The space either side is part of the tab.
-                let x = (area.x + at as u16).saturating_sub(1);
-                hits.push((Rect::new(x, area.y, wanted.len() as u16 + 2, 1), Hit::View(view)));
-                break;
-            }
-        }
+/// `◆ fleetlens  ▲ degraded      1 nodes  2 queue  3 map  4 tape  5 sessions      ● live 2s  14:12:07 WIB`
+///
+/// The name and how the fleet is, the tabs, and how fresh the numbers are with the clock — a
+/// click on a tab opens it, on the clock flips it between the local zone and UTC. What does not
+/// fit gives way in that order: the poll interval, the tabs' names, the status's word.
+fn masthead(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, status: Severity, margin: u16) {
+    if area.height == 0 {
+        return;
     }
-}
+    let width = area.width as usize;
+    let room = width.saturating_sub(2 * margin as usize);
+    let now = app.now();
 
-fn header_left(app: &App, theme: &Theme, status: Severity, width: u16) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled(" ◆ ", theme.accent()),
-        Span::styled("FLEETLENS", theme.strong()),
-        Span::raw(" "),
-    ];
-    if app.snapshot().is_some() && width >= 60 {
-        let glyph = match status {
-            Severity::Crit => "✖",
-            Severity::Warn => "▲",
-            _ => "✔",
-        };
-        let sev = if status.is_problem() { status } else { Severity::Ok };
-        spans.push(pill(&format!("{glyph} {}", status.label()), sev, theme));
-        spans.push(Span::raw(" "));
-    }
-    if !app.tree.filter.trim().is_empty() && width >= 90 {
-        spans.push(Span::styled(format!(" /{} ", app.tree.filter.trim()), theme.keycap()));
-        spans.push(Span::raw(" "));
-    }
-    Line::from(spans)
-}
-
-fn header_right(app: &App, theme: &Theme, width: u16) -> Line<'static> {
-    let mut spans = Vec::new();
-    let poll = app.poll_interval.as_secs_f64();
-    if app.paused {
-        spans.push(Span::styled(" ○ PAUSED", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)));
-    } else if app.is_stale() {
-        let age = app.data_age().map(|d| fmt::dur(d.as_secs_f64())).unwrap_or_default();
-        spans.push(Span::styled(format!(" ◌ STALE {age}"), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)));
-    } else {
-        spans.push(Span::styled(" ● LIVE", theme.sev(Severity::Ok).add_modifier(Modifier::BOLD)));
-        spans.push(Span::styled(format!(" {}", fmt::dur(poll)), theme.muted()));
-    }
-    spans.push(Span::styled(" · ", theme.faint()));
-    spans.push(Span::styled(fmt::utc_clock(app.clock), theme.text()));
-    spans.push(Span::styled(" UTC ", theme.muted()));
-    if width >= 80 {
-        for view in View::ALL {
-            spans.push(Span::raw(" "));
-            // A Claude session rang while another view was open: it is done, or it asks.
-            let calling = view == View::Claude && app.claude.calling() && app.view != View::Claude;
-            let mark = if calling { "●" } else { "" };
-            let label = if width >= 110 {
-                format!(" {} {}{mark} ", view.number(), view.title())
-            } else {
-                format!(" {}{}{mark} ", view.number(), &view.title()[..1])
+    let left = |word: bool| {
+        let mut cells = Cells::new();
+        cells.push("◆ ", theme.accent());
+        cells.push("fleetlens", theme.strong());
+        if app.snapshot().is_some() {
+            let (glyph, sev) = match status {
+                Severity::Crit => ("✖", Severity::Crit),
+                Severity::Warn => ("▲", Severity::Warn),
+                _ => ("✔", Severity::Ok),
             };
-            if view == app.view {
-                spans.push(Span::styled(label, theme.tab_active()));
-            } else if calling {
-                spans.push(Span::styled(label, theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)));
-            } else {
-                spans.push(Span::styled(label, theme.muted()));
+            cells.push("  ", Style::default());
+            let text = if word { format!(" {glyph} {} ", status.label().to_lowercase()) } else { format!(" {glyph} ") };
+            cells.push(text, theme.tint(sev).add_modifier(Modifier::BOLD));
+        }
+        if !app.tree.filter.trim().is_empty() && word {
+            cells.push("  ", Style::default());
+            cells.push(format!(" /{} ", app.tree.filter.trim()), theme.keycap());
+        }
+        cells
+    };
+    let right = |poll: bool| {
+        let mut cells = Cells::new();
+        if app.paused {
+            cells.push("○ paused", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        } else if app.is_stale() {
+            let age = app.data_age().map(|d| fmt::dur(d.as_secs_f64())).unwrap_or_default();
+            cells.push(format!("◌ stale {age}"), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        } else {
+            cells.push("● ", theme.sev(Severity::Ok));
+            cells.push("live", theme.text2());
+            if poll {
+                cells.push(format!(" {}", fmt::dur(app.poll_interval.as_secs_f64())), theme.muted());
             }
         }
-        spans.push(Span::raw(" "));
+        cells.push("   ", Style::default());
+        let clock = app.time.hms(now);
+        let (hm, s) = clock.split_at(clock.len().saturating_sub(3));
+        cells.push(hm.to_string(), theme.strong());
+        cells.push(s.to_string(), theme.muted());
+        cells.push(format!(" {}", app.time.label(now)), theme.muted());
+        cells
+    };
+    let tabs = |long: bool| {
+        let mut cells = Cells::new();
+        let mut spots = Vec::new();
+        for (i, view) in View::ALL.into_iter().enumerate() {
+            if i > 0 {
+                cells.push(if long { "   " } else { "  " }, Style::default());
+            }
+            // A session rang while another view was open: it is done, or it asks.
+            let calling = view == View::Claude && app.claude.calling() && app.view != View::Claude;
+            let title = view.title().to_lowercase();
+            let name = if long { title } else { title[..1].to_string() };
+            let start = cells.width();
+            if view == app.view {
+                cells.push(format!("{} ", view.number()), theme.accent());
+                cells.push(name, theme.accent().add_modifier(Modifier::BOLD | Modifier::UNDERLINED));
+            } else {
+                cells.push(format!("{} ", view.number()), theme.faint());
+                cells.push(name, if calling { theme.sev(Severity::Warn).add_modifier(Modifier::BOLD) } else { theme.text2() });
+            }
+            if calling {
+                cells.push("●", theme.sev(Severity::Warn));
+            }
+            spots.push((start, cells.width() - start, view));
+        }
+        (cells, spots)
+    };
+
+    // The widest that fits.
+    let options = [(true, true, true), (false, true, true), (false, false, true), (false, false, false)];
+    let (mut l, mut r, (mut t, mut spots)) = (left(true), right(true), tabs(true));
+    for (poll, long, word) in options {
+        (l, r, (t, spots)) = (left(word), right(poll), tabs(long));
+        if l.width() + t.width() + r.width() + 6 <= room {
+            break;
+        }
     }
-    Line::from(spans)
+    let show_tabs = l.width() + t.width() + r.width() + 4 <= room;
+    let x0 = area.x + margin;
+    let mut line = Cells::new();
+    line.spans(l.into_spans());
+    let right_at = room.saturating_sub(r.width());
+    let mut hits = app.viewport.hits.borrow_mut();
+    if show_tabs {
+        // The tabs in the middle of the screen when there is room either side, else after the name.
+        let centred = (room.saturating_sub(t.width())) / 2;
+        let tabs_at = if centred >= line.width() + 3 && centred + t.width() + 3 <= right_at { centred } else { line.width() + 3 };
+        line.pad_to(tabs_at);
+        for (start, len, view) in spots {
+            hits.push((Rect::new(x0 + (tabs_at + start) as u16, area.y, len as u16, 1), Hit::View(view)));
+        }
+        line.spans(t.into_spans());
+    }
+    line.pad_to(right_at);
+    hits.push((Rect::new(x0 + right_at as u16, area.y, r.width() as u16, 1), Hit::Clock));
+    line.spans(r.into_spans());
+    drop(hits);
+    let inner = Rect::new(x0, area.y, room as u16, 1);
+    frame.render_widget(Paragraph::new(line.line(room, Style::default())), inner);
 }
 
-/// The latest notice, in `room` cells.
-fn bottom_left(app: &App, theme: &Theme, room: usize) -> Line<'static> {
-    match app.notice() {
-        Some(notice) if room > 8 => Line::from(vec![
-            Span::styled(" ▲ ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{} ", fmt::truncate(notice, room - 4)), theme.sev(Severity::Warn)),
-        ]),
-        _ => Line::from(""),
-    }
-}
-
-/// How many nodes answered and how fast, when `counts`, and that nothing here writes.
-fn bottom_right(app: &App, theme: &Theme, counts: bool) -> Line<'static> {
-    let mut spans = Vec::new();
-    if let Some(snapshot) = app.snapshot().filter(|_| counts) {
+/// The footer's right end: how many nodes answered and how fast, and that nothing here writes.
+fn footer_status(app: &App, theme: &Theme) -> Cells {
+    let mut cells = Cells::new();
+    if let Some(snapshot) = app.snapshot() {
         let polled = snapshot.nodes.len();
         let slowest = snapshot.nodes.iter().filter_map(|n| n.poll_ms).max();
-        let mut text = format!(" {} polled", fmt::plural(polled, "node", "nodes"));
+        let mut text = format!("{} polled", fmt::plural(polled, "node", "nodes"));
         if let Some(ms) = slowest {
             text.push_str(&format!(" · slowest {ms} ms"));
         }
-        spans.push(Span::styled(text, theme.faint()));
-        spans.push(Span::styled(" · ", theme.faint()));
-    } else {
-        spans.push(Span::raw(" "));
+        text.push_str(" · ");
+        cells.push(text, theme.faint());
     }
-    spans.push(Span::styled("read-only ", theme.faint()));
-    Line::from(spans)
+    cells.push("read-only", theme.faint());
+    cells
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +497,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
                 ("1-4", "views"),
                 ("5-9", "sessions"),
                 ("n", "new"),
+                ("p", "past"),
                 ("r", "rename"),
                 ("x", "close"),
                 ("ctrl+\\", "monitor"),
@@ -455,6 +524,14 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             crate::claude::Kind::Terminal => &[("⏎", "start the shell"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
         },
     };
+    // A notice comes before the keys' last ones; nothing else does.
+    let notice = app.notice().filter(|n| !n.trim().is_empty()).map(|notice| {
+        let mut cells = Cells::new();
+        cells.push("▲ ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        cells.push(fmt::truncate(notice, (width * 3 / 5).saturating_sub(2)), theme.sev(Severity::Warn));
+        cells
+    });
+    let keys_room = width.saturating_sub(notice.as_ref().map_or(0, |n| n.width() + 3));
     for (key, label) in keys {
         let mut piece = Cells::new();
         if cells.width() > 0 {
@@ -462,15 +539,26 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         }
         piece.spans(keycap(key, label, theme));
         // A key that does not fit is left out whole, never cut in half.
-        if cells.width() + piece.width() > width {
+        if cells.width() + piece.width() > keys_room {
             break;
         }
         cells.spans(piece.into_spans());
     }
+    if let Some(notice) = notice {
+        cells.pad_to(width.saturating_sub(notice.width()));
+        cells.spans(notice.into_spans());
+        return cells.line(width, Style::default());
+    }
+    // Then what the keys go to, then how the poll went — each where it fits.
     if let Some(tail) = tail.map(|t| format!("   {t}"))
         && cells.width() + fmt::width(&tail) <= width
     {
         cells.push(tail, theme.muted());
+    }
+    let status = footer_status(app, theme);
+    if cells.width() + status.width() + 3 <= width {
+        cells.pad_to(width.saturating_sub(status.width()));
+        cells.spans(status.into_spans());
     }
     cells.line(width, Style::default())
 }
@@ -488,8 +576,10 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
     ("1 2 3 4 5", "views: nodes · queue · map · tape · sessions — 5 to 9 are the sessions"),
     ("ctrl+\\", "the sessions · there, then 1-4 a view, 5-9 a session, n new (c o t: Claude,"),
-    ("", "OpenCode, a terminal), r rename, x close"),
+    ("", "OpenCode, a terminal), p a past conversation, r rename, x close"),
     ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
+    ("z", "the clock: the local zone ↔ UTC · or click it · ctrl+\\ z in a session"),
+    ("d", "wave a prayer's reminder away · ctrl+\\ d in a session · or click ✕"),
     ("p", "pause: the numbers stop, the clock does not"),
     ("q  ctrl-c", "quit"),
 ];
@@ -501,6 +591,8 @@ const HELP_LEGEND: &[(&str, &str)] = &[
     ("↗ ↑  ↘ ↓", "rising · rising fast · falling, over the last minute"),
     ("▁▂▃▅▇", "the last 4 minutes, each cell its worst moment"),
     ("NEW", "joined the fleet during this session"),
+    ("━━●┄┄", "the day: prayer times at the place, ● now · PRAYER_CITY or PRAYER_AT sets where"),
+    ("↻", "a session kept from the last run: it takes its conversation up when opened"),
 ];
 
 fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
@@ -535,19 +627,15 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         "read-only by design: nothing here can kill or change a query",
         theme.muted(),
     )));
-    lines.push(Line::from(Span::styled(
-        "not in this pass: k kill, a ask Klikas, mouse",
-        theme.faint(),
-    )));
     frame.render_widget(Clear, popup);
+    let card = if theme.paints_background() {
+        Block::new().style(theme.base().patch(theme.raised()))
+    } else {
+        Block::bordered().border_style(theme.accent())
+    };
+    let title = Line::from(vec![Span::styled(" ◆ ", theme.accent()), Span::styled("keys", theme.strong()), Span::styled(" · ? closes ", theme.muted())]);
     frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(theme.accent())
-                .title_top(Line::from(Span::styled(" keys · ? closes ", theme.strong())))
-                .style(theme.base().bg(theme.panel)),
-        ),
+        Paragraph::new(lines).block(card.title_top(title).padding(ratatui::widgets::Padding::new(1, 1, 1, 0))),
         popup,
     );
 }
