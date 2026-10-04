@@ -4,8 +4,6 @@
 //! durations `12s`, `4m35s`, `1h02m`, and — for uptimes — `46d07h`. An unknown value is a
 //! dash, never a zero (§2.1).
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 pub const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 pub fn bytes(bytes: u64) -> String {
@@ -102,19 +100,32 @@ pub fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// UTC, `HH:MM:SS`, without a date library (§7).
-pub fn utc_clock(at: SystemTime) -> String {
-    let secs = at.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let day = secs % 86_400;
-    format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
+/// How long ago, in a word or two: `now`, `5m ago`, `2h ago`, `yesterday`, `3d ago`.
+pub fn ago(seconds: i64) -> String {
+    let s = seconds.max(0);
+    match s {
+        0..60 => "now".to_string(),
+        60..3600 => format!("{}m ago", s / 60),
+        3600..86_400 => format!("{}h ago", s / 3600),
+        86_400..172_800 => "yesterday".to_string(),
+        _ if s < 60 * 86_400 => format!("{}d ago", s / 86_400),
+        _ => format!("{}mo ago", s / (30 * 86_400)),
+    }
 }
 
-/// Seconds since the epoch back to a clock reading.
-pub fn utc_clock_secs(t: f64) -> String {
-    utc_clock(UNIX_EPOCH + std::time::Duration::from_secs_f64(t.max(0.0)))
+/// Time left, as a clock shows it: `2h52m`, `38m`, and under ten minutes to the second, `9:48`.
+pub fn countdown(seconds: i64) -> String {
+    let s = seconds.max(0);
+    match s {
+        0..600 => format!("{}:{:02}", s / 60, s % 60),
+        600..3600 => format!("{}m", (s + 59) / 60),
+        _ => {
+            let minutes = (s + 59) / 60;
+            format!("{}h{:02}m", minutes / 60, minutes % 60)
+        }
+    }
 }
 
-/// Cut to `width` display cells with a trailing `…` (§7: truncate, never wrap).
 pub fn truncate(text: &str, width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     if unicode_width::UnicodeWidthStr::width(text) <= width {
@@ -190,10 +201,18 @@ mod tests {
     }
 
     #[test]
-    fn the_clock_is_utc() {
-        let at = UNIX_EPOCH + std::time::Duration::from_secs(12 * 3600 + 34 * 60 + 56);
-        assert_eq!(utc_clock(at), "12:34:56");
-        assert_eq!(utc_clock_secs(12.0 * 3600.0), "12:00:00");
+    fn ago_and_countdown_say_it_short() {
+        assert_eq!(ago(5), "now");
+        assert_eq!(ago(5 * 60 + 3), "5m ago");
+        assert_eq!(ago(2 * 3600 + 5), "2h ago");
+        assert_eq!(ago(30 * 3600), "yesterday");
+        assert_eq!(ago(3 * 86_400), "3d ago");
+        assert_eq!(ago(90 * 86_400), "3mo ago");
+        assert_eq!(countdown(9 * 60 + 48), "9:48");
+        assert_eq!(countdown(38 * 60), "38m");
+        assert_eq!(countdown(37 * 60 + 1), "38m", "a minute begun is a minute");
+        assert_eq!(countdown(2 * 3600 + 52 * 60), "2h52m");
+        assert_eq!(countdown(-5), "0:00");
     }
 
     #[test]

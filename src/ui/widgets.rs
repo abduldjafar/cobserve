@@ -1,5 +1,5 @@
-//! The small pieces every view is built from: a line assembled column by column, bars with
-//! eighth-cell resolution, sparklines, keycaps, pills and titled rules.
+//! The small pieces every view is built from: a line assembled column by column, thin bars with
+//! half-cell resolution, sparklines, keycaps and titled rules.
 //!
 //! Widths are display cells (unicode-width), never bytes or chars, so a person's name or a
 //! piece of SQL with wide characters cannot push a column out of line.
@@ -8,7 +8,7 @@ use crate::fmt;
 use crate::history::{spark_glyph, Series, WINDOW_S};
 use crate::insight::Tone;
 use crate::severity::Severity;
-use crate::theme::Theme;
+use crate::theme::{Depth, Theme};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -127,44 +127,41 @@ pub fn fit(spans: Vec<Span<'static>>, max: usize, pad: bool) -> Vec<Span<'static
     out
 }
 
-const EIGHTHS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
-
-/// A bar for a percentage, `cells` wide, with eighth-cell resolution: 25.3% of 16 cells is
-/// four full blocks and a `▏`, not a rounding to four or five.
-///
-/// On a terminal that shows backgrounds the empty part is a coloured track; elsewhere it is
-/// `░`, as DESIGN.md §7 drew it. A share that is not zero always shows at least an eighth, so
-/// "some" never looks like "none".
-pub fn bar(value: Option<f64>, cells: usize, fill: Color, theme: &Theme) -> Vec<Span<'static>> {
+/// A thin bar, drawn the way a modern progress bar is: `━━━━━━━╺━━━━━` — the share in its
+/// colour, the rest a quiet track, at half-cell resolution. Without colour the track is a
+/// light line instead (`━━━━━━━─────`), so the share still shows. As with `bar`, a share that
+/// is not zero always shows at least a half cell.
+pub fn thin_bar(value: Option<f64>, cells: usize, fill: Color, theme: &Theme) -> Vec<Span<'static>> {
     if cells == 0 {
         return Vec::new();
     }
-    let total = cells * 8;
-    let mut eighths = value
+    let total = cells * 2;
+    let mut halves = value
         .map(|v| ((v / 100.0) * total as f64).round().clamp(0.0, total as f64) as usize)
         .unwrap_or(0);
-    if eighths == 0 && value.is_some_and(|v| v > 0.0) {
-        eighths = 1;
+    if halves == 0 && value.is_some_and(|v| v > 0.0) {
+        halves = 1;
     }
-    let full = eighths / 8;
-    let rest = eighths % 8;
-    let empty = cells - full - usize::from(rest > 0);
-
-    let track_bg = if theme.paints_background() { theme.track } else { Color::Reset };
-    let filled_style = Style::default().fg(fill).bg(track_bg);
+    let (full, half) = (halves / 2, halves % 2 == 1);
+    let filled = Style::default().fg(fill);
     let mut spans = Vec::new();
     if full > 0 {
-        spans.push(Span::styled("█".repeat(full), filled_style));
+        spans.push(Span::styled("━".repeat(full), filled));
     }
+    if half {
+        spans.push(Span::styled("╸", filled));
+    }
+    let rest = cells - full - usize::from(half);
     if rest > 0 {
-        spans.push(Span::styled(EIGHTHS[rest], filled_style));
-    }
-    if empty > 0 {
-        if theme.paints_background() {
-            spans.push(Span::styled(" ".repeat(empty), Style::default().bg(theme.track)));
+        let track = if theme.depth == Depth::Mono {
+            "─".repeat(rest)
+        } else if full > 0 && !half {
+            // A hair of room where the share ends, so it does not run into the track.
+            format!("╺{}", "━".repeat(rest - 1))
         } else {
-            spans.push(Span::styled("░".repeat(empty), theme.faint()));
-        }
+            "━".repeat(rest)
+        };
+        spans.push(Span::styled(track, if theme.depth == Depth::Mono { theme.faint() } else { theme.rule() }));
     }
     spans
 }
@@ -262,11 +259,6 @@ pub fn keycap(key: &str, label: &str, theme: &Theme) -> Vec<Span<'static>> {
         Span::styled(format!(" {key} "), theme.keycap()),
         Span::styled(format!(" {label}"), theme.muted()),
     ]
-}
-
-/// `▲ DEGRADED` on its colour.
-pub fn pill(text: &str, sev: Severity, theme: &Theme) -> Span<'static> {
-    Span::styled(format!(" {text} "), theme.pill(sev))
 }
 
 /// `─ TITLE ─────…` across `width` cells.
@@ -389,28 +381,20 @@ mod tests {
     }
 
     #[test]
-    fn bars_have_eighth_cell_resolution() {
-        let theme = Theme::new(Depth::Ansi16, Variant::Dark);
-        // 25% of 16 cells = 4 cells exactly.
-        assert_eq!(text(&bar(Some(25.0), 16, Color::Blue, &theme)), format!("{}{}", "█".repeat(4), "░".repeat(12)));
-        // 26.6% of 16 cells = 4.25 cells = 34 eighths → four blocks and a quarter.
-        assert_eq!(text(&bar(Some(26.6), 16, Color::Blue, &theme)), format!("{}▎{}", "█".repeat(4), "░".repeat(11)));
-        assert_eq!(text(&bar(Some(100.0), 8, Color::Blue, &theme)), "█".repeat(8));
-        assert_eq!(text(&bar(Some(250.0), 8, Color::Blue, &theme)), "█".repeat(8), "clamped");
-        assert_eq!(text(&bar(None, 4, Color::Blue, &theme)), "░░░░", "unknown is an empty track");
-        assert_eq!(text(&bar(Some(0.1), 4, Color::Blue, &theme)), "▏░░░", "some is never none");
-        // Every bar is exactly as wide as asked.
-        for v in [0.0, 3.3, 49.9, 50.0, 77.7, 99.9] {
-            assert_eq!(fmt::width(&text(&bar(Some(v), 13, Color::Blue, &theme))), 13, "{v}");
-        }
-    }
-
-    #[test]
-    fn with_backgrounds_the_track_is_painted() {
+    fn thin_bars_have_half_cell_resolution() {
         let theme = Theme::new(Depth::TrueColor, Variant::Dark);
-        let spans = bar(Some(50.0), 4, Color::Blue, &theme);
-        assert_eq!(text(&spans), "██  ");
-        assert_eq!(spans.last().unwrap().style.bg, Some(theme.track));
+        assert_eq!(text(&thin_bar(Some(50.0), 8, Color::Blue, &theme)), "━━━━╺━━━", "a hair of room after the share");
+        assert_eq!(text(&thin_bar(Some(56.25), 8, Color::Blue, &theme)), "━━━━╸━━━", "nine halves");
+        assert_eq!(text(&thin_bar(Some(100.0), 4, Color::Blue, &theme)), "━━━━");
+        assert_eq!(text(&thin_bar(Some(0.1), 4, Color::Blue, &theme)), "╸━━━", "some is never none");
+        assert_eq!(text(&thin_bar(None, 4, Color::Blue, &theme)), "━━━━", "unknown is a track");
+        let spans = thin_bar(Some(50.0), 8, Color::Blue, &theme);
+        assert_eq!((spans[0].style.fg, spans[1].style.fg), (Some(Color::Blue), Some(theme.rule)));
+        let mono = Theme::new(Depth::Mono, Variant::Dark);
+        assert_eq!(text(&thin_bar(Some(50.0), 8, Color::Reset, &mono)), "━━━━────", "no colour: a light track");
+        for v in [0.0, 3.3, 49.9, 50.0, 77.7, 99.9, 100.0] {
+            assert_eq!(fmt::width(&text(&thin_bar(Some(v), 13, Color::Blue, &theme))), 13, "{v}");
+        }
     }
 
     #[test]

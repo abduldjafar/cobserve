@@ -1,7 +1,7 @@
-//! The two lines under the header, on every view: the fleet at a glance, and the Redash
-//! queue strip (§1, §6.3).
+//! The two lines on the shelf, on every view: the fleet at a glance, and the Redash queue strip
+//! (§1, §6.3).
 
-use super::widgets::{bar, dots, sparkline, Cells, Scale, PCT_SHAPE};
+use super::widgets::{dots, sparkline, thin_bar, Cells, Scale, PCT_SHAPE};
 use crate::app::App;
 use crate::fmt;
 use crate::model::{fleet_totals, FleetTotals};
@@ -27,19 +27,22 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     }
 }
 
-/// `FLEET 8 nodes · 2 hot   MEM ▕████▍  ▏ 58.1% 372/640 GiB ▁▂▃▅   CPU …   QUERIES 14 · 3 ✕`
+/// The width of the labels at the start of both lines, so what follows them lines up.
+const LABEL: usize = 8;
+
+/// `FLEET   8 nodes · 2 hot   mem ━━━━━━━━╺━━━━━ 58.1% 372/640 GiB ▁▂▃▅   cpu …   queries 14 · 3 ✕`
 ///
 /// Built from the most to the least important piece, and each piece only if it still fits, so
 /// a narrow terminal loses the sparklines before it loses a number.
 fn fleet_line(app: &App, totals: Option<&FleetTotals>, theme: &Theme, width: usize) -> Line<'static> {
     let mut cells = Cells::new();
-    cells.push("FLEET", theme.section());
+    cells.cell("FLEET", LABEL, theme.section());
     let Some(totals) = totals else {
-        cells.push("  waiting for the first snapshot…", theme.muted());
+        cells.push("waiting for the first snapshot…", theme.muted());
         return cells.line(width, theme.text());
     };
 
-    cells.push(format!("  {}", fmt::plural(totals.nodes, "node", "nodes")), theme.text());
+    cells.push(fmt::plural(totals.nodes, "node", "nodes"), theme.text());
     let down = totals.nodes - totals.reachable;
     if down > 0 {
         cells.push(" · ", theme.faint());
@@ -50,14 +53,13 @@ fn fleet_line(app: &App, totals: Option<&FleetTotals>, theme: &Theme, width: usi
         cells.push(format!("{} hot", totals.hot), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
     }
 
-    // Each resource: label, bar, percentage, used/total, sparkline. The bar and the
-    // sparkline shrink and go first when room runs out.
+    // Each resource: label, bar, percentage, used/total, sparkline — and the queries. What does
+    // not fit gives way in that order, from the end: sparklines, then the used/total, then bar
+    // length; a percentage is never dropped.
     let now = app.history.now();
-    let bar_cells = if width >= 140 { 14 } else if width >= 116 { 10 } else { 6 };
-    let spark_cells = if width >= 150 { 16 } else if width >= 116 { 10 } else { 0 };
     let resources = [
         (
-            "MEM",
+            "mem",
             totals.mem_pct(),
             {
                 let (used, total) = (fmt::gib(totals.mem_used), fmt::gib(totals.mem_total));
@@ -70,7 +72,7 @@ fn fleet_line(app: &App, totals: Option<&FleetTotals>, theme: &Theme, width: usi
             &app.history.fleet_mem_pct,
         ),
         (
-            "CPU",
+            "cpu",
             totals.cpu_pct(),
             if totals.cores >= 100.0 {
                 format!("{:.0}/{:.0} cores", totals.busy_cores, totals.cores)
@@ -80,30 +82,37 @@ fn fleet_line(app: &App, totals: Option<&FleetTotals>, theme: &Theme, width: usi
             &app.history.fleet_cpu_pct,
         ),
     ];
-    for (label, pct, absolute, series) in resources {
-        let sev = severity::node(pct);
-        let mut piece = Cells::new();
-        piece.push(format!("   {label} "), theme.muted());
-        piece.spans(bar(pct, bar_cells, theme.bar_fill(sev), theme));
-        piece.push(format!(" {}", fmt::pct(pct)), theme.sev(sev).add_modifier(Modifier::BOLD));
-        piece.push(format!(" {absolute}"), theme.text2());
-        if spark_cells > 0 && !series.is_empty() {
-            piece.push(" ", theme.text());
-            piece.spans(sparkline(Some(series), now, spark_cells, PCT_SHAPE, |v| {
-                theme.bar_fill(severity::node(Some(v)))
-            }));
-        }
-        if cells.width() + piece.width() <= width {
-            cells.spans(piece.into_spans());
-        }
-    }
-
     let mut queries = Cells::new();
-    queries.push("   QUERIES ", theme.muted());
+    queries.push("   queries ", theme.faint());
     queries.push(totals.queries.to_string(), theme.strong());
     if totals.runaways > 0 {
         queries.push(" · ", theme.faint());
         queries.push(format!("{} ✕", totals.runaways), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
+    }
+    let room = width.saturating_sub(cells.width() + queries.width());
+    let shapes = [(16, true, 16), (12, true, 10), (12, true, 0), (10, true, 0), (8, true, 0), (10, false, 0), (6, false, 0), (0, false, 0)];
+    for (bar_cells, absolute_shown, spark_cells) in shapes {
+        let mut pieces = Cells::new();
+        for (label, pct, absolute, series) in &resources {
+            let sev = severity::node(*pct);
+            pieces.push(format!("   {label} "), theme.faint());
+            if bar_cells > 0 {
+                pieces.spans(thin_bar(*pct, bar_cells, theme.bar_fill(sev), theme));
+                pieces.push(" ", theme.text());
+            }
+            pieces.push(fmt::pct(*pct), theme.sev(sev).add_modifier(Modifier::BOLD));
+            if absolute_shown {
+                pieces.push(format!(" {absolute}"), theme.text2());
+            }
+            if spark_cells > 0 && !series.is_empty() {
+                pieces.push(" ", theme.text());
+                pieces.spans(sparkline(Some(series), now, spark_cells, PCT_SHAPE, |v| theme.bar_fill(severity::node(Some(v)))));
+            }
+        }
+        if pieces.width() <= room || bar_cells == 0 {
+            cells.spans(pieces.into_spans());
+            break;
+        }
     }
     if cells.width() + queries.width() <= width {
         cells.spans(queries.into_spans());
@@ -115,8 +124,7 @@ fn fleet_line(app: &App, totals: Option<&FleetTotals>, theme: &Theme, width: usi
 /// or `REDASH  unreachable (HTTP 401)` — never blank (§1, §6.3).
 pub fn queue_strip(app: &App, theme: &Theme, width: usize) -> Line<'static> {
     let mut cells = Cells::new();
-    cells.push("REDASH", theme.section());
-    cells.push("  ", theme.text());
+    cells.cell("REDASH", LABEL, theme.section());
     let hint = "[2] queue";
     let room = width.saturating_sub(fmt::width(hint) + 2);
 

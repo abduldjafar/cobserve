@@ -8,13 +8,17 @@
 mod app;
 mod attrib;
 mod claude;
+mod clock;
 mod config;
+mod conversations;
 mod fake;
 mod fmt;
 mod folders;
 mod history;
 mod insight;
 mod model;
+mod prayer;
+mod saved;
 mod pty;
 mod severity;
 mod sources;
@@ -81,6 +85,11 @@ async fn main() -> color_eyre::Result<()> {
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
     }
 
+    // The terminal's title is the monitor's while it runs, and the one it had after.
+    {
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(b"\x1b[22;0t");
+    }
     let result = run(&mut terminal, config, args.claude).await;
 
     restore_terminal();
@@ -93,6 +102,10 @@ fn restore_terminal() {
         crossterm::event::DisableMouseCapture,
         crossterm::event::DisableBracketedPaste
     );
+    {
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(b"\x1b[23;0t");
+    }
     ratatui::restore();
 }
 
@@ -119,15 +132,33 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
     if let Ok(dir) = std::env::current_dir() {
         app.claude.default_dir = pty::tilde(&dir);
     }
+    // The sessions of the last run, back where they were; each takes its conversation up when it
+    // is first shown.
+    app.claude.restore(&saved::load());
+    let mut kept = app.claude.to_saved();
     if open_claude {
         app.open_claude();
     }
+    if config.utc {
+        app.time.shown = clock::Shown::Utc;
+    }
+    app.prayers = prayer::Prayers::new(None, config.prayer.remind_minutes);
+    // The machine's zone, and the city prayer times are for when none was chosen: looked at
+    // again every half minute, for a laptop that travels.
+    let zone_table = clock::zone_table();
+    let mut zone = clock::zone_now();
+    app.update(Event::Zone(zone.clone(), prayer_place(&config, zone.as_deref(), zone_table.as_deref())));
+    let mut zone_read = std::time::Instant::now();
     // View 5's programs, one per session. Dropping one ends it — on quit, all of them.
     let mut panes: HashMap<u64, pty::PtyProcess> = HashMap::new();
     // When the sessions' branches were last read: Claude, or you, can change them.
     let mut branches_read = std::time::Instant::now();
     // The folder picker's latest lookup: an older one still running sees it and stops.
     let latest_lookup = Arc::new(AtomicU64::new(0));
+    // When the sessions' conversations were last asked after, and the sessions last kept.
+    let mut conversations_read = std::time::Instant::now();
+    let mut rounds = 0u32;
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
 
     spawn_sources(&config, tx.clone());
     // Anything a source could not even start with belongs on screen, not in a log file.
@@ -144,12 +175,40 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
 
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    spawn_signal_watch(tx.clone());
 
+    let mut shown_title = String::new();
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;
+        let title = ui::title(&app);
+        if title != shown_title {
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(&title));
+            shown_title = title;
+        }
         // After the frame: the panes now know the size they are drawn at.
         drive_panes(&mut app, &mut panes, &tx);
         drive_picker(&mut app, &latest_lookup, &tx);
+        drive_conversations(&mut app, home.as_deref(), &tx);
+        if conversations_read.elapsed() >= Duration::from_secs(15) {
+            conversations_read = std::time::Instant::now();
+            // OpenCode is asked by running it, so once a minute rather than every round.
+            rounds += 1;
+            follow_conversations(&mut app, &panes, home.as_deref(), &tx, rounds % 4 == 1);
+            // Kept as they change, not only on the way out: a killed terminal loses nothing.
+            let now = app.claude.to_saved();
+            if now != kept {
+                kept = now;
+                let _ = saved::store(&kept);
+            }
+        }
+        if zone_read.elapsed() >= Duration::from_secs(30) {
+            zone_read = std::time::Instant::now();
+            let now = clock::zone_now();
+            if now != zone {
+                zone = now;
+                app.update(Event::Zone(zone.clone(), prayer_place(&config, zone.as_deref(), zone_table.as_deref())));
+            }
+        }
         if branches_read.elapsed() >= Duration::from_secs(5) {
             branches_read = std::time::Instant::now();
             for session in &mut app.claude.list {
@@ -179,12 +238,87 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
         }
         // Keys for Claude go out now, not a frame later.
         send_owed(&mut app, &mut panes);
+        for text in app.take_notifications() {
+            notify(config.notify, &text);
+        }
 
         if app.quit {
             break;
         }
     }
+    // What each program is in at the end — Claude Code after a /clear is in another
+    // conversation than it started with — kept for the next run.
+    follow_conversations(&mut app, &panes, home.as_deref(), &tx, false);
+    while let Ok(event) = rx.try_recv() {
+        if matches!(event, Event::Conversation(..)) {
+            app.update(event);
+        }
+    }
+    let _ = saved::store(&app.claude.to_saved());
     Ok(())
+}
+
+/// The conversation each running program is in: Claude Code says so for its process id
+/// (`~/.claude/sessions`); OpenCode's is the newest in its folder begun after it started, asked
+/// — when `opencode_too` — on a thread of its own until it is known.
+fn follow_conversations(
+    app: &mut App,
+    panes: &HashMap<u64, pty::PtyProcess>,
+    home: Option<&std::path::Path>,
+    tx: &mpsc::UnboundedSender<Event>,
+    opencode_too: bool,
+) {
+    let Some(home) = home else {
+        return;
+    };
+    for session in &mut app.claude.list {
+        let Some(pid) = panes.get(&session.id).and_then(pty::PtyProcess::pid) else {
+            continue;
+        };
+        match session.kind {
+            claude::Kind::Claude => {
+                if let Some(id) = conversations::claude_live(home, pid) {
+                    session.conversation = Some(id);
+                }
+            }
+            claude::Kind::OpenCode if opencode_too && session.conversation.is_none() => {
+                let (command, dir, started, id, tx) =
+                    (app.claude.commands.opencode.clone(), pty::expand(&session.dir), session.started, session.id, tx.clone());
+                std::thread::spawn(move || {
+                    let newest = conversations::opencode(&command, &dir, 5)
+                        .into_iter()
+                        .filter(|c| c.updated >= started - 5)
+                        .max_by_key(|c| c.updated);
+                    if let Some(conversation) = newest {
+                        let _ = tx.send(Event::Conversation(id, conversation.id));
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The picker's conversations to take up, listed on a thread of their own.
+fn drive_conversations(app: &mut App, home: Option<&std::path::Path>, tx: &mpsc::UnboundedSender<Event>) {
+    let claude::Mode::Opening(picker) = &mut app.claude.mode else {
+        return;
+    };
+    let Some(lookup) = picker.conversation_lookup() else {
+        return;
+    };
+    let (home, opencode, tx) = (home.map(std::path::Path::to_path_buf), app.claude.commands.opencode.clone(), tx.clone());
+    std::thread::spawn(move || {
+        let everywhere = lookup.dir.is_none();
+        let limit = if everywhere { claude::CONVERSATIONS_EVERYWHERE } else { claude::CONVERSATIONS_HERE };
+        let list = match (lookup.kind, &lookup.dir, &home) {
+            (claude::Kind::Claude, dir, Some(home)) => conversations::claude(home, dir.as_deref(), limit),
+            (claude::Kind::OpenCode, Some(dir), _) => conversations::opencode(&opencode, dir, limit),
+            (claude::Kind::OpenCode, None, _) => conversations::opencode_all(&opencode, limit),
+            _ => Vec::new(),
+        };
+        let _ = tx.send(Event::Conversations(lookup.generation, lookup.kind, everywhere, list));
+    });
 }
 
 /// View 5's programs: each started when its session asks for it, all sized to what was drawn
@@ -207,10 +341,27 @@ fn drive_panes(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>, tx: &mp
                     }
                 };
                 session.branch = pty::git_branch(&dir);
-                match pty::PtyProcess::spawn(session.id, commands.of(session.kind), &dir, rows, cols, tx.clone()) {
+                // Started again — after it ended, or ⏎ on a failure — a session takes up the
+                // conversation it was in, not the one it was opened with.
+                if session.started > 0 {
+                    session.start = match (&session.conversation, session.kind) {
+                        (Some(id), claude::Kind::Claude | claude::Kind::OpenCode) => claude::Start::Resume { id: id.clone(), fork: false },
+                        (None, claude::Kind::OpenCode) => claude::Start::Continue,
+                        _ => claude::Start::Fresh,
+                    };
+                }
+                let mut command = commands.of(session.kind).to_vec();
+                let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+                let exists = |id: &str| home.as_deref().is_some_and(|home| conversations::claude_has(home, id));
+                command.extend(session.launch_args(command.first().map_or("", String::as_str), exists));
+                match pty::PtyProcess::spawn(session.id, &command, &dir, rows, cols, tx.clone()) {
                     Ok(process) => {
                         session.pane.resize(rows, cols);
                         session.pane.state = PaneState::Running;
+                        session.started = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_secs() as i64);
+                        session.pid = process.pid();
                         panes.insert(session.id, process);
                     }
                     Err(why) => session.pane.state = PaneState::Failed(why),
@@ -267,6 +418,62 @@ fn send_owed(app: &mut App, panes: &mut HashMap<u64, pty::PtyProcess>) {
     }
 }
 
+/// Where prayer times are for: the place chosen, else the city of the machine's time zone.
+fn prayer_place(config: &Config, zone: Option<&str>, table: Option<&str>) -> Option<prayer::Place> {
+    if config.prayer.off {
+        return None;
+    }
+    config.prayer.place.clone().or_else(|| prayer::of_time_zone(zone?, table))
+}
+
+/// A prayer's reminder, said beyond the screen: the terminal's bell, and the desktop's own
+/// notification — through the terminal where it has one (iTerm2, Ghostty, WezTerm take OSC 9),
+/// through the system where it does not (Terminal.app, tmux).
+fn notify(how: config::Notify, text: &str) {
+    use std::io::Write;
+    if how == config::Notify::Off {
+        return;
+    }
+    let text: String = text.chars().filter(|c| !c.is_control() && !matches!(c, '"' | '\\')).collect();
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x07");
+    if how == config::Notify::Desktop {
+        let terminal = std::env::var("TERM_PROGRAM").unwrap_or_default();
+        if matches!(terminal.as_str(), "iTerm.app" | "ghostty" | "WezTerm") {
+            let _ = write!(out, "\x1b]9;{text}\x1b\\");
+        } else {
+            system_notification(&text);
+        }
+    }
+    let _ = out.flush();
+}
+
+/// The system's notification, from a program of its own that is not waited for.
+fn system_notification(text: &str) {
+    let command: Option<(&str, Vec<String>)> = if cfg!(target_os = "macos") {
+        let script = format!("display notification \"{text}\" with title \"fleetlens\" sound name \"Glass\"");
+        Some(("osascript", vec!["-e".to_string(), script]))
+    } else if cfg!(target_os = "linux") {
+        Some(("notify-send", vec!["fleetlens".to_string(), text.to_string()]))
+    } else {
+        None
+    };
+    let Some((program, args)) = command else {
+        return;
+    };
+    let child = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Ok(mut child) = child {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+}
+
 /// What is wrong before a single request is made, if anything. Shown in the footer area
 /// instead of exiting, because the app still has to start.
 fn startup_problem(config: &Config) -> Option<String> {
@@ -277,6 +484,25 @@ fn startup_problem(config: &Config) -> Option<String> {
         return Some("no CH_SEED_URLS".to_string());
     }
     None
+}
+
+/// The terminal closed (SIGHUP) or the process asked to end (SIGTERM): a quit like `q`, so the
+/// sessions are kept for the next run before the programs in them end.
+fn spawn_signal_watch(tx: mpsc::UnboundedSender<Event>) {
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        use tokio::signal::unix::{signal, SignalKind};
+        let (Ok(mut hangup), Ok(mut terminate)) = (signal(SignalKind::hangup()), signal(SignalKind::terminate())) else {
+            return;
+        };
+        tokio::select! {
+            _ = hangup.recv() => {}
+            _ = terminate.recv() => {}
+        }
+        let _ = tx.send(Event::Quit);
+    });
+    #[cfg(not(unix))]
+    drop(tx);
 }
 
 /// Keys on a dedicated OS thread: `crossterm::event::read` blocks, and the loop must not.

@@ -1,11 +1,11 @@
 //! View 3: the fleet as a map of tiles.
 //!
 //! The tree answers "who"; the map answers "where", for a fleet too big to read row by row.
-//! Every node is one tile in §2.5's sort order, framed in its severity colour, with its two
-//! bars, its memory history and its queries — forty nodes on one screen, and the red ones
-//! jump out before anything is read.
+//! Every node is one tile in §2.5's sort order — a card on the chrome's surface with its mark,
+//! its two bars, its memory history and its queries — forty nodes on one screen, and the red
+//! ones jump out before anything is read.
 
-use super::widgets::{bar, sparkline, Cells, PCT_SHAPE};
+use super::widgets::{sparkline, thin_bar, Cells, PCT_SHAPE};
 use crate::app::{scroll_into_view, App};
 use crate::fmt;
 use crate::model::NodeView;
@@ -14,10 +14,11 @@ use crate::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
-const TILE_MIN_WIDTH: u16 = 26;
+const TILE_MIN_WIDTH: u16 = 28;
+/// Four lines and the gap under them.
 const TILE_HEIGHT: u16 = 5;
 
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -81,85 +82,91 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     });
 }
 
+/// A tile: a card on the chrome's surface, the one under the cursor raised and marked at its
+/// left, with the node's name and how it is, its two bars and its memory's last minutes.
+///
+/// ```text
+/// ✖ clickhouse3       4q ✕2
+/// mem ━━━━━━━━━━━━━━  93.1%
+/// cpu ━━━━━━━━━━━━━━  93.4%
+/// ▁▂▃▄▅▆▇▇▆▅
+/// ```
 fn tile(frame: &mut Frame, app: &App, theme: &Theme, rect: Rect, node: &NodeView<'_>, selected: bool) {
-    let sev = super::nodes::severity_of(node);
-    let border = if selected {
-        theme.accent().add_modifier(Modifier::BOLD)
-    } else if sev.is_problem() {
-        theme.sev(sev)
-    } else {
-        theme.border()
-    };
-    let mut title = vec![Span::styled(
-        format!(" {} ", fmt::truncate(&node.node.name, rect.width.saturating_sub(8) as usize)),
-        if selected { theme.accent().add_modifier(Modifier::BOLD) } else { theme.strong() },
-    )];
-    if sev.is_problem() {
-        title.push(Span::styled(format!("{} ", sev.glyph()), theme.sev(sev).add_modifier(Modifier::BOLD)));
-    }
-    if app.tree.new_nodes.contains(&node.node.name) {
-        title.push(Span::styled("NEW ", theme.sev(Severity::Ok).add_modifier(Modifier::BOLD)));
-    }
-    let block = Block::bordered()
-        .border_type(if selected { BorderType::Thick } else { BorderType::Rounded })
-        .border_style(border)
-        .title_top(Line::from(title))
-        .style(if selected { theme.selected() } else { Style::default() });
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    if inner.width < 8 || inner.height == 0 {
+    // The gap to the next tile, right and below, is the tile's own.
+    let card = Rect::new(rect.x, rect.y, rect.width.saturating_sub(2), rect.height.saturating_sub(1));
+    if card.width < 12 || card.height < 3 {
         return;
     }
-    let width = inner.width as usize;
+    let fill = if selected { theme.raised() } else { theme.surface() };
+    frame.render_widget(Block::new().style(fill), card);
+    let sev = super::nodes::severity_of(node);
+    let width = card.width as usize - 2;
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    if !node.node.reachable {
-        lines.push(Line::from(Span::styled(
-            format!(" ↯ {}", node.node.down_word()),
-            theme.sev(Severity::Crit).add_modifier(Modifier::BOLD),
-        )));
-        if let Some(detail) = node.node.down_detail() {
-            lines.push(Line::from(Span::styled(format!(" {}", fmt::truncate(detail, width - 1)), theme.muted())));
-        }
-        frame.render_widget(Paragraph::new(lines), inner);
-        return;
+    // The name, and how many queries it runs — runaways and NEW besides.
+    let mut head = Cells::new();
+    if sev.is_problem() {
+        head.push(format!("{} ", sev.glyph()), theme.sev(sev).add_modifier(Modifier::BOLD));
     }
-
-    // " MEM ████████▊   91%" — the bar takes what the label and the number leave.
-    let bar_cells = width.saturating_sub(4 + 1 + 6 + 1);
-    for (label, pct) in [("MEM", node.mem_pct), ("CPU", node.cpu_pct)] {
-        let s = severity::node(pct);
-        let mut cells = Cells::new();
-        cells.push(format!(" {label} "), theme.muted());
-        cells.spans(bar(pct, bar_cells, theme.bar_fill(s), theme));
-        cells.cell_right(&fmt::pct(pct), 7, theme.sev(s).add_modifier(Modifier::BOLD));
-        lines.push(cells.line(width, Style::default()));
-    }
-
+    let mut tail = Cells::new();
     let queries: usize = node.users.iter().map(|u| u.queries.len()).sum();
     let runaways: usize = node.users.iter().flat_map(|u| u.queries.iter()).filter(|q| q.runaway).count();
-    let mut cells = Cells::new();
-    cells.push(" ", Style::default());
-    let mut tail = Cells::new();
-    tail.push(format!("{queries}q"), theme.text2());
-    if runaways > 0 {
-        tail.push(format!(" ✕{runaways}"), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
+    if app.tree.new_nodes.contains(&node.node.name) {
+        tail.push("NEW ", theme.sev(Severity::Ok).add_modifier(Modifier::BOLD));
     }
-    let lag = severity::lag(node.node.lag_s);
-    if lag.is_problem() {
-        tail.push(format!(" lag {}", fmt::dur(node.node.lag_s as f64)), theme.sev(lag));
+    if node.node.reachable {
+        tail.push(format!("{queries}q"), theme.muted());
+        if runaways > 0 {
+            tail.push(format!(" ✕{runaways}"), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
+        }
     }
-    let spark_cells = width.saturating_sub(tail.width() + 3).min(16);
-    if spark_cells >= 4 {
-        let series = app.history.node(&node.node.name).map(|h| &h.mem_pct);
-        cells.spans(sparkline(series, app.history.now(), spark_cells, PCT_SHAPE, |v| {
-            theme.bar_fill(severity::node(Some(v)))
-        }));
-        cells.push(" ", Style::default());
+    let name_room = width.saturating_sub(head.width() + tail.width() + 1);
+    head.push(fmt::truncate(&node.node.name, name_room), if selected { theme.accent().add_modifier(Modifier::BOLD) } else { theme.strong() });
+    head.pad_to(width.saturating_sub(tail.width()));
+    head.spans(tail.into_spans());
+    lines.push(head.line(width, Style::default()));
+
+    if !node.node.reachable {
+        lines.push(Line::from(Span::styled(format!("↯ {}", node.node.down_word()), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD))));
+        if let Some(detail) = node.node.down_detail() {
+            lines.push(Line::from(Span::styled(fmt::truncate(detail, width), theme.muted())));
+        }
+    } else {
+        // `mem ━━━━━━━━━━━━  91.0%` — the bar takes what the label and the number leave.
+        let bar_cells = width.saturating_sub(4 + 7);
+        for (label, pct) in [("mem", node.mem_pct), ("cpu", node.cpu_pct)] {
+            let s = severity::node(pct);
+            let mut cells = Cells::new();
+            cells.push(format!("{label} "), theme.faint());
+            cells.spans(thin_bar(pct, bar_cells, theme.bar_fill(s), theme));
+            cells.cell_right(&fmt::pct(pct), 7, if s.is_problem() { theme.sev(s).add_modifier(Modifier::BOLD) } else { theme.text2() });
+            lines.push(cells.line(width, Style::default()));
+        }
+        if card.height >= 4 {
+            let mut cells = Cells::new();
+            let lag = severity::lag(node.node.lag_s);
+            let mut tail = Cells::new();
+            if lag.is_problem() {
+                tail.push(format!("lag {}", fmt::dur(node.node.lag_s as f64)), theme.sev(lag).add_modifier(Modifier::BOLD));
+            }
+            let spark_cells = width.saturating_sub(tail.width() + 2).min(18);
+            if spark_cells >= 4 {
+                let series = app.history.node(&node.node.name).map(|h| &h.mem_pct);
+                cells.spans(sparkline(series, app.history.now(), spark_cells, PCT_SHAPE, |v| theme.bar_fill(severity::node(Some(v)))));
+            }
+            cells.pad_to(width.saturating_sub(tail.width()));
+            cells.spans(tail.into_spans());
+            lines.push(cells.line(width, Style::default()));
+        }
     }
-    let tail_width = tail.width();
-    cells.pad_to(width.saturating_sub(tail_width + 1));
-    cells.spans(tail.into_spans());
-    lines.push(cells.line(width, Style::default()));
-    frame.render_widget(Paragraph::new(lines), inner);
+    // The card's own margin, and the mark of the one under the cursor.
+    let lines: Vec<Line<'static>> = lines
+        .into_iter()
+        .map(|line| {
+            let mut spans = vec![if selected { Span::styled("▎", theme.accent()) } else { Span::raw(" ") }];
+            spans.extend(line.spans);
+            Line::from(spans)
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines).style(fill), card);
 }

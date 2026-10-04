@@ -1,36 +1,36 @@
-╭ ◆ FLEETLENS  ✖ CRITICAL  ───────────────── ● LIVE 2s · 08:18:17 UTC   1 NODES   2 QUEUE   3 MAP   4 TAPE   5 CLAUDE  ╮
-│ FLEET  9 nodes · 1 hot   MEM ███▋       36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   CPU ██▉        28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄  │
-│ REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue │
-│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
-│  USER → PERSON · NODE         MEM ▼ % of fleet · of node  GiB  CPU                        cores  QUERIES  LONGEST    │
-│ ▌▾ r_redash → r.simonyte        6.7%  █▎                 51.4    1.1%  ▎                   2.20     1 ✕1    8m56s ✕  │
-│  └─ clickhouse7                40.1%  ███████▎           51.4    6.9%  █▎                  2.20        1    8m56s ✕  │
-│  ▸ r_redash → j.petrova         3.8%  ▊                  29.4    1.4%  ▎                   2.60     2 ✕2    6m40s ✕  │
-│  ▸ etl                          3.0%  ▌                  23.0    0.7%  ▏                   1.40        1       8s    │
-│  ▸ r_redash → m.kairys          2.9%  ▌                  22.2    1.2%  ▎                   2.30        2      18s    │
-│  ▸ r_redash → grigol.gankava    2.1%  ▍                  16.3    1.6%  ▎                   3.10     1 ✕1    8m31s ✕  │
-│  ▸ bi_loader                    1.7%  ▎                  12.8    1.7%  ▎                   3.20        1      14s    │
-│  ▸ dba                          1.5%  ▎                  11.5    1.0%  ▏                   2.00        4       8s    │
-│  ▸ airflow                      1.3%  ▎                  9.93    3.0%  ▌                   5.80        2      18s    │
-│  ▸ haris                        0.2%  ▏                  1.22    0.2%  ▏                   0.30        1      24s    │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│ ─ INSIGHTS · tab to go to one ────────────────────────────────────────────────────────────────────────────────────── │
-│  ✖ clickhouse3    memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more                                    │
-│  ✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 4 workers on long queries  +1 more                       │
-│  ▲ clickhouse-bi  memory 67.2% ↗ full in ~18m · j.petrova holds 33%  +1 more                                         │
-│  ▲ clickhouse7    r.simonyte's query at 80% of its memory limit  +1 more                                             │
-│  ▲ Redash #7711   running 2× · m.kairys                                                                              │
-│  ▲ Redash #8585   running 2× · j.petrova                                                                             │
-│ ─ r_redash → r.simonyte · across the fleet ───────────────────────────────────────────────────────────────────────── │
-│ Σ 51.4 GiB · Σ 2.20 cores · 1 query on 1 node · longest 8m56s ✕ · 6.7% of fleet memory                               │
-│ clickhouse7 40.1% mem / 6.9% cpu                                                                                     │
-│                                                                                                                      │
-│  ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help    │
-╰───────────────────────────────────────────────────────────────────────── 9 nodes polled · slowest 955 ms · read-only ╯
+  ◆ fleetlens   ✖ critical          1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4% 280/768 GiB   cpu ━━━╺━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   USER → PERSON · NODE         MEM ▼ % of fleet · of node  GiB  CPU                        cores  QUERIES  LONGEST     
+  ▌▾ r_redash → r.simonyte        6.7%  ━╺━━━━━━━━━━━━━━━━ 51.4    1.1%  ╸━━━━━━━━━━━━━━━━━  2.20     1 ✕1    8m56s ✕   
+   └─ clickhouse7                40.1%  ━━━━━━━╺━━━━━━━━━━ 51.4    6.9%  ━╺━━━━━━━━━━━━━━━━  2.20        1    8m56s ✕   
+   ▸ r_redash → j.petrova         3.8%  ╸━━━━━━━━━━━━━━━━━ 29.4    1.4%  ╸━━━━━━━━━━━━━━━━━  2.60     2 ✕2    6m40s ✕   
+   ▸ etl                          3.0%  ╸━━━━━━━━━━━━━━━━━ 23.0    0.7%  ╸━━━━━━━━━━━━━━━━━  1.40        1       8s     
+   ▸ r_redash → m.kairys          2.9%  ╸━━━━━━━━━━━━━━━━━ 22.2    1.2%  ╸━━━━━━━━━━━━━━━━━  2.30        2      18s     
+   ▸ r_redash → grigol.gankava    2.1%  ╸━━━━━━━━━━━━━━━━━ 16.3    1.6%  ╸━━━━━━━━━━━━━━━━━  3.10     1 ✕1    8m31s ✕   
+   ▸ bi_loader                    1.7%  ╸━━━━━━━━━━━━━━━━━ 12.8    1.7%  ╸━━━━━━━━━━━━━━━━━  3.20        1      14s     
+   ▸ dba                          1.5%  ╸━━━━━━━━━━━━━━━━━ 11.5    1.0%  ╸━━━━━━━━━━━━━━━━━  2.00        4       8s     
+   ▸ airflow                      1.3%  ╸━━━━━━━━━━━━━━━━━ 9.93    3.0%  ╸━━━━━━━━━━━━━━━━━  5.80        2      18s     
+   ▸ haris                        0.2%  ╸━━━━━━━━━━━━━━━━━ 1.22    0.2%  ╸━━━━━━━━━━━━━━━━━  0.30        1      24s     
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+  ─ INSIGHTS · tab to go to one ──────────────────────────────────────────────────────────────────────────────────────  
+   ✖ clickhouse3    memory 93.1% · CPU 93.4% · the server itself holds 47%  +1 more                                     
+   ✖ Redash         queries: 13 waiting · oldest 3m43s · 2 of 4 workers on long queries  +1 more                        
+   ▲ clickhouse-bi  memory 67.2% ↗ full in ~18m · j.petrova holds 33%  +1 more                                          
+   ▲ clickhouse7    r.simonyte's query at 80% of its memory limit  +1 more                                              
+   ▲ Redash #7711   running 2× · m.kairys                                                                               
+   ▲ Redash #8585   running 2× · j.petrova                                                                              
+  ─ r_redash → r.simonyte · across the fleet ─────────────────────────────────────────────────────────────────────────  
+  Σ 51.4 GiB · Σ 2.20 cores · 1 query on 1 node · longest 8m56s ✕ · 6.7% of fleet memory                                
+  clickhouse7 40.1% mem / 6.9% cpu                                                                                      
+                                                                                                                        
+   ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help     

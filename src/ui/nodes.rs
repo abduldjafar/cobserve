@@ -4,7 +4,7 @@
 //! is laid on one grid, so the user rows' bars sit directly under their node's bar on the
 //! same scale: you can see the user rows plus the closing row add up to the node (§5.3).
 
-use super::widgets::{bar, code_block, rule, sparkline, tone_spans, Cells, PCT_SHAPE};
+use super::widgets::{code_block, rule, sparkline, thin_bar, tone_spans, Cells, PCT_SHAPE};
 use crate::app::{scroll_into_view, App, Focus};
 use crate::fmt;
 use crate::history::Trend;
@@ -794,7 +794,7 @@ fn one_measure(cells: &mut Cells, theme: &Theme, m: &Measure, bar_cells: usize, 
     if bar_cells > 0 {
         cells.push(" ", Style::default());
         let fill = if m.server { theme.server_bar } else { theme.bar_fill(m.sev) };
-        cells.spans(bar(m.pct, bar_cells, fill, theme));
+        cells.spans(thin_bar(m.pct, bar_cells, fill, theme));
     }
     cells.push(" ", Style::default());
     let pad = abs_cells.saturating_sub(fmt::width(&m.abs));

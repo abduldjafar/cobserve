@@ -3,7 +3,7 @@
 //! First line is a titled rule; the body gets whatever lines the layout gave it (0–3), most
 //! important first, so a short terminal loses the least useful line.
 
-use super::widgets::{bar, rule, sparkline, tone_spans, Cells, PCT_SHAPE};
+use super::widgets::{rule, sparkline, thin_bar, tone_spans, Cells, PCT_SHAPE};
 use crate::app::{App, SqlFrom, View};
 use crate::fmt;
 use crate::history::{eta_to, Trend};
@@ -296,7 +296,8 @@ fn node_detail(view: &NodeView<'_>, app: &App, theme: &Theme, width: usize) -> D
         cells.push(format!("{ms} ms"), if ms >= 750 { theme.sev(Severity::Warn) } else { theme.muted() });
     }
     if let Some(snapshot) = app.snapshot() {
-        cells.push(format!(" · numbers from {} UTC", fmt::utc_clock(snapshot.taken_at)), theme.faint());
+        let taken = crate::history::secs(snapshot.taken_at) as i64;
+        cells.push(format!(" · numbers from {} {}", app.time.hms(taken), app.time.label(taken)), theme.faint());
     }
     lines.push(cells.line_unpadded(width));
     (head, lines)
@@ -555,7 +556,7 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
     if holds {
         let limit_sev = severity::limit_share(fraction);
         cells.push(format!(" = {} of its {} limit ", fmt::pct0(fraction * 100.0), fmt::bytes(stat.limit)), theme.muted());
-        cells.spans(bar(Some(fraction * 100.0), 10, theme.bar_fill(limit_sev), theme));
+        cells.spans(thin_bar(Some(fraction * 100.0), 10, theme.bar_fill(limit_sev), theme));
     } else {
         // Twelve times past the limit its settings show is not a query about to be killed: the
         // server holds it to something else.
@@ -594,7 +595,7 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
     match stat.progress {
         Some(p) => {
             cells.push("   PROGRESS ", theme.section());
-            cells.spans(bar(Some(p * 100.0), 12, theme.accent, theme));
+            cells.spans(thin_bar(Some(p * 100.0), 12, theme.accent, theme));
             cells.push(format!(" {}", fmt::pct0(p * 100.0)), theme.accent().add_modifier(Modifier::BOLD));
             cells.push(
                 format!(" of ~{} rows", fmt::rows(query.total_rows_approx)),
@@ -611,7 +612,8 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
     }
     if let Some(snapshot) = app.snapshot() {
         let started = crate::history::secs(snapshot.taken_at) - query.elapsed_s;
-        cells.push(format!(" · started {} UTC", fmt::utc_clock_secs(started)), theme.faint());
+        let started = started as i64;
+        cells.push(format!(" · started {} {}", app.time.hms(started), app.time.label(started)), theme.faint());
     }
     if let Some(kind) = &query.kind {
         cells.push(format!(" · {kind}"), theme.faint());
@@ -757,7 +759,7 @@ fn tape(app: &App, theme: &Theme, width: usize) -> Drawer {
         );
     };
     let head = vec![
-        Span::styled(format!("{} UTC", fmt::utc_clock_secs(event.at)), theme.strong()),
+        Span::styled(format!("{} {}", app.time.hms(event.at as i64), app.time.label(event.at as i64)), theme.strong()),
         Span::styled(format!(" · {}", event.kind.label()), theme.muted()),
     ];
     let mut cells = Cells::new();

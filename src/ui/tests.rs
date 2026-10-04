@@ -66,13 +66,16 @@ fn the_screen_renders_at_the_target_size() {
     let screen = render(&app, 120, 36);
     let lines: Vec<&str> = screen.lines().collect();
 
-    assert!(lines[0].contains("FLEETLENS"), "{}", lines[0]);
-    assert!(lines[0].contains("LIVE") || lines[0].contains("PAUSED"));
-    assert!(lines[0].contains("1 NODES"), "the tabs are in the header: {}", lines[0]);
-    assert!(lines[0].contains("CRITICAL"), "the fake fleet is in trouble: {}", lines[0]);
-    assert!(lines[1].contains("FLEET"), "{}", lines[1]);
-    assert!(lines[2].contains("REDASH"), "{}", lines[2]);
-    assert!(lines[2].contains("waiting"), "{}", lines[2]);
+    // The masthead: the name, how the fleet is, the tabs, how fresh and the clock.
+    assert!(lines[0].starts_with("  ◆ fleetlens"), "{}", lines[0]);
+    assert!(lines[0].contains("● live") || lines[0].contains("○ paused"));
+    assert!(lines[0].contains("1 nodes") && lines[0].contains("5 sessions"), "the tabs: {}", lines[0]);
+    assert!(lines[0].contains("✖ critical"), "the fake fleet is in trouble: {}", lines[0]);
+    // The day line — no place known here — then the shelf, a row of air either side.
+    assert!(lines[1].contains("PRAYER_CITY"), "how to say where: {}", lines[1]);
+    assert!(lines[2].trim().is_empty() && lines[5].trim().is_empty(), "{screen}");
+    assert!(lines[3].contains("FLEET") && lines[3].contains("mem ━") && lines[3].contains("cpu ━"), "{}", lines[3]);
+    assert!(lines[4].contains("REDASH") && lines[4].contains("waiting"), "{}", lines[4]);
 
     let all = screen.replace('\n', " ");
     assert!(all.contains("clickhouse3"), "a node row");
@@ -258,11 +261,11 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
     assert!(row("✻  cobserve").contains("● 5"), "the first, by its folder, which rang: {screen}");
     assert!(row("✻  infra").contains('6'), "the second, by its name: {screen}");
-    assert!(row("~/work/cobserve").contains('│'), "the one on screen is framed: {screen}");
+    assert!(row("✻  infra").contains('▎') && !row("✻  cobserve").contains('▎'), "the one on screen is lit: {screen}");
     assert!(screen.contains("the second session") && !screen.contains("the first session"), "only the session on screen: {screen}");
     assert!(screen.contains("+  new session"), "{screen}");
     // The keys are the footer's, said once, and pressing ctrl+\ moves none of them.
-    let footer = |screen: &str| screen.lines().rev().nth(1).unwrap_or_default().to_string();
+    let footer = |screen: &str| screen.lines().last().unwrap_or_default().to_string();
     let typing = footer(&screen);
     assert!(typing.contains("ctrl+\\  then   1-4  views   5-9  sessions   n  new   r  rename   x  close"), "{typing}");
     assert!(typing.contains("F1-F9  any tab"), "for a terminal that keeps ctrl+\\: {typing}");
@@ -359,7 +362,7 @@ fn a_new_session_s_folder_is_picked_with_clicks_like_in_an_explorer() {
     let found = render(&app, 140, 40);
     assert!(found.contains("pipe▏") && found.contains("1 found") && !found.contains("Open the session here"), "{found}");
     assert!(row(&found, "▸  pipelines").contains('▌'), "the best match under the cursor: {found}");
-    assert!(found.lines().rev().nth(1).unwrap().contains("clear the search"), "esc clears it first: {found}");
+    assert!(found.lines().last().unwrap().contains("clear the search"), "esc clears it first: {found}");
 
     // ⏎ opens the session in the folder under the cursor, and it is on screen.
     app.update(key(KeyCode::Enter));
@@ -394,7 +397,7 @@ fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
     assert!(row(&screen, "✻  cobserve").contains('5'), "Claude's mark: {screen}");
     assert!(row(&screen, "▣  notes").contains('6'), "OpenCode's: {screen}");
     assert!(row(&screen, "❯  scripts").contains('7'), "a shell's: {screen}");
-    assert!(screen.lines().rev().nth(1).unwrap().contains("every other key goes to the shell"), "{screen}");
+    assert!(screen.lines().last().unwrap().contains("every other key goes to the shell"), "{screen}");
 
     // The picker offers the three, the one it will open lit; a click changes it.
     app.update(ctrl('\\'));
@@ -412,8 +415,240 @@ fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
     app.claude.current_mut().unwrap().pane.state = PaneState::Failed("opencode is not installed here (not on PATH)".into());
     let failed = render(&app, 160, 40);
     assert!(failed.contains("opencode auth login") && failed.contains("OPENCODE_CMD"), "{failed}");
-    assert!(failed.lines().rev().nth(1).unwrap().contains("start OpenCode"), "{failed}");
+    assert!(failed.lines().last().unwrap().contains("start OpenCode"), "{failed}");
     assert_eq!(app.claude.mode, Mode::Typing);
+}
+
+#[test]
+fn every_node_has_a_card_under_the_band_and_a_click_opens_one() {
+    use crate::app::Hit;
+    let mut app = app_with_claude(b"one\r\n");
+    let screen = render(&app, 160, 48);
+    let lines: Vec<&str> = screen.lines().collect();
+    let (names, mem, cpu) = (lines[6], lines[7], lines[8]);
+    // The worst first, marked; each with its memory and its CPU, a bar and a share.
+    assert!(names.starts_with("        ✖ clickhouse3 "), "{names}");
+    assert!(mem.starts_with("   mem  ━") && cpu.starts_with("   cpu  ━"), "{mem}\n{cpu}");
+    let cards = app.viewport.listed_nodes.borrow().len();
+    assert!(cards >= 5, "{names}");
+    assert_eq!(mem.matches('%').count(), cards + 1, "a share on every card, and how high the rest go: {mem}");
+    assert_eq!(cpu.matches('%').count(), cards + 1, "{cpu}");
+    assert!(names.contains("▲ clickhouse7 lag "), "amber for its lag, said in full: {names}");
+    assert!(names.contains("● clickhouse2"), "a quiet one: {names}");
+    let at = |name: &str| names.find(name).unwrap_or_else(|| panic!("{name} in {names}"));
+    assert!(at("clickhouse3") < at("clickhouse7") && at("clickhouse7") < at("clickhouse2"), "trouble first: {names}");
+    let fleet = app.snapshot().unwrap().nodes.len();
+    assert!(names.contains(&format!("+{} more", fleet - cards)), "how many did not fit: {names}");
+    assert!(mem.contains("≤ ") && cpu.contains("≤ "), "and how high they go: {mem}");
+    assert!(lines[9].trim().is_empty() && lines[11].contains("SESSIONS"), "the sessions under the shelf: {screen}");
+    assert!(!screen.lines().any(|l| l.trim_start().starts_with("NODES")), "the list beside is the sessions' alone: {screen}");
+
+    // A node that does not answer says why.
+    let mut down = app.snapshot().unwrap().clone();
+    let name = down.nodes[1].name.clone();
+    down.nodes[1] = crate::model::NodeSnapshot::unreachable(&name, "connection refused");
+    app.update(Event::Snapshot(Box::new(down)));
+    let screen = render(&app, 160, 48);
+    let lines: Vec<&str> = screen.lines().collect();
+    assert!(lines[6].contains(&format!("✖ {name}")), "{}", lines[6]);
+    assert!(lines[7].contains("↯ unreachable") && lines[8].contains("connection refused"), "{}\n{}", lines[7], lines[8]);
+
+    // A click anywhere on a card opens its node on view 1; the session goes on where it was.
+    let index = app.viewport.listed_nodes.borrow().iter().position(|n| n == &name).expect("listed");
+    let card = app.viewport.hits.borrow().iter().find(|(_, h)| *h == Hit::Node(index)).map(|(r, _)| *r).unwrap();
+    assert_eq!(card.height, 3, "the name and both bars");
+    app.update(Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: card.x + 2,
+        row: card.y + 2,
+        modifiers: KeyModifiers::NONE,
+    }));
+    assert_eq!(app.view, View::Nodes);
+    assert_eq!(app.selected(), Some(&crate::tree::RowId::Node(name)));
+
+    // The card for the rest opens view 1 too.
+    app.update(key(KeyCode::Char('5')));
+    render(&app, 160, 48);
+    let more = app.viewport.hits.borrow().iter().find(|(r, h)| *h == Hit::View(View::Nodes) && r.y == 6).map(|(r, _)| *r);
+    let more = more.expect("the card for the rest");
+    app.update(Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: more.x,
+        row: more.y + 1,
+        modifiers: KeyModifiers::NONE,
+    }));
+    assert_eq!(app.view, View::Nodes);
+
+    // Wide, every node; short, the line under the band carries them, both numbers each.
+    app.update(key(KeyCode::Char('5')));
+    let wide = render(&app, 250, 56);
+    let names = wide.lines().nth(6).unwrap();
+    assert!(!names.contains("more") && app.viewport.listed_nodes.borrow().len() == fleet, "{names}");
+    let short = render(&app_with_claude(b"one\r\n"), 100, 26);
+    let line = short.lines().nth(4).unwrap();
+    assert!(line.starts_with("  ─ ✖ clickhouse3 mem ") && line.contains("% cpu "), "{line}");
+    assert!(line.contains(" more ─"), "how many did not fit: {line}");
+    assert!(!short.contains("mem  ━"), "no cards: {short}");
+}
+
+#[test]
+fn the_day_line_goes_from_subuh_to_isya_with_now_on_it() {
+    let mut app = app_after(3);
+    at_moment(&mut app, MOMENT);
+    let screen = render(&app, 160, 40);
+    let day = screen.lines().nth(1).unwrap();
+    let at = |text: &str| day.find(text).unwrap_or_else(|| panic!("{text} in {day}"));
+    // Kemenag's times for Jakarta that day, in order; the next one says how far off it is.
+    let stops = ["Subuh 04:21", "Terbit 05:33", "Dzuhur 11:45", "Ashar 14:48", "Maghrib 17:50 · in 1h58m", "Isya 18:59"];
+    for pair in stops.windows(2) {
+        assert!(at(pair[0]) < at(pair[1]), "{pair:?}: {day}");
+    }
+    assert!(at("Ashar") < at("●") && at("●") < at("Maghrib"), "now, between them: {day}");
+    assert!(day.trim_end().ends_with("Jakarta"), "where: {day}");
+    assert!(screen.lines().next().unwrap().contains("15:52:07 WIB"), "the clock, in the zone: {screen}");
+    // A Friday's noon prayer is Jumat.
+    at_moment(&mut app, MOMENT - 2 * 86_400);
+    assert!(render(&app, 160, 40).lines().nth(1).unwrap().contains("Jumat 11:46"), "{}", render(&app, 160, 40));
+    // Narrow, the place goes first, then the times of what has passed; the next stays whole.
+    at_moment(&mut app, MOMENT);
+    let narrow = render(&app, 90, 30);
+    let day = narrow.lines().nth(1).unwrap();
+    assert!(day.contains("Maghrib 17:50 · in 1h58m") && !day.contains("Jakarta"), "{day}");
+}
+
+#[test]
+fn ten_minutes_before_a_prayer_its_reminder_takes_the_line_until_waved_away() {
+    use crate::app::Hit;
+    let mut app = app_after(3);
+    at_moment(&mut app, MOMENT + 6504);
+    let said = app.take_notifications();
+    assert_eq!(said, ["Maghrib in 10 min · 17:50 · Jakarta"], "said once beyond the screen");
+    let screen = render(&app, 120, 36);
+    let banner = screen.lines().nth(1).unwrap();
+    assert!(banner.contains("◷  Maghrib in 9:29  ·  17:50 WIB  ·  Jakarta"), "{banner}");
+    assert!(banner.trim_end().ends_with("d  ✕ dismiss"), "{banner}");
+    at_moment(&mut app, MOMENT + 6505);
+    assert!(app.take_notifications().is_empty(), "not again");
+    // In a session the key goes after ctrl+\; a click does it anywhere.
+    app.update(key(KeyCode::Char('5')));
+    assert!(render(&app, 120, 36).lines().nth(1).unwrap().contains("ctrl+\\ d  ✕ dismiss"));
+    click_on(&mut app, Hit::Dismiss);
+    let day = render(&app, 120, 36).lines().nth(1).unwrap().to_string();
+    assert!(day.contains("Maghrib 17:50 · in 9:28") && !day.contains("◷"), "the line again: {day}");
+    // Its time comes: nothing, it was waved away. The next one is reminded as this one was.
+    at_moment(&mut app, MOMENT + 7070);
+    assert!(app.take_notifications().is_empty());
+    at_moment(&mut app, MOMENT + 10_800);
+    let said = app.take_notifications();
+    assert_eq!(said, ["Isya in 7 min · 18:59 · Jakarta"], "{said:?}");
+    // On view 1, d waves it away.
+    app.update(key(KeyCode::Char('1')));
+    app.update(key(KeyCode::Char('d')));
+    assert!(!render(&app, 120, 36).lines().nth(1).unwrap().contains("◷"));
+}
+
+#[test]
+fn the_terminal_s_title_says_how_the_fleet_is_and_the_next_prayer() {
+    let mut app = app_after(3);
+    at_moment(&mut app, MOMENT);
+    assert_eq!(super::title(&app), "fleetlens ✖ · Maghrib 17:50");
+    at_moment(&mut app, MOMENT + 6504);
+    assert_eq!(super::title(&app), "fleetlens ✖ · ◷ Maghrib in 10 min");
+    at_moment(&mut app, MOMENT + 7090);
+    assert_eq!(super::title(&app), "fleetlens ✖ · Maghrib now");
+}
+
+#[test]
+fn the_clock_flips_to_utc_with_z_or_a_click() {
+    use crate::app::Hit;
+    let mut app = app_after(3);
+    at_moment(&mut app, MOMENT);
+    app.update(key(KeyCode::Char('z')));
+    let top = render(&app, 120, 36).lines().next().unwrap().to_string();
+    assert!(top.contains("08:52:07 UTC"), "{top}");
+    // Prayer times stay the place's own.
+    assert!(render(&app, 120, 36).lines().nth(1).unwrap().contains("Maghrib 17:50"));
+    click_on(&mut app, Hit::Clock);
+    assert!(render(&app, 120, 36).lines().next().unwrap().contains("15:52:07 WIB"));
+    // The tape's times are the clock's.
+    app.update(key(KeyCode::Char('4')));
+    assert!(render(&app, 120, 36).contains("TIME WIB"));
+}
+
+#[test]
+fn sessions_of_the_last_run_wait_marked_and_a_conversation_can_be_taken_up() {
+    use crate::app::Hit;
+    use crate::claude::{Kind, Mode, PickRow};
+    use crate::saved::{Saved, SavedKind, SavedSession};
+    let mut app = app_after(3);
+    app.claude.default_dir = "~/work/cobserve".into();
+    let kept = |kind, dir: &str, conversation: Option<&str>| SavedSession { kind, name: None, dir: dir.into(), conversation: conversation.map(str::to_string) };
+    app.claude.restore(&Saved {
+        sessions: vec![kept(SavedKind::Claude, "~/work/billing", Some("aaa")), kept(SavedKind::OpenCode, "~/work/pipelines", None)],
+        active: 0,
+    });
+    app.update(key(KeyCode::Char('5')));
+    let screen = render(&app, 140, 40);
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
+    assert!(row("▣  pipelines").contains("↻ 6"), "kept, not started: {screen}");
+    assert!(!row("✻  billing").contains('↻'), "the one on screen started: {screen}");
+    assert!(screen.contains("↻  past conversations"), "{screen}");
+
+    // The way to a conversation had elsewhere: every folder's, newest first.
+    click_on(&mut app, Hit::Resume);
+    let now = app.now();
+    let Mode::Opening(picker) = &mut app.claude.mode else { panic!("not picking") };
+    assert!(picker.everywhere);
+    let lookup = picker.conversation_lookup().expect("asked for");
+    assert_eq!((lookup.kind, lookup.dir), (Kind::Claude, None));
+    let conversation = |id: &str, title: &str, dir: &str, ago: i64, open: bool| crate::conversations::Conversation {
+        kind: Kind::Claude,
+        id: id.into(),
+        dir: dir.into(),
+        title: title.into(),
+        last: None,
+        updated: now - ago,
+        open,
+    };
+    picker.found_conversations(
+        lookup.generation,
+        Kind::Claude,
+        true,
+        vec![conversation("ccc", "stream the invoice export", "/work/billing", 300, true), conversation("ddd", "weekly totals", "/work/reports", 7200, false)],
+    );
+    let screen = render(&app, 140, 40);
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
+    assert!(screen.contains("take a conversation up, from any folder"), "{screen}");
+    assert!(row("↻  stream the invoice export").contains("/work/billing · 5m ago · open in another terminal"), "{screen}");
+    assert!(row("↻  weekly totals").contains("/work/reports · 2h ago"), "{screen}");
+    click_on(&mut app, Hit::Pick(PickRow::Conversation(1)));
+    assert_eq!(app.claude.mode, Mode::Typing);
+    let session = app.claude.current().unwrap();
+    assert_eq!((session.dir.as_str(), session.conversation.as_deref()), ("/work/reports", Some("ddd")));
+    assert_eq!(session.launch_args("claude", |_| true), ["--resume", "ddd"]);
+}
+
+#[test]
+fn a_shell_scrolled_back_says_how_far() {
+    use crate::claude::Kind;
+    let mut app = app_with_claude(b"one\r\n");
+    app.claude.open_new("~/work/scripts", Kind::Terminal);
+    let lines: String = (1..=80).map(|n| format!("output {n}\r\n")).collect();
+    run_session(&mut app, lines.as_bytes());
+    render(&app, 160, 40);
+    let pane = app.viewport.hits.borrow().iter().find(|(_, h)| *h == crate::app::Hit::Pane).map(|(r, _)| *r).unwrap();
+    for _ in 0..4 {
+        app.update(Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollUp,
+            column: pane.x + 5,
+            row: pane.y + 5,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+    let screen = render(&app, 160, 40);
+    assert!(screen.contains("↑ 12 lines back"), "{screen}");
+    app.update(key(KeyCode::Char('q')));
+    assert!(!render(&app, 160, 40).contains("lines back"), "a key comes back down");
 }
 
 #[test]
@@ -421,7 +656,8 @@ fn a_narrow_terminal_puts_the_sessions_on_a_bar() {
     let app = app_with_claude(b"one\r\n");
     let screen = render(&app, 96, 30);
     let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[4].contains(" 5 ✻ cobserve ") && lines[4].contains(" + "), "{}", lines[4]);
+    assert!(lines[6].contains("✖ clickhouse3") && lines[7].contains(" mem "), "the cards first: {screen}");
+    assert!(lines[10].contains(" 5 ✻ cobserve ") && lines[10].contains(" + "), "{}", lines[10]);
     assert!(!screen.contains("SESSIONS"), "{screen}");
 }
 
@@ -434,7 +670,7 @@ fn the_header_s_tabs_and_the_sessions_can_be_clicked() {
     let tape = find(crate::app::Hit::View(View::Tape)).expect("the TAPE tab");
     let top: Vec<String> = screen.lines().next().unwrap().chars().map(String::from).collect();
     let under: String = top[tape.x as usize..(tape.x + tape.width) as usize].concat();
-    assert_eq!(under, " 4 TAPE ", "the click area is the tab itself");
+    assert_eq!(under, "4 tape", "the click area is the tab itself");
     assert!(find(crate::app::Hit::Session(0)).is_some() && find(crate::app::Hit::NewSession).is_some());
     let pane = find(crate::app::Hit::Pane).expect("Claude's screen");
     assert_eq!(app.claude.pane_origin.get(), (pane.y, pane.x));
@@ -447,14 +683,14 @@ fn claude_runs_in_view_five_under_the_monitor() {
     assert!(screen.contains("Welcome to Claude Code"), "the program's screen: {screen}");
     assert!(screen.contains("> fix the failing test"), "{screen}");
     let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[1].contains("FLEET") && lines[2].contains("REDASH"), "the band stays: {screen}");
-    assert!(lines[3].contains("✖ clickhouse3"), "the worst of the fleet under the band: {}", lines[3]);
-    assert!(lines[0].contains("5 SESSIONS"), "a tab of its own: {}", lines[0]);
+    assert!(lines[3].contains("FLEET") && lines[4].contains("REDASH"), "the band stays: {screen}");
+    assert!(lines[6].contains("✖ clickhouse3"), "the worst of the fleet on the shelf: {}", lines[6]);
+    assert!(lines[0].contains("5 sessions"), "a tab of its own: {}", lines[0]);
     assert!(screen.contains("✻  Tidy the README"), "Claude's task, from its title, in the list: {screen}");
-    let footer = lines[lines.len() - 2];
+    let footer = lines[lines.len() - 1];
     assert!(footer.contains("ctrl+\\  then") && !footer.contains("Tidy the README"), "keys only: {footer}");
     let wide = render(&app, 160, 40);
-    assert!(wide.lines().rev().nth(1).unwrap().contains("any tab   every other key goes to Claude"), "{wide}");
+    assert!(wide.lines().last().unwrap().contains("any tab   every other key goes to Claude"), "{wide}");
     assert!(!screen.contains("─ job ·") && !screen.contains("INSIGHTS"), "no drawer, no insights: {screen}");
 }
 
@@ -477,13 +713,18 @@ fn a_notice_on_the_border_makes_room_and_never_runs_into_the_counts() {
     let said = "discovery via clickhouse-events.example.net: no access — r_reports_daily needs SELECT on system.clusters";
     app.update(Event::Notice(said.into()));
     let bottom = |width: u16| render(&app, width, 30).lines().last().unwrap_or_default().to_string();
-    let wide = bottom(200);
-    assert!(wide.contains(said) && wide.contains("nodes polled"), "room for both: {wide}");
-    let mid = bottom(130);
-    assert!(mid.contains(said) && !mid.contains("nodes polled"), "the counts make way: {mid}");
+    let wide = bottom(240);
+    assert!(wide.contains(said) && wide.contains("↑↓  move"), "room for the keys and the notice: {wide}");
+    assert!(!wide.contains("nodes polled"), "the counts make way for it: {wide}");
+    let mid = bottom(150);
+    assert!(mid.contains("▲ discovery via") && mid.trim_end().ends_with('…'), "cut, and says so: {mid}");
+    assert!(mid.contains("↑↓  move") && !mid.contains("q  quit"), "the last keys make way: {mid}");
     let narrow = bottom(90);
-    assert!(narrow.contains("no access — r_reports") && narrow.contains("… ─"), "cut, and says so: {narrow}");
-    assert!(narrow.contains("─ read-only"), "never run together: {narrow}");
+    assert!(narrow.contains("▲ discovery via"), "{narrow}");
+    // Gone, the counts come back.
+    app.update(Event::Notice(String::new()));
+    let quiet = render(&app, 240, 30).lines().last().unwrap_or_default().to_string();
+    assert!(quiet.contains("nodes polled") && quiet.contains("read-only"), "{quiet}");
 }
 
 #[test]
@@ -664,7 +905,7 @@ fn the_help_overlay_lists_the_keymap() {
     assert!(screen.contains("pivot"), "{screen}");
     assert!(screen.contains("filter"), "{screen}");
     assert!(screen.contains("runaway query"), "the glyph legend");
-    assert!(screen.contains("not in this pass"), "unbuilt keys stay out (§3)");
+    assert!(screen.contains("the clock") && screen.contains("prayer's reminder"), "the new keys: {screen}");
 }
 
 #[test]
@@ -854,10 +1095,10 @@ fn colours_carry_severity() {
 fn a_paused_screen_says_so_and_a_stale_one_too() {
     let mut app = app_with_fake();
     app.update(key(KeyCode::Char('p')));
-    assert!(render(&app, 120, 36).lines().next().unwrap().contains("PAUSED"));
+    assert!(render(&app, 120, 36).lines().next().unwrap().contains("○ paused"));
     app.update(key(KeyCode::Char('p')));
     app.clock = std::time::SystemTime::now() + std::time::Duration::from_secs(30);
-    assert!(render(&app, 120, 36).lines().next().unwrap().contains("STALE"));
+    assert!(render(&app, 120, 36).lines().next().unwrap().contains("◌ stale"));
 }
 
 /// The screen one fleet showed, which the insights were rebuilt for: a node that answers but
@@ -1009,15 +1250,16 @@ fn html_with(buf: &Buffer, title: &str, theme: &crate::theme::Theme) -> String {
     for y in 0..buf.area.height {
         out.push_str("<div>");
         let mut run = String::new();
-        let mut style: Option<(String, String, bool)> = None;
-        let flush = |out: &mut String, run: &mut String, style: &Option<(String, String, bool)>| {
+        let mut style: Option<(String, String, bool, bool)> = None;
+        let flush = |out: &mut String, run: &mut String, style: &Option<(String, String, bool, bool)>| {
             if run.is_empty() {
                 return;
             }
-            let (fg, bg, bold) = style.clone().unwrap();
+            let (fg, bg, bold, underline) = style.clone().unwrap();
             out.push_str(&format!(
-                "<span style=\"color:{fg};background:{bg};{}\">{run}</span>",
-                if bold { "font-weight:bold;" } else { "" }
+                "<span style=\"color:{fg};background:{bg};{}{}\">{run}</span>",
+                if bold { "font-weight:bold;" } else { "" },
+                if underline { "text-decoration:underline;text-underline-offset:4px;" } else { "" }
             ));
             run.clear();
         };
@@ -1031,7 +1273,7 @@ fn html_with(buf: &Buffer, title: &str, theme: &crate::theme::Theme) -> String {
             if cell.modifier.contains(Modifier::DIM) {
                 fg = "#7a8596".into();
             }
-            let this = (fg, bg, cell.modifier.contains(Modifier::BOLD));
+            let this = (fg, bg, cell.modifier.contains(Modifier::BOLD), cell.modifier.contains(Modifier::UNDERLINED));
             if style.as_ref() != Some(&this) {
                 flush(&mut out, &mut run, &style);
                 style = Some(this);
@@ -1072,6 +1314,19 @@ const CLAUDE_DEMO: &[u8] = b"\x1b]0;\xe2\x9c\xb3 Stream the invoice export\x07\
 \x1b[2m\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\
 \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n";
 
+/// 15:52:07 WIB on Sunday 4 October 2026.
+const MOMENT: u64 = 1_791_103_927;
+
+/// The clock at `at` in Jakarta, with the prayer times for it.
+fn at_moment(app: &mut App, at: u64) {
+    app.time.zone = Some("Asia/Jakarta".into());
+    app.time.pinned = chrono::FixedOffset::east_opt(7 * 3600);
+    if app.prayers.place.is_none() {
+        app.prayers = crate::prayer::Prayers::new(crate::prayer::city("Jakarta"), 10);
+    }
+    app.tick_at(std::time::UNIX_EPOCH + std::time::Duration::from_secs(at));
+}
+
 #[test]
 #[ignore]
 fn export_screens() {
@@ -1079,7 +1334,10 @@ fn export_screens() {
         return;
     };
     std::fs::create_dir_all(&dir).expect("shot dir");
-    let save = |name: &str, app: &App, width: u16, height: u16| {
+    // One place and one moment for every screen: Jakarta, Sunday 4 October 2026, 15:52 WIB —
+    // an hour into Ashar, Maghrib two hours off.
+    let save = |name: &str, app: &mut App, width: u16, height: u16| {
+        at_moment(app, MOMENT);
         let buf = buffer(app, width, height);
         std::fs::write(format!("{dir}/{name}.txt"), text_of(&buf) + "\n").expect("write txt");
         std::fs::write(format!("{dir}/{name}.html"), html_of(&buf, name)).expect("write html");
@@ -1087,9 +1345,9 @@ fn export_screens() {
 
     // Four minutes of history behind every sparkline.
     let mut app = app_after(118);
-    save("120x36-nodes", &app, 120, 36);
-    save("100x30-nodes", &app, 100, 30);
-    save("160x48-nodes", &app, 160, 48);
+    save("120x36-nodes", &mut app, 120, 36);
+    save("100x30-nodes", &mut app, 100, 30);
+    save("160x48-nodes", &mut app, 160, 48);
 
     // A user opened and a query selected: the drawer at its fullest.
     for _ in 0..8 {
@@ -1103,32 +1361,32 @@ fn export_screens() {
         }
         app.update(key(KeyCode::Down));
     }
-    save("140x40-query", &app, 140, 40);
+    save("140x40-query", &mut app, 140, 40);
 
     let mut insights = app_after(118);
     insights.update(key(KeyCode::Tab));
     insights.update(key(KeyCode::Down));
-    save("120x36-insights", &insights, 120, 36);
+    save("120x36-insights", &mut insights, 120, 36);
 
     let mut pivot = app_after(118);
     pivot.update(key(KeyCode::Char('u')));
     pivot.update(key(KeyCode::Enter));
-    save("120x36-pivot", &pivot, 120, 36);
+    save("120x36-pivot", &mut pivot, 120, 36);
 
     let mut queue = app_after(118);
     queue.update(key(KeyCode::Char('2')));
     queue.update(key(KeyCode::Down));
-    save("120x36-queue", &queue, 120, 36);
-    save("160x48-queue", &queue, 160, 48);
+    save("120x36-queue", &mut queue, 120, 36);
+    save("160x48-queue", &mut queue, 160, 48);
 
     let mut quiet = app_after(118);
     quiet.update(Event::Queue(Box::new(quiet_redash_with_leftovers())));
     quiet.update(key(KeyCode::Char('2')));
-    save("120x36-queue-leftovers", &quiet, 120, 36);
+    save("120x36-queue-leftovers", &mut quiet, 120, 36);
 
     let mut map = app_after(118);
     map.update(key(KeyCode::Char('3')));
-    save("120x36-map", &map, 120, 36);
+    save("120x36-map", &mut map, 120, 36);
 
     // Four sessions in three projects: Claude named and on screen, OpenCode that rang while it
     // was not, Claude named by its task, and a shell.
@@ -1154,8 +1412,8 @@ fn export_screens() {
     claude.claude.list[2].branch = Some("add-weekly-totals".into());
     claude.claude.list[3].branch = Some("add-weekly-totals".into());
     claude.claude.list[1].pane.attention = true;
-    save("120x36-claude", &claude, 120, 36);
-    save("160x48-claude", &claude, 160, 48);
+    save("120x36-claude", &mut claude, 120, 36);
+    save("160x48-claude", &mut claude, 160, 48);
 
     // A fourth one's folder being picked, a folder up from billing, among the other projects.
     claude.update(ctrl('\\'));
@@ -1174,20 +1432,28 @@ fn export_screens() {
     for _ in 0..5 {
         claude.update(key(KeyCode::Down));
     }
-    save("160x48-claude-new", &claude, 160, 48);
+    save("160x48-claude-new", &mut claude, 160, 48);
 
     // Long enough for clickhouse5 to join, ch6 to drop out and come back, and a kill.
     let mut tape = app_after(118);
     tape.update(key(KeyCode::Char('4')));
-    save("120x36-tape", &tape, 120, 36);
+    save("120x36-tape", &mut tape, 120, 36);
 
     let mut help = app_after(10);
     help.update(key(KeyCode::Char('?')));
-    save("120x36-help", &help, 120, 36);
+    save("120x36-help", &mut help, 120, 36);
+
+    // Nine and a half minutes before Maghrib: its reminder in the day line's place.
+    let mut reminder = app_after(118);
+    at_moment(&mut reminder, MOMENT + 6504);
+    let buf = buffer(&reminder, 120, 36);
+    std::fs::write(format!("{dir}/120x36-reminder.txt"), text_of(&buf) + "\n").expect("write txt");
+    std::fs::write(format!("{dir}/120x36-reminder.html"), html_of(&buf, "120x36-reminder")).expect("write html");
 
     // THEME=light, and the 16-colour fallback, for terminals that are not dark or not modern.
     let light = crate::theme::Theme::new(crate::theme::Depth::TrueColor, crate::theme::Variant::Light);
-    let fleet = app_after(118);
+    let mut fleet = app_after(118);
+    at_moment(&mut fleet, MOMENT);
     let buf = buffer_with(&fleet, 120, 36, &light);
     std::fs::write(format!("{dir}/120x36-light.html"), html_with(&buf, "light", &light)).expect("write html");
     let ansi = crate::theme::Theme::new(crate::theme::Depth::Ansi16, crate::theme::Variant::Dark);

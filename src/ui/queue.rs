@@ -8,7 +8,7 @@
 //! started list still holds although no worker runs it. The cursor opens the job's SQL under
 //! its row, like the tree does for a query.
 
-use super::widgets::{bar, code_block, dots, rule, sparkline, Cells, Scale};
+use super::widgets::{code_block, dots, rule, sparkline, thin_bar, Cells, Scale};
 use crate::app::{scroll_into_view, App, QueueRowRef};
 use crate::fmt;
 use crate::model::{Job, JobState, QueueRow, Stale};
@@ -452,7 +452,7 @@ fn waiting_section(app: &App, theme: &Theme, width: usize, columns: &Columns, ro
         let mut cells = row_start(selected, theme);
         cells.cell_right(&fmt::dur(job.age_s as f64), 7, theme.sev(sev).add_modifier(Modifier::BOLD));
         cells.cell(sev.mark(), 3, theme.sev(sev));
-        cells.spans(bar(Some(job.age_s as f64 / 180.0 * 100.0), 6, theme.bar_fill(sev), theme));
+        cells.spans(thin_bar(Some(job.age_s as f64 / 180.0 * 100.0), 6, theme.bar_fill(sev), theme));
         cells.gap(GAP);
         job_cells(&mut cells, job, columns, query_w, false, theme);
         out.push_job(cells.line(width, row_style(selected, theme)), job, app, theme, width);

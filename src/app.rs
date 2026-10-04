@@ -4,6 +4,8 @@
 //! applies them. Nothing in this file knows that ClickHouse or Redash exist.
 
 use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Sessions};
+use crate::clock::Clock;
+use crate::prayer::{Alert, Place, Prayers};
 use crate::folders::Found;
 use crate::history::{self, History};
 use crate::insight::{self, Insight, Subject};
@@ -114,6 +116,8 @@ pub struct Viewport {
     /// What the mouse can click, as last drawn: the header's tabs, the sessions, Claude's pane,
     /// the folder picker's rows.
     pub hits: RefCell<Vec<(Rect, Hit)>>,
+    /// The nodes listed under the sessions, as last drawn, for `Hit::Node`.
+    pub listed_nodes: RefCell<Vec<String>>,
 }
 
 /// Something on screen a click means something on.
@@ -132,6 +136,14 @@ pub enum Hit {
     Cancel,
     /// What the picker will open.
     Kind(Kind),
+    /// A node listed under the sessions, by its place in `Viewport::listed_nodes`.
+    Node(usize),
+    /// The clock: a click flips it between local time and UTC.
+    Clock,
+    /// The way to a conversation had elsewhere, to take up in a new session.
+    Resume,
+    /// The way out of a prayer's reminder.
+    Dismiss,
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -186,6 +198,13 @@ pub enum Event {
     Mouse(MouseEvent),
     /// Folders for the picker of a new session (`folders.rs`).
     Folders(Found),
+    /// The machine's time zone as it is now, and the place prayer times are for with it.
+    Zone(Option<String>, Option<Place>),
+    /// Conversations for the picker (`conversations.rs`): for which lookup, kind, and whether
+    /// every folder's.
+    Conversations(u64, Kind, bool, Vec<crate::conversations::Conversation>),
+    /// The conversation a session's program is in now, as it says (by session id).
+    Conversation(u64, String),
     Quit,
 }
 
@@ -243,6 +262,12 @@ pub struct App {
     pub viewport: Viewport,
     /// View 5: Claude Code sessions.
     pub claude: Sessions,
+    /// How times are shown: local or UTC.
+    pub time: Clock,
+    /// The day's prayer times and their reminders.
+    pub prayers: Prayers,
+    /// What to say beyond the screen — a prayer's reminder — for the loop to send on.
+    notifications: Vec<String>,
 }
 
 impl Default for App {
@@ -284,12 +309,57 @@ impl App {
             last_snapshot_wall: None,
             viewport: Viewport::default(),
             claude: Sessions::default(),
+            time: Clock::default(),
+            prayers: Prayers::default(),
+            notifications: Vec::new(),
+        }
+    }
+
+    /// Now, in Unix seconds, as the clock last ticked.
+    pub fn now(&self) -> i64 {
+        self.clock.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    }
+
+    /// What the loop has to say beyond the screen since it last asked.
+    pub fn take_notifications(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notifications)
+    }
+
+    /// The prayer alert on screen now, if any.
+    pub fn prayer_alert(&self) -> Option<Alert> {
+        self.prayers.alert(self.now())
+    }
+
+    /// The clock moved on: the prayer times with it, and a reminder said once when one begins.
+    fn on_tick(&mut self) {
+        self.tick_at(SystemTime::now());
+    }
+
+    /// The clock at `at`, as a tick sets it — the tests and the screenshots choose their moment.
+    pub fn tick_at(&mut self, at: SystemTime) {
+        self.clock = at;
+        let now = self.now();
+        if let Some(alert) = self.prayers.tick(now) {
+            let moment = alert.moment();
+            let at = self.time.local_hm(moment.at);
+            let place = self.prayers.place.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+            self.notifications.push(match alert {
+                Alert::Soon { left, .. } => {
+                    format!("{} in {} min · {at} · {place}", moment.name(), (left + 59) / 60)
+                }
+                Alert::Now { .. } => format!("Time for {} · {at} · {place}", moment.name()),
+            });
         }
     }
 
     pub fn update(&mut self, event: Event) {
         match event {
-            Event::Tick => self.clock = SystemTime::now(),
+            Event::Tick => self.on_tick(),
+            Event::Zone(zone, place) => {
+                self.time.zone = zone;
+                self.prayers.move_to(place);
+                self.on_tick();
+            }
             Event::Key(key) => self.on_key(key),
             // While paused, live data is dropped rather than queued up: unpausing must show
             // the last thing on screen, not a burst of everything that happened since (§3).
@@ -330,6 +400,19 @@ impl App {
             Event::Folders(found) => {
                 if let Mode::Opening(picker) = &mut self.claude.mode {
                     picker.found(found);
+                }
+            }
+            Event::Conversations(generation, kind, everywhere, list) => {
+                // A conversation a session here is in is that session, not one to take up.
+                let here: HashSet<String> = self.claude.list.iter().filter_map(|s| s.conversation.clone()).collect();
+                let list = list.into_iter().filter(|c| !here.contains(&c.id)).collect();
+                if let Mode::Opening(picker) = &mut self.claude.mode {
+                    picker.found_conversations(generation, kind, everywhere, list);
+                }
+            }
+            Event::Conversation(id, conversation) => {
+                if let Some(session) = self.claude.by_id_mut(id) {
+                    session.conversation = Some(conversation);
                 }
             }
             Event::Paste(text) => {
@@ -395,7 +478,7 @@ impl App {
     fn start_claude(&mut self) {
         let size = self.claude.want_size.get();
         match self.claude.current_mut() {
-            Some(session) => session.pane.start(size),
+            Some(session) => session.pane.start(size, session.kind.scrollback()),
             None => {
                 self.claude.open_new("", Kind::Claude);
             }
@@ -419,6 +502,18 @@ impl App {
         self.claude.mode = Mode::Opening(Picker::new(dir, kind));
     }
 
+    /// The picker, on every folder's past conversations: Claude Code's, or OpenCode's when that
+    /// is what the session on screen runs.
+    fn ask_past_conversation(&mut self) {
+        self.ask_new_session(None);
+        if let Mode::Opening(picker) = &mut self.claude.mode {
+            if picker.kind == Kind::Terminal {
+                picker.kind = Kind::Claude;
+            }
+            picker.show_everywhere(true);
+        }
+    }
+
     /// The folder picker's keys: ↑ ↓ choose, ⏎ opens the session in the folder under the
     /// cursor, → goes into it and ← back up; what is typed searches.
     fn on_opening_key(&mut self, key: KeyEvent) {
@@ -429,6 +524,8 @@ impl App {
         match key.code {
             // A search first, then the picker.
             KeyCode::Esc if picker.searching() => picker.clear_query(),
+            // Every folder's conversations: ← or esc goes back to the folders.
+            KeyCode::Esc | KeyCode::Left if picker.everywhere => picker.show_everywhere(false),
             // What it will open: Claude, OpenCode, a terminal, round.
             KeyCode::BackTab => picker.kind = picker.kind.next(),
             KeyCode::Esc => self.claude.mode = Mode::Typing,
@@ -474,6 +571,16 @@ impl App {
         let kind = picker.kind;
         match (row, picker.path_of(row)) {
             (PickRow::Up, _) => picker.up(),
+            (PickRow::Everywhere, _) => picker.show_everywhere(true),
+            // A conversation is taken up with a click or ⏎ alike: there is nothing to go into.
+            (PickRow::Conversation(index), _) => {
+                if let Some(conversation) = picker.conversations_shown().get(index).cloned() {
+                    self.claude.mode = Mode::Typing;
+                    if self.claude.open_conversation(&conversation).is_none() {
+                        self.ask_new_session(Some(kind));
+                    }
+                }
+            }
             (PickRow::Here, Some(dir)) if open => self.open_in(&dir, kind),
             (PickRow::Folder(_), Some(dir)) if open => self.open_in(&dir, kind),
             (PickRow::Folder(_), Some(dir)) => picker.go_to(dir),
@@ -530,6 +637,24 @@ impl App {
                     if let Mode::Opening(picker) = &mut self.claude.mode {
                         picker.kind = kind;
                     }
+                }
+                // A node under the sessions opens on view 1, as an insight does; the session
+                // goes on where it was.
+                Some(Hit::Node(index)) => {
+                    let name = self.viewport.listed_nodes.borrow().get(index).cloned();
+                    if let Some(name) = name {
+                        self.claude.mode = Mode::Typing;
+                        self.go_to(&Subject::Node(name));
+                    }
+                }
+                Some(Hit::Clock) => self.time.flip(),
+                Some(Hit::Resume) => {
+                    self.open_claude();
+                    self.ask_past_conversation();
+                }
+                Some(Hit::Dismiss) => {
+                    let now = self.now();
+                    self.prayers.dismiss(now);
                 }
                 Some(Hit::Pane) | None => {}
             },
@@ -609,6 +734,17 @@ impl App {
             KeyCode::Char('m') => {
                 self.claude.mode = Mode::Typing;
                 self.view = self.claude.back_to;
+            }
+            KeyCode::Char('z') => {
+                self.time.flip();
+                self.claude.mode = Mode::Typing;
+            }
+            // Past conversations, had here or in another terminal, to take up again.
+            KeyCode::Char('p') => self.ask_past_conversation(),
+            KeyCode::Char('d') => {
+                let now = self.now();
+                self.prayers.dismiss(now);
+                self.claude.mode = Mode::Typing;
             }
             KeyCode::Esc | KeyCode::Enter => self.claude.mode = Mode::Typing,
             _ => {}
@@ -1188,6 +1324,15 @@ impl App {
             KeyCode::Char('p') => {
                 self.paused = !self.paused;
                 self.sync_view_state();
+                return;
+            }
+            KeyCode::Char('z') => {
+                self.time.flip();
+                return;
+            }
+            KeyCode::Char('d') if self.prayer_alert().is_some() => {
+                let now = self.now();
+                self.prayers.dismiss(now);
                 return;
             }
             _ => {}
@@ -2140,8 +2285,10 @@ mod tests {
         answer(&mut app, &["docs", "src"]);
         app.update(key(KeyCode::Left));
         answer(&mut app, &["airflow", "cobserve"]);
-        app.update(key(KeyCode::Down));
-        app.update(key(KeyCode::Down));
+        // Past the way to every folder's conversations and the way up, to airflow.
+        for _ in 0..3 {
+            app.update(key(KeyCode::Down));
+        }
         app.update(key(KeyCode::Enter));
         assert_eq!((app.claude.list.len(), app.claude.active), (2, 1));
         assert_eq!(app.claude.current().unwrap().dir, "~/work/airflow");
@@ -2214,9 +2361,9 @@ mod tests {
         // The wheel moves the cursor, three rows a tick; it stays in the list.
         let wheel = || Event::Mouse(MouseEvent { kind: MouseEventKind::ScrollDown, column: 50, row: 10, modifiers: KeyModifiers::NONE });
         app.update(wheel());
-        assert_eq!(picker(&app).at_cursor(), Some(PickRow::Folder(1)));
+        assert_eq!(picker(&app).at_cursor(), Some(PickRow::Folder(0)));
         app.update(wheel());
-        assert_eq!(picker(&app).cursor, 4, "the last row");
+        assert_eq!(picker(&app).cursor, 5, "the last row");
         // A paste is a search, as typing is; esc clears it, the next esc gives up.
         app.update(Event::Paste("src\nmore".into()));
         assert_eq!(picker(&app).query, "src", "its first line");

@@ -18,6 +18,7 @@
 //! the picker `folders.rs`, both driven from `main.rs`.
 
 use crate::app::View;
+use crate::conversations::Conversation;
 use crate::folders::{Folder, Found, Lookup};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::cell::Cell;
@@ -79,6 +80,16 @@ impl Kind {
             Kind::Claude => "CLAUDE_CMD",
             Kind::OpenCode => "OPENCODE_CMD",
             Kind::Terminal => "SHELL_CMD",
+        }
+    }
+
+    /// How many lines scrolled off the top a pane keeps, for the wheel to bring back. A shell
+    /// writes down the screen, so its past is worth keeping; Claude Code and OpenCode draw a
+    /// screen of their own and scroll it themselves.
+    pub fn scrollback(self) -> usize {
+        match self {
+            Kind::Terminal => 1000,
+            Kind::Claude | Kind::OpenCode => 0,
         }
     }
 
@@ -225,9 +236,9 @@ impl ClaudePane {
     }
 
     /// Ask for the program to be started — again, after it ended — on a clean screen of
-    /// `rows` × `cols`.
-    pub fn start(&mut self, (rows, cols): (u16, u16)) {
-        self.parser = vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), 0, Replies::default());
+    /// `rows` × `cols` that keeps `scrollback` lines of what scrolls off it.
+    pub fn start(&mut self, (rows, cols): (u16, u16), scrollback: usize) {
+        self.parser = vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), scrollback, Replies::default());
         self.outbox.clear();
         self.title = None;
         self.state = PaneState::Starting;
@@ -247,15 +258,30 @@ impl ClaudePane {
         }
     }
 
-    /// A key for the program, as a terminal would send it.
+    /// A key for the program, as a terminal would send it — and, as a terminal does, back
+    /// down to the bottom from wherever the wheel had scrolled.
     pub fn key(&mut self, key: &KeyEvent) {
+        self.parser.screen_mut().set_scrollback(0);
         let bytes = encode_key(key, self.parser.screen().application_cursor());
         self.outbox.extend(bytes);
+    }
+
+    /// How many lines up the wheel has scrolled the pane's own past; 0 at the bottom.
+    pub fn scrolled_back(&self) -> usize {
+        self.parser.screen().scrollback()
+    }
+
+    /// The pane's own past, `lines` further up (or down, negative), as far as there is one.
+    fn scroll_back(&mut self, lines: isize) {
+        let at = self.parser.screen().scrollback().saturating_add_signed(lines);
+        // The emulator stops at what it kept.
+        self.parser.screen_mut().set_scrollback(at);
     }
 
     /// Pasted text: bracketed when the program asked for it, so a pasted newline is text and
     /// not a press of Enter.
     pub fn paste(&mut self, text: &str) {
+        self.parser.screen_mut().set_scrollback(0);
         if self.parser.screen().bracketed_paste() {
             self.outbox.extend(b"\x1b[200~");
             self.outbox.extend(text.as_bytes());
@@ -279,6 +305,20 @@ impl ClaudePane {
     }
 }
 
+/// How a session's program starts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Start {
+    /// A new conversation — Claude Code's under the id in `Session::conversation`, chosen here so
+    /// it can be found again.
+    #[default]
+    Fresh,
+    /// Take a conversation up again by its id; `fork`: as a copy of it, the original being open
+    /// in another terminal still.
+    Resume { id: String, fork: bool },
+    /// OpenCode's last conversation in the folder: its id was never seen.
+    Continue,
+}
+
 /// A session of view 5: one program, where it works, and the name it goes by.
 pub struct Session {
     /// Stable for the session's life; the PTY's events carry it.
@@ -292,9 +332,64 @@ pub struct Session {
     /// The git branch checked out there, kept fresh by `main.rs`.
     pub branch: Option<String>,
     pub pane: ClaudePane,
+    /// The conversation it is in as far as is known: Claude Code's session id — chosen here for
+    /// a new one, read back from Claude Code while it runs — or OpenCode's, once seen.
+    pub conversation: Option<String>,
+    /// How its program starts the next time it does.
+    pub start: Start,
+    /// When its program last started, Unix seconds: OpenCode's conversation is the one begun
+    /// after it.
+    pub started: i64,
+    /// Its program's process id while it runs, for Claude Code to say what it is in.
+    pub pid: Option<u32>,
 }
 
 impl Session {
+    fn new(id: u64, kind: Kind, dir: String) -> Self {
+        Session {
+            id,
+            kind,
+            name: None,
+            dir,
+            branch: None,
+            pane: ClaudePane::default(),
+            conversation: (kind == Kind::Claude).then(|| uuid::Uuid::new_v4().to_string()),
+            start: Start::Fresh,
+            started: 0,
+            pid: None,
+        }
+    }
+
+    /// Kept from the last run, not started yet: it is, when it is first shown.
+    pub fn waiting(&self) -> bool {
+        self.pane.state == PaneState::Idle
+    }
+
+    /// The arguments its program starts with, after its command's own: a conversation to take
+    /// up or the id of a new one — for Claude Code and OpenCode themselves, not for a command
+    /// of the user's that only runs them. `exists` says whether Claude Code has a conversation by
+    /// an id: one never typed into cannot be resumed, only started under that id.
+    pub fn launch_args(&self, program: &str, exists: impl Fn(&str) -> bool) -> Vec<String> {
+        let name = Path::new(program).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let fork = |fork: bool, flag: &str| fork.then(|| flag.to_string());
+        match (self.kind, name.as_str()) {
+            (Kind::Claude, "claude") => match &self.start {
+                Start::Resume { id, fork: f } if exists(id) => {
+                    [Some("--resume".to_string()), Some(id.clone()), fork(*f, "--fork-session")].into_iter().flatten().collect()
+                }
+                _ => self.conversation.iter().flat_map(|id| ["--session-id".to_string(), id.clone()]).collect(),
+            },
+            (Kind::OpenCode, "opencode") => match &self.start {
+                Start::Resume { id, fork: f } => {
+                    [Some("--session".to_string()), Some(id.clone()), fork(*f, "--fork")].into_iter().flatten().collect()
+                }
+                Start::Continue => vec!["--continue".to_string()],
+                Start::Fresh => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
+    }
+
     /// The last part of its directory: `cobserve` for `~/work/cobserve`.
     pub fn dir_label(&self) -> String {
         let trimmed = self.dir.trim_end_matches('/');
@@ -341,13 +436,37 @@ pub struct Picker {
     pub scroll: Cell<usize>,
     generation: u64,
     asked: u64,
+    /// Conversations of `kind` to take up: those had in `dir`, or — `everywhere` — anywhere.
+    pub conversations: Vec<Conversation>,
+    /// Listing every folder's conversations rather than this folder's folders.
+    pub everywhere: bool,
+    /// What the conversations on screen are for, and what was last asked: a lookup per change.
+    conversations_for: Option<(u64, Kind, bool)>,
+    conversations_asked: Option<(u64, Kind, bool)>,
 }
+
+/// What `main.rs` should list for the picker: conversations of `kind`, in `dir` or everywhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationLookup {
+    pub generation: u64,
+    pub kind: Kind,
+    /// `None`: every folder's.
+    pub dir: Option<PathBuf>,
+}
+
+/// How many of a folder's conversations the picker lists; everywhere, how many in all.
+pub const CONVERSATIONS_HERE: usize = 4;
+pub const CONVERSATIONS_EVERYWHERE: usize = 30;
 
 /// A row of the picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickRow {
     /// Open the session in the folder looked at.
     Here,
+    /// One of `conversations`: take it up.
+    Conversation(usize),
+    /// List every folder's conversations.
+    Everywhere,
     /// The folder above.
     Up,
     /// One of `folders`.
@@ -376,6 +495,55 @@ impl Picker {
             scroll: Cell::new(0),
             generation: next_generation(),
             asked: 0,
+            conversations: Vec::new(),
+            everywhere: false,
+            conversations_for: None,
+            conversations_asked: None,
+        }
+    }
+
+    /// Whether the kind on screen keeps conversations to take up: a shell does not.
+    fn keeps_conversations(&self) -> bool {
+        self.kind != Kind::Terminal
+    }
+
+    /// The conversations to ask `main.rs` for, once per folder and kind.
+    pub fn conversation_lookup(&mut self) -> Option<ConversationLookup> {
+        let wanted = (self.generation, self.kind, self.everywhere);
+        if !self.keeps_conversations() || self.searching() || self.conversations_asked == Some(wanted) {
+            return None;
+        }
+        self.conversations_asked = Some(wanted);
+        Some(ConversationLookup { generation: self.generation, kind: self.kind, dir: (!self.everywhere).then(|| self.dir.clone()) })
+    }
+
+    /// Conversations listed, taken when they are for what is on screen.
+    pub fn found_conversations(&mut self, generation: u64, kind: Kind, everywhere: bool, list: Vec<Conversation>) {
+        if (generation, kind, everywhere) != (self.generation, self.kind, self.everywhere) {
+            return;
+        }
+        self.conversations = list;
+        self.conversations_for = Some((generation, kind, everywhere));
+        self.cursor = self.cursor.min(self.rows().len().saturating_sub(1));
+    }
+
+    /// The conversations on screen are the ones for the folder and kind shown — not those of a
+    /// kind switched away from.
+    pub fn conversations_shown(&self) -> &[Conversation] {
+        if self.conversations_for == Some((self.generation, self.kind, self.everywhere)) { &self.conversations } else { &[] }
+    }
+
+    /// Still listing them.
+    pub fn looking_for_conversations(&self) -> bool {
+        self.keeps_conversations() && !self.searching() && self.conversations_for != Some((self.generation, self.kind, self.everywhere))
+    }
+
+    /// Every folder's conversations, or back to the folders.
+    pub fn show_everywhere(&mut self, everywhere: bool) {
+        if self.everywhere != everywhere {
+            self.everywhere = everywhere;
+            self.cursor = 0;
+            self.scroll.set(0);
         }
     }
 
@@ -387,9 +555,17 @@ impl Picker {
     /// What the list shows: in a folder, the way to open the session there and the way up
     /// before its folders; searching, what was found.
     pub fn rows(&self) -> Vec<PickRow> {
+        let conversations = (0..self.conversations_shown().len()).map(PickRow::Conversation);
+        if self.everywhere {
+            return conversations.collect();
+        }
         let mut rows = Vec::new();
         if !self.searching() {
             rows.push(PickRow::Here);
+            rows.extend(conversations);
+            if self.keeps_conversations() {
+                rows.push(PickRow::Everywhere);
+            }
             if self.dir.parent().is_some() {
                 rows.push(PickRow::Up);
             }
@@ -409,6 +585,8 @@ impl Picker {
             PickRow::Here => Some(self.dir.clone()),
             PickRow::Up => self.dir.parent().map(Path::to_path_buf),
             PickRow::Folder(index) => self.folders.get(index).map(|f| f.path.clone()),
+            PickRow::Conversation(index) => self.conversations_shown().get(index).map(|c| c.dir.clone()),
+            PickRow::Everywhere => None,
         }
     }
 
@@ -592,14 +770,80 @@ impl Sessions {
         if self.list.len() >= MAX_SESSIONS {
             return None;
         }
+        let dir = if dir.trim().is_empty() { self.default_dir.clone() } else { dir.trim().to_string() };
+        let session = Session::new(self.take_id(), kind, dir);
+        Some(self.add(session))
+    }
+
+    /// A new session that takes up a conversation had elsewhere — in another terminal, an
+    /// earlier run — in the folder it worked in; as a copy when it is still open there.
+    pub fn open_conversation(&mut self, conversation: &Conversation) -> Option<u64> {
+        if self.list.len() >= MAX_SESSIONS {
+            return None;
+        }
+        let mut session = Session::new(self.take_id(), conversation.kind, crate::pty::tilde(&conversation.dir));
+        session.conversation = Some(conversation.id.clone());
+        session.start = Start::Resume { id: conversation.id.clone(), fork: conversation.open };
+        Some(self.add(session))
+    }
+
+    /// The sessions of the last run, back in the list as they were, none started: each is when
+    /// it is first shown.
+    pub fn restore(&mut self, saved: &crate::saved::Saved) {
+        for kept in saved.sessions.iter().take(MAX_SESSIONS.saturating_sub(self.list.len())) {
+            let kind = Kind::from(kept.kind);
+            let mut session = Session::new(self.take_id(), kind, kept.dir.clone());
+            session.name = kept.name.clone();
+            session.start = match (kind, &kept.conversation) {
+                (Kind::Claude | Kind::OpenCode, Some(id)) => Start::Resume { id: id.clone(), fork: false },
+                (Kind::OpenCode, None) => Start::Continue,
+                _ => Start::Fresh,
+            };
+            if kind == Kind::Claude {
+                session.conversation = kept.conversation.clone().or(session.conversation);
+            } else {
+                session.conversation = kept.conversation.clone();
+            }
+            self.list.push(session);
+        }
+        self.active = saved.active.min(self.list.len().saturating_sub(1));
+    }
+
+    /// The sessions as they are now, to be kept for the next run.
+    pub fn to_saved(&self) -> crate::saved::Saved {
+        crate::saved::Saved {
+            sessions: self
+                .list
+                .iter()
+                .map(|s| crate::saved::SavedSession {
+                    kind: s.kind.into(),
+                    name: s.name.clone(),
+                    dir: s.dir.clone(),
+                    conversation: match s.kind {
+                        Kind::Terminal => None,
+                        // Claude Code's conversation is known from the start; one never typed
+                        // into is started under the same id next time.
+                        _ => s.conversation.clone(),
+                    },
+                })
+                .collect(),
+            active: self.active,
+        }
+    }
+
+    fn take_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        let mut pane = ClaudePane::default();
-        pane.start(self.want_size.get());
-        let dir = if dir.trim().is_empty() { self.default_dir.clone() } else { dir.trim().to_string() };
-        self.list.push(Session { id, kind, name: None, dir, branch: None, pane });
+        id
+    }
+
+    /// `session` started and put on screen.
+    fn add(&mut self, mut session: Session) -> u64 {
+        session.pane.start(self.want_size.get(), session.kind.scrollback());
+        let id = session.id;
+        self.list.push(session);
         self.select(self.list.len() - 1);
-        Some(id)
+        id
     }
 
     /// Where the next session would work: the directory of the one on screen, else the
@@ -619,8 +863,10 @@ impl Sessions {
     }
 
     /// The mouse over the pane, for the program on screen: as the program asked for it when it
-    /// asked for mouse reports, else a turn of the wheel as a page — what Claude Code scrolls
-    /// its conversation with.
+    /// asked for mouse reports. Else the wheel does what it would in a terminal of its own:
+    /// for Claude Code a turn is a page, what it scrolls its conversation with; a full-screen
+    /// program (`less`, `vim` in a shell) gets the arrow keys; and a shell's screen scrolls
+    /// back through what went past.
     pub fn mouse(&mut self, event: &MouseEvent) {
         let (top, left) = self.pane_origin.get();
         let wheel = match event.kind {
@@ -636,15 +882,25 @@ impl Sessions {
             session.pane.outbox.extend(bytes);
             return;
         }
-        if wheel != 0 {
-            if self.wheel.signum() != wheel {
-                self.wheel = 0;
+        if wheel == 0 {
+            return;
+        }
+        if session.kind != Kind::Claude {
+            if session.pane.screen().alternate_screen() {
+                let up = KeyEvent::new(if wheel < 0 { KeyCode::Up } else { KeyCode::Down }, KeyModifiers::NONE);
+                session.pane.key(&up);
+            } else {
+                session.pane.scroll_back(-3 * isize::from(wheel));
             }
-            self.wheel += wheel;
-            if self.wheel.abs() >= 3 {
-                self.wheel = 0;
-                session.pane.outbox.extend(if wheel < 0 { b"\x1b[5~" } else { b"\x1b[6~" });
-            }
+            return;
+        }
+        if self.wheel.signum() != wheel {
+            self.wheel = 0;
+        }
+        self.wheel += wheel;
+        if self.wheel.abs() >= 3 {
+            self.wheel = 0;
+            session.pane.outbox.extend(if wheel < 0 { b"\x1b[5~" } else { b"\x1b[6~" });
         }
     }
 
@@ -657,11 +913,17 @@ impl Sessions {
         self.closing = false;
     }
 
-    /// Put session `index` on screen; what it rang for has now been seen.
+    /// Put session `index` on screen; what it rang for has now been seen, and one kept from the
+    /// last run starts — takes its conversation up — now.
     pub fn select(&mut self, index: usize) {
         if index < self.list.len() {
             self.active = index;
-            self.list[index].pane.attention = false;
+            let size = self.want_size.get();
+            let session = &mut self.list[index];
+            session.pane.attention = false;
+            if session.waiting() {
+                session.pane.start(size, session.kind.scrollback());
+            }
         }
     }
 
@@ -858,7 +1120,7 @@ mod tests {
     #[test]
     fn the_screen_follows_the_output_and_queries_are_answered() {
         let mut pane = ClaudePane::default();
-        pane.start((24, 80));
+        pane.start((24, 80), 0);
         pane.state = PaneState::Running;
         pane.feed(b"\x1b]0;\xe2\x9c\xb3 Fix the parser\x07hello \x1b[31mred\x1b[m\r\n> ", true);
         let screen = pane.screen();
@@ -894,7 +1156,7 @@ mod tests {
     fn starting_again_begins_on_a_clean_screen_of_the_drawn_size() {
         let mut pane = ClaudePane::default();
         pane.feed(b"old output", true);
-        pane.start((30, 100));
+        pane.start((30, 100), 0);
         assert_eq!(pane.state, PaneState::Starting);
         assert_eq!(pane.screen().size(), (30, 100));
         assert!(pane.screen().contents().trim().is_empty());
@@ -936,10 +1198,14 @@ mod tests {
         let first = picker.lookup().expect("the first look");
         assert_eq!((first.dir.as_path(), first.query.as_str()), (work.as_path(), ""));
         assert!(picker.lookup().is_none(), "asked once");
-        assert_eq!(picker.rows(), [PickRow::Here, PickRow::Up], "the way to open it here and the way up, before anything is read");
+        assert_eq!(
+            picker.rows(),
+            [PickRow::Here, PickRow::Everywhere, PickRow::Up],
+            "the way to open it here, to every folder's conversations and up, before anything is read"
+        );
         let answer = |generation, folders| Found { generation, dir: Some(work.clone()), folders, done: true, ..Found::default() };
         picker.found(answer(first.generation, vec![folder("airflow"), folder("cobserve")]));
-        assert_eq!(picker.rows().len(), 4);
+        assert_eq!(picker.rows().len(), 5);
         assert!(!picker.looking);
 
         // Typing searches; an answer to the question before comes too late to be taken.
@@ -968,6 +1234,58 @@ mod tests {
     }
 
     #[test]
+    fn a_session_starts_its_conversation_by_id_and_takes_one_up_again() {
+        let mut sessions = Sessions::default();
+        sessions.open_new("~/work/billing", Kind::Claude).unwrap();
+        let session = sessions.current().unwrap();
+        let id = session.conversation.clone().expect("Claude Code's id, chosen here");
+        assert_eq!(session.launch_args("claude", |_| false), ["--session-id", id.as_str()]);
+        assert_eq!(session.launch_args("/usr/local/bin/claude", |_| false), ["--session-id", id.as_str()]);
+        assert!(session.launch_args("my-claude-wrapper", |_| false).is_empty(), "a command of the user's own gets nothing added");
+        sessions.rename_current("billing export");
+        sessions.open_new("~/work/pipelines", Kind::OpenCode).unwrap();
+        sessions.open_new("~/work/reports", Kind::Terminal).unwrap();
+        assert!(sessions.list[1].launch_args("opencode", |_| true).is_empty(), "a new OpenCode conversation");
+
+        // Kept, and back in the next run: none started until shown.
+        let saved = sessions.to_saved();
+        assert_eq!(saved.sessions.len(), 3);
+        assert_eq!(saved.sessions[0].name.as_deref(), Some("billing export"));
+        let mut next = Sessions::default();
+        next.restore(&saved);
+        assert!(next.list.iter().all(Session::waiting));
+        assert_eq!(next.active, 2, "the one on screen");
+        assert_eq!(next.list[0].launch_args("claude", |_| true), ["--resume", id.as_str()]);
+        assert_eq!(next.list[0].launch_args("claude", |_| false), ["--session-id", id.as_str()], "never typed into: started under its id");
+        assert_eq!(next.list[1].launch_args("opencode", |_| true), ["--continue"], "its id unseen: the folder's last");
+        assert!(next.list[2].launch_args("bash", |_| true).is_empty());
+        next.select(0);
+        assert_eq!(next.list[0].pane.state, PaneState::Starting, "shown, it takes its conversation up");
+        assert!(next.list[1].waiting(), "the others wait");
+
+        // OpenCode's id once seen; a conversation from another terminal, still open there, as a
+        // copy of it.
+        next.list[1].conversation = Some("ses_9".into());
+        assert_eq!(next.to_saved().sessions[1].conversation.as_deref(), Some("ses_9"));
+        let elsewhere = Conversation {
+            kind: Kind::Claude,
+            id: "abc".into(),
+            dir: PathBuf::from("/work/x"),
+            title: "late partitions".into(),
+            last: None,
+            updated: 0,
+            open: true,
+        };
+        next.open_conversation(&elsewhere).unwrap();
+        let taken = next.current().unwrap();
+        assert_eq!((taken.dir.as_str(), taken.pane.state.clone()), ("/work/x", PaneState::Starting));
+        assert_eq!(taken.launch_args("claude", |_| true), ["--resume", "abc", "--fork-session"]);
+        let opencode = Conversation { kind: Kind::OpenCode, id: "ses_1".into(), open: false, ..elsewhere };
+        next.open_conversation(&opencode).unwrap();
+        assert_eq!(next.current().unwrap().launch_args("opencode", |_| true), ["--session", "ses_1"]);
+    }
+
+    #[test]
     fn a_session_runs_what_its_kind_says_and_goes_by_what_it_is_on() {
         let commands = Commands { opencode: vec!["opencode".into(), "--model".into(), "x/y".into()], ..Commands::default() };
         let mut sessions = Sessions { default_dir: "~/work/cobserve".into(), commands, ..Sessions::default() };
@@ -984,6 +1302,31 @@ mod tests {
         assert_eq!(sessions.current().unwrap().label(), "vim notes.md");
         assert_eq!(Kind::ALL.map(Kind::glyph), ["✻", "▣", "❯"]);
         assert_eq!(Kind::ALL.map(Kind::next), [Kind::OpenCode, Kind::Terminal, Kind::Claude]);
+    }
+
+    #[test]
+    fn the_wheel_scrolls_a_shell_back_and_gives_a_full_screen_program_its_arrows() {
+        let mut sessions = Sessions::default();
+        sessions.open_new("", Kind::Terminal).unwrap();
+        let pane = &mut sessions.current_mut().unwrap().pane;
+        pane.state = PaneState::Running;
+        pane.resize(10, 40);
+        let output: String = (1..=50).map(|n| format!("line {n}\r\n")).collect();
+        pane.feed(output.as_bytes(), true);
+        sessions.pane_origin.set((0, 0));
+        sessions.mouse(&mouse(MouseEventKind::ScrollUp, 5, 5));
+        sessions.mouse(&mouse(MouseEventKind::ScrollUp, 5, 5));
+        let pane = &mut sessions.current_mut().unwrap().pane;
+        assert_eq!(pane.scrolled_back(), 6, "three lines a tick, as a terminal scrolls");
+        assert!(pane.take_outbox().is_empty(), "nothing typed into the shell — no stray ~");
+        assert!(pane.screen().contents().starts_with("line 36\n"), "six lines up from line 42: {}", pane.screen().contents());
+        pane.key(&key(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(pane.scrolled_back(), 0, "a key goes back down");
+        pane.take_outbox();
+        // less, vim: a screen of their own, which the arrows move.
+        pane.feed(b"\x1b[?1049h", true);
+        sessions.mouse(&mouse(MouseEventKind::ScrollDown, 5, 5));
+        assert_eq!(sessions.current_mut().unwrap().pane.take_outbox(), b"\x1b[B");
     }
 
     #[test]

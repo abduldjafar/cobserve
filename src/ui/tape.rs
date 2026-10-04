@@ -38,7 +38,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 
     let mut header = Cells::new();
     header.push("   ", Style::default());
-    header.cell("TIME UTC", 10, theme.section());
+    header.cell(&format!("TIME {}", app.time.label(app.now())), 10, theme.section());
     header.cell("KIND", 7, theme.section());
     header.push("WHAT HAPPENED", theme.section());
     frame.render_widget(
@@ -72,7 +72,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         // The time is printed in full once per minute and dimmed after, so a burst of events
         // reads as one moment.
         let minute = (event.at / 60.0) as u64;
-        let clock = fmt::utc_clock_secs(event.at);
+        let clock = app.time.hms(event.at as i64);
         let style = if previous_minute == Some(minute) { theme.faint() } else { theme.text2() };
         previous_minute = Some(minute);
         cells.cell(&clock, 10, style);

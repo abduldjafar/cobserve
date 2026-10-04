@@ -30,6 +30,7 @@ pub struct PtyProcess {
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     size: (u16, u16),
+    pid: Option<u32>,
 }
 
 impl PtyProcess {
@@ -52,6 +53,7 @@ impl PtyProcess {
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let killer = child.clone_killer();
+        let pid = child.process_id();
 
         let output = tx.clone();
         std::thread::spawn(move || {
@@ -80,7 +82,7 @@ impl PtyProcess {
             let _ = tx.send(Event::PaneExited(session, how));
         });
 
-        Ok(Self { master: pair.master, writer, killer, size: (rows, cols) })
+        Ok(Self { master: pair.master, writer, killer, size: (rows, cols), pid })
     }
 
     pub fn write(&mut self, bytes: &[u8]) {
@@ -90,6 +92,11 @@ impl PtyProcess {
 
     pub fn size(&self) -> (u16, u16) {
         self.size
+    }
+
+    /// The program's process id, while the system says it.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {

@@ -683,25 +683,77 @@ or from a slope over the last minutes of it.
   marked so, and `⏎` goes to it.
 - **SESSIONS**, view 5 (`src/claude.rs`, `src/pty.rs`): a program in a pseudo-terminal — the
   official `claude`, `opencode`, or the user's shell — its screen emulated (`vt100`) and drawn
-  under the header and the band, the worst insight on the line between them. Each signed in
+  in the well under the shelf, a card for every node on the shelf. Each signed in
   its own way, Claude with the user's own plan; no API is called from here, and
   `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of every program's
   environment. Up to five sessions, numbered 5 to 9 after the views' 1 to 4, each its own
   program, conversation and working directory, listed beside the pane like a terminal's tabs,
-  the one on screen framed — what it runs, name (the user's, the title its program sets unless
+  the one on screen raised and marked — what it runs, name (the user's, the title its program sets unless
   that is only the program's name, else the folder),
   directory and git branch (read from `.git/HEAD`, a worktree's `.git` file followed, every few
   seconds) — on a narrow terminal a bar of tabs over it; a session that rings while it is not
-  on screen is marked. A new session's folder is chosen in a picker shaped like a file
+  on screen is marked. On the shelf, a card for every node — those in trouble first, the
+  rest in view 1's order: its mark (§7's colours), name and lag when it is behind, then its
+  memory and its CPU each as a thin bar (`━`, half-cell steps) and its share, under a legend
+  at the left. The cards are as wide as the widest needs and the width allows, all alike so
+  their bars compare; as many as fit, then one with how many more and how high they go. A
+  click on a card opens its node on view 1. Under 28 rows the cards give way to one line on
+  the shelf, each node in a few words (`✖ clickhouse3 mem 91% cpu 95%`). A new session's folder is chosen in a picker shaped like a file
   explorer (`folders.rs`): clickable path, the folders here, a click goes in, a search below by
   name (breadth-first, six levels, bounded in folders read and in time, package and build
   folders skipped, on a thread of its own and dropped when a newer one starts) or a typed path
-  completed as a shell does; above it, what the session runs. Every PTY is sized to the pane,
+  completed as a shell does; above it, what the session runs, and under the way to open it
+  here the conversations had in that folder and the way to every folder's. Every PTY is sized to the pane,
   so switching never shows a layout for another size. The terminal queries a full-screen
   program makes (cursor position, device attributes, default colours) are answered, and the
   rest (OpenCode asks for many more) left to time out as an older terminal would; `ctrl+z` is
   held back from Claude and OpenCode, since nothing in the pane could resume them — a shell
   gets it, for its own jobs.
+- **Sessions kept, and conversations taken up** (`src/saved.rs`, `src/conversations.rs`): the
+  list of sessions — what each runs, where, its name and the conversation it is in — is kept in
+  `$XDG_STATE_HOME/fleetlens/sessions.json` (`~/.local/state/fleetlens/` without it, mode 600)
+  as it changes, and on the way out, a closed terminal (SIGHUP) or a SIGTERM included. The next
+  run lists them again, marked `↻`, and each takes its conversation up when it is first shown:
+  `claude --resume <id>` (started under `--session-id`, so its id is known from the start, and
+  read back from `~/.claude/sessions/<pid>.json` while it runs — a `/clear` moves it on), and
+  `opencode --session <id>` once `opencode session list` has named it, else `--continue`. A
+  conversation never typed into is started again under its id. **Past conversations**
+  (`ctrl+\ p`, or the sidebar's entry, or the picker's row) lists Claude Code's from
+  `~/.claude/projects` — its title (`/rename`) or first prompt, its folder, how long ago — and
+  OpenCode's from `opencode db`, newest first; one is taken up in a new session in its own
+  folder, as a copy (`--fork-session`, `--fork`) when it is still open in another terminal.
+  Only what names a conversation is read, nothing is written there, and none of it leaves the
+  machine. The arguments are added to `claude` and `opencode` themselves only, never to a
+  command of the user's (`CLAUDE_CMD`) that may not take them.
+- **The day line and prayer times** (`src/prayer.rs`, `src/ui/day.rs`): under the masthead on
+  every view, the day at a place from Subuh to Isya — each time a stop, evenly spaced (a stretch
+  of the day as it is lived, not of the clock), the present a point that moves with the clock
+  within its stretch, the way behind solid and the way ahead dotted, the next stop with how far
+  off it is. Computed here from the sun by Kemenag's criteria — Subuh at 20° below the horizon,
+  Isya at 18°, Terbit and Maghrib at 1°, Ashar Shafi'i, Dzuhur once the disc has crossed the
+  meridian, two minutes of ihtiyat rounded up (Terbit off, rounded down) — and held by the tests
+  to Kemenag's tables for Jakarta and Medan; Jumat on a Friday. The place is `PRAYER_CITY` (a
+  list of Indonesian and a few other cities) or `PRAYER_AT=lat,lon`, else the city of the
+  machine's time zone (`zone1970.tab`), followed as the zone changes; `PRAYER=off` leaves it
+  out. `PRAYER_REMIND` minutes before a prayer (10) its reminder takes the line — `◷ Maghrib in
+  9:48 · 17:50 WIB` on a warning's tint, then `Time for Maghrib` on good news' for five minutes
+  — and is said once beyond the screen: the terminal's bell, and the desktop's notification
+  through the terminal where it takes OSC 9 (iTerm2, Ghostty, WezTerm), through the system where
+  it does not (`osascript`, `notify-send`); `NOTIFY=bell` or `off` says less. `d` (`ctrl+\ d` in
+  a session) or a click on ✕ waves it away. The terminal's title says the fleet's mark and the
+  next prayer, for a tab in the background.
+- **Local time** (`src/clock.rs`): the clock and every time on screen — the tape, the drawer —
+  in the machine's zone (`TZ`, else the system's; looked at again every half minute), named the
+  way Indonesia names its zones (WIB, WITA, WIT) and by offset elsewhere; `z`, a click on the
+  clock, or `TIME=utc` shows UTC instead. Prayer times are always the place's own.
+- **The look** (`src/ui/mod.rs`, `src/theme.rs`): no frame round the screen. The chrome is a
+  surface of its own — the masthead and the day line, the shelf with the band (and on view 5
+  the cards), the footer, and on view 5 the list of sessions — and the work is drawn in the
+  well it leaves. The masthead has the name, the fleet's mark on its tint, the tabs (the one
+  open underlined) and how fresh the numbers are with the clock; a click on a tab opens it.
+  Bars are thin (`━`, half-cell steps) everywhere; the map's tiles are cards on the surface;
+  the session on screen and the tile under the cursor are raised, a bar of the accent at their
+  left. Without painted backgrounds (16 colours, mono) lines take the surfaces' place.
 - **The job's SQL on view 2**: the cursor on a job opens its SQL under the row, as on view 1 —
   what ClickHouse runs when the stitch found it, the query as saved in Redash otherwise (an
   ad-hoc query outside ClickHouse has none: Redash's API keeps no text for it). `J` `K` scroll.
@@ -721,12 +773,17 @@ or from a slope over the last minutes of it.
 - **§1 layout**: a fleet summary line above the queue strip, one column header above the tree
   instead of one under every open node, bars on node rows on the same scale as the user rows
   under them, insights between the tree and the drawer. The drawer and the §7 degradation order
-  are as specified.
+  are as specified. The header is the masthead with the day line under it; the poll counts and
+  *read-only* that sat on the bottom border are at the footer's right, where there is room, and
+  a notice comes before the footer's last keys.
+- **§7 the clock** is local time, not UTC (see *Local time*); `TIME=utc` keeps §7's.
 - **§6.4 the organisation's domain** is configuration — `EMAIL_DOMAIN`, or `email_domain:`
   under `redash:` in the credential file — rather than written into the code. Without it every
   person is shown by the whole address; FAKE=1 uses its own `example.net`.
-- **§9 nothing on disk** has one exception: the credential file, read only when the command
-  line names it. `CH_USER` / `CH_PASSWORD` are required only when some server has no login of
+- **§9 nothing on disk** has these exceptions: the credential file, read only when the command
+  line names it; view 5's list of sessions, kept in the state directory; the names of past
+  conversations, read from Claude Code's and OpenCode's own files; and the system's list of
+  time zones, for where prayer times are for. `CH_USER` / `CH_PASSWORD` are required only when some server has no login of
   its own, and one of the two is never completed with a guess for the other.
 - **§6.2 seeds** are de-duplicated by URL, not by host: two ports on one machine are two
   servers.
@@ -758,13 +815,16 @@ or from a slope over the last minutes of it.
 - **§3 keys on view 5**: every key goes to the session — `q`, the digits, `ctrl+c` — except
   `ctrl+\`, after which a number goes to that tab (`1`–`4` a view, `5`–`9` a session), `n` `r`
   `x x` open, rename and close sessions (`c` `o` `t` open a Claude, OpenCode or terminal one),
-  `esc` goes back to the session and `ctrl+\` again to the monitor; and `F1`–`F9`, the same
+  `esc` goes back to the session and `ctrl+\` again to the monitor (and `p` past
+  conversations, `z` the clock, `d` a prayer's reminder away); and `F1`–`F9`, the same
   tabs with no key before them, for a terminal that keeps `ctrl+\`. From the monitor, `5`–`9`
   or `ctrl+\` open the sessions.
 - **§3 the mouse**, which v1 left out: a click opens a tab of the header, a session or a new
   one, and in the folder picker goes into a folder or back up the path; the wheel moves the
-  cursor, and over Claude is its page up and down — or, when the program asked for mouse
-  reports, the reports themselves. The terminal's own selection then needs its modifier key;
+  cursor, and over a session is what it would be in a terminal of its own — the reports
+  themselves when the program asked for mouse reports; else Claude's page up and down, the
+  arrow keys for a full-screen program, and for a shell its own past (a thousand lines are
+  kept; a key comes back down). The terminal's own selection then needs its modifier key;
   `MOUSE=0` gives the mouse back to the terminal. With bracketed paste on, a paste is one
   event: into Claude as a paste, into `/` or the picker's search as text, and nowhere else —
   before, a paste was a stream of keys, and a `q` in it quit.
