@@ -693,13 +693,13 @@ or from a slope over the last minutes of it.
   this was built from had five such jobs, 163 to 177 days old, under RUNNING). Each says why:
   *cancelled*, *over a day old*, or *no worker holds it*. One that ClickHouse still runs is
   marked so, and `⏎` goes to it.
-- **SESSIONS**, view 5 (`src/claude.rs`, `src/pty.rs`): a program in a pseudo-terminal — the
+- **SESSIONS**, view 7 (`src/claude.rs`, `src/pty.rs`): a program in a pseudo-terminal — the
   official `claude`, `opencode`, or the user's shell — its screen emulated (`vt100`) and drawn
   in the well under the shelf, a card for every node on the shelf. Each signed in
   its own way, Claude with the user's own plan; no API is called from here, and
   `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of every program's
-  environment. Up to fifty sessions, numbered on from 5 after the views' 1 to 4 — a digit picks
-  the first five, `ctrl+\` then the arrows walk through all of them, `ctrl+\ /` finds one by its
+  environment. Up to fifty sessions, numbered on from 7 after the views' 1 to 6 — a digit picks
+  the first three, `ctrl+\` then the arrows walk through all of them, `ctrl+\ /` finds one by its
   name, folder, kind, server or number — each its own
   program, conversation and working directory, listed beside the pane like a terminal's tabs,
   the one on screen raised and marked — what it runs, name (the user's, the title its program sets unless
@@ -771,15 +771,15 @@ or from a slope over the last minutes of it.
   way Indonesia names its zones (WIB, WITA, WIT) and by offset elsewhere; `z`, a click on the
   clock, or `TIME=utc` shows UTC instead. Prayer times are always the place's own.
 - **The look** (`src/ui/mod.rs`, `src/theme.rs`): no frame round the screen. The chrome is a
-  surface of its own — the masthead and the day line, the shelf with the band (and on view 5
-  the cards), the footer, and on view 5 the list of sessions — and the work is drawn in the
+  surface of its own — the masthead and the day line, the shelf with the band (and on view 7
+  the cards), the footer, and on view 7 the list of sessions — and the work is drawn in the
   well it leaves. The masthead has the name, the fleet's mark on its tint, the tabs (the one
   open underlined) and how fresh the numbers are with the clock; a click on a tab opens it.
   Bars are thin (`━`, half-cell steps) everywhere; the map's tiles are cards on the surface;
   the session on screen and the tile under the cursor are raised, a bar of the accent at their
   left. Without painted backgrounds (16 colours, mono) lines take the surfaces' place.
 - **Query sessions** (`src/console.rs`, `src/ui/console.rs`, `src/sources/clickhouse.rs`): a
-  session of view 5 that is a SQL console on one server of the fleet — `c` on a node of view 1
+  session of view 7 that is a SQL console on one server of the fleet — `c` on a node of view 1
   or a tile of view 3, `ctrl+\ q`, or *Query* in the picker, which then lists the servers. Its
   queries go over HTTP with the login the monitor has for that server, `readonly=1` always,
   with `max_execution_time=30`, `max_result_rows=1000` (`break`), `wait_end_of_query=1` so the
@@ -835,9 +835,54 @@ or from a slope over the last minutes of it.
 - **The job's SQL on view 2**: the cursor on a job opens its SQL under the row, as on view 1 —
   what ClickHouse runs when the stitch found it, the query as saved in Redash otherwise (an
   ad-hoc query outside ClickHouse has none: Redash's API keeps no text for it). `J` `K` scroll.
+- **AIRFLOW**, view 5 (`src/airflow.rs`, `src/sources/airflow.rs`, `src/ui/airflow.rs`): what
+  every DAG did over the last day, from Airflow 2's stable REST API (`/api/v1`). Signed into as
+  its web UI is — `GET /login/` for the form's CSRF token and the session it lives in, the form
+  posted back, its session cookie kept — since an Airflow whose `auth_backends` is the default
+  session answers Basic auth with 403; signed in again when the session runs out, and a refused
+  login is not sent again for five minutes (or until `r`), so a wrong password cannot lock the
+  account. Everything after the login is GET. Every 15 s: `/health`, the runs that are running
+  or queued (`/dags/~/dagRuns`), the live task instances (`/dags/~/dagRuns/~/taskInstances`:
+  running, queued, up for retry or reschedule, deferred, restarting) and the tasks of each
+  running run, counted; every minute — and at once when a run that was live has finished — the
+  runs that ended in the last 24 h, the first page then the rest six at a time; every five
+  minutes the active DAGs and the import errors; once, each failed run's tasks. The first read
+  is sent in two: what runs, within seconds; the day, when it is in. The screen: the health of
+  the scheduler and the triggerer with their heartbeat's age, the day in numbers, then
+  RUNNING (a run past `LONG_RUN_S` = 6 h amber, past `STUCK_RUN_S` = 24 h red and *stuck since*
+  its date: a run whose worker died stays running), QUEUED (amber past `LONG_QUEUE_S` = 1 h),
+  FAILED (the day's, with the task each failed at, or what its tasks were when none did) and
+  ACTIVITY: a line per DAG that ran, its day on a timeline whose cells start on the hours of the
+  clock shown (`clock.rs` `offset_s`), 24 of them at 120 columns and 48 from 160 — in a cell
+  several runs share, a failure shows over a run, a run over a wait, a wait over a success —
+  beside Airflow's schedule shortened, the day's runs, the last one's age and length, and the
+  next. A run is labelled by when it began, not by its logical date, which for a daily DAG is
+  the day before. `⏎` opens the run's or the DAG's grid in the browser (`open`, `xdg-open`),
+  `y` copies the link, `r` reads again. `AIRFLOW_URL`, `AIRFLOW_USER`, `AIRFLOW_PASSWORD`, or
+  `airflow:` in the credential file.
+- **JIRA**, view 6 (`src/jira.rs`, `src/sources/jira.rs`, `src/ui/jira.rs`): the tickets
+  assigned to the token's owner, in the board's columns, from Jira Server's REST API
+  (`/rest/api/2`) with a personal access token (`Authorization: Bearer`), every minute, GET
+  only. The search is `assignee = currentUser() AND (status in (…) OR (status = <last> AND
+  (resolved >= -Nd OR resolution is EMPTY)))`: the last column is where finished tickets go and
+  shows the last `JIRA_DONE_DAYS` (7) days of them, as the board hides older ones (its
+  `oldDoneIssuesCutoff`). The columns are `JIRA_STATUSES`, by default the Data platform board's
+  `In progress, In Review, Feedback, Done`. When a ticket moved into its column comes from its
+  history (`expand=changelog`), read for a ticket only when it is new or changed. Columns are
+  ranked as the board ranks them — by priority in Jira's own order (`/rest/api/2/priority`),
+  then the latest touched — and the last by when each was finished. On a row: the key, the
+  summary with the team's tag (`DE -`) faint, the priority (`URGENT`, `ASAP`, `Highest`,
+  `Blocker` red), the time in the column, the due date — red when past, amber today and
+  tomorrow, nothing once finished — and the time logged. The first line is the flow in counts,
+  with how many open tickets are overdue or due soon. `⏎` opens the ticket, `y` copies its
+  link, `r` reads again. `JIRA_URL`, `JIRA_TOKEN`, `JIRA_STATUSES`, `JIRA_DONE_DAYS`, or `jira:`
+  in the credential file. Both views keep what they last read when a read fails, and say so.
 
 ### Departures
 
+- **§3 the tabs**: the monitor has six views, so the sessions are numbered on from 7, and a
+  digit picks the first three of them (`ctrl+\` and the arrows, or `/`, reach the rest).
+  Airflow and Jira are where they are because a digit there is what makes a glance cheap.
 - **§5.4 runaway by memory** uses the query's own `max_memory_usage` from its `Settings`.
   `system.settings` answers for the monitoring session — 6 GB on the rig, the monitor's own
   cap — not for the person running the query; it is now only the fallback before 9 GiB.
@@ -859,7 +904,7 @@ or from a slope over the last minutes of it.
   under `redash:` in the credential file — rather than written into the code. Without it every
   person is shown by the whole address; FAKE=1 uses its own `example.net`.
 - **§9 nothing on disk** has these exceptions: the credential file, read only when the command
-  line names it; view 5's list of sessions, kept in the state directory; the names of past
+  line names it; view 7's list of sessions, kept in the state directory; the names of past
   conversations, read from Claude Code's and OpenCode's own files; and the system's list of
   time zones, for where prayer times are for. `CH_USER` / `CH_PASSWORD` are required only when some server has no login of
   its own, and one of the two is never completed with a guess for the other.
@@ -890,12 +935,12 @@ or from a slope over the last minutes of it.
   it.
 - **§6 concurrency**: the per-node requests now really run together; the previous `join_all`
   awaited them one after another.
-- **§3 keys on view 5**: every key goes to the session — `q`, the digits, `ctrl+c` — except
-  `ctrl+\`, after which a number goes to that tab (`1`–`4` a view, `5`–`9` a session), `n` `r`
+- **§3 keys on view 7**: every key goes to the session — `q`, the digits, `ctrl+c` — except
+  `ctrl+\`, after which a number goes to that tab (`1`–`6` a view, `7`–`9` a session), `n` `r`
   `x x` open, rename and close sessions (`c` `o` `t` open a Claude, OpenCode or terminal one),
   `esc` goes back to the session and `ctrl+\` again to the monitor (and `p` past
   conversations, `z` the clock, `d` a prayer's reminder away); and `F1`–`F9`, the same
-  tabs with no key before them, for a terminal that keeps `ctrl+\`. From the monitor, `5`–`9`
+  tabs with no key before them, for a terminal that keeps `ctrl+\`. From the monitor, `7`–`9`
   or `ctrl+\` open the sessions.
 - **§3 the mouse**, which v1 left out: a click opens a tab of the header, a session or a new
   one, and in the folder picker goes into a folder or back up the path; the wheel moves the

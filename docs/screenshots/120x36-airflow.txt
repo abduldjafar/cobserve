@@ -1,0 +1,36 @@
+  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 2 hot   mem ━━━╸━━━━━━ 36.3% 279/768 GiB   cpu ━━━╺━━━━━━ 28.8% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  16 waiting        █ · oldest 2m04s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   airflow.example.net · Airflow 2.10.2 · scheduler ● 2s · triggerer ● 4s                                 read 0s ago   
+    last 24 h   217 runs  ✔ 211  ✖ 3     ▸ 2 running  ◌ 1 queued  ↻ 1 retrying     13 of 13 DAGs ran · 3 paused         
+                                                                                                                        
+  ─ RUNNING · 2 · 1 stuck ────────────────────────────────────────────────────────────────────────────────────────────  
+  ▌ ✖ test_clickhouse_connection         manual · Jan 15        262d04h      0/1 ━━━━━━━━  stuck since Jan 15           
+    ▸ statement_daily_agg_reload         manual · 13:39           2h12m      4/7 ━━━━╸━━━  ▸ reload_partitions          
+                                                                                                                        
+  ─ QUEUED · 1 ───────────────────────────────────────────────────────────────────────────────────────────────────────  
+    ◌ gateway_transfers_backfill         manual · 15:47           4m12s  waiting to start                               
+                                                                                                                        
+  ─ FAILED · 3 in the last 24 h ──────────────────────────────────────────────────────────────────────────────────────  
+    ✖ replication_app_consistency_check  scheduled · 13:00        8m06s  ended 13:08 · 2h ago  at check_consistency     
+    ✖ kyc_onboarding_tables              scheduled · 12:30       10m48s  ended 12:40 · 3h ago  at build_cohorts         
+    ✖ cbk_accounts_report                scheduled · 07:15        3m36s  ended 07:18 · 8h ago  at upload_report         
+                                                                                                                        
+  ─ ACTIVITY · 13 DAGs ran in the last 24 h ──────────────────────────────────────────────────────────────────────────  
+    DAG                                SCHEDULE        RUNS    18    00    06    12     LAST RUN     TOOK     NEXT      
+    gateway_transfers_backfill         triggered          1  ·······················◌     queued        —        —      
+    clickhouse_replication_check       every 15m         96  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪     7m ago    1m44s    in 7m      
+    postgres_blacklist_etl             every 30m         48  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪    22m ago    6m47s    in 7m      
+    posthog_warehouse_refresh          :20 hourly        24  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪    32m ago    3m29s   in 27m      
+    cbk_accounts_report                :15 every 2h   12 ✖1  ·▪·▪·▪·▪·▪·▪·▪·✖·▪·▪·▪·▪    37m ago    4m00s    in 1h      
+    single_table_reconcile             :10 every 4h       6  ···▪···▪···▪···▪···▪···▪    42m ago   24m12s    in 3h      
+    redash_scheduler_monitoring        1h                24  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪    52m ago      44s    in 7m      
+    statement_daily_agg_reload         triggered          1  ·····················▸━━    running        —        —      
+  ─ test_clickhouse_connection · manual__2026-01-15T03:52:07+00:00 ───────────────────────────────────────────────────  
+  running · stuck: running for more than a day · started Jan 15 10:52 · for 262d04h · manual                            
+  tasks 0 of 1 done · ↻ waiting for a retry: ping_clickhouse                                                            
+  airflow · Never, external triggers only · ⏎ opens the run in Airflow · y copies its link                              
+   ↑↓  move   ⏎  open in Airflow   y  copy link   r  read now   p  pause   ?  help   q  quit                            

@@ -1,0 +1,48 @@
+  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions                    ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━━━━━━━━ Terbit 05:33 ━━━━━━━━━━ Dzuhur 11:45 ━━━━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
+                                                                                                                                                                
+  FLEET   9 nodes · 2 hot   mem ━━━━╸━━━━━━━ 36.3% 279/768 GiB         ▅▄   cpu ━━━╸━━━━━━━━ 28.8% 55/192 cores         ▅▄   queries 15 · 4 ✕                   
+  REDASH  16 waiting        █ · oldest 2m04s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue  
+                                                                                                                                                                
+   jira.example.net · Jira 9.12.1 · Sam Example                                                                                                   read 0s ago   
+    In progress 4  ›  In Review 4  ›  Feedback 1  ›  Done 8 in 7 days     ✖ 1 overdue  ▲ 1 due soon                                                             
+                                                                                                                                                                
+    KEY        SUMMARY                                                                                               PRIORITY  IN COLUMN  DUE           LOGGED  
+  ─ IN PROGRESS · 4 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  
+    DATA-2207  DE Product metrics integration — PostHog + ClickHouse → portal (PoC)                                  High            11d                        
+    DATA-2804  DE Reload mv_statement_daily_agg for 198 dates missing rows of 18 currency accounts                   Medium           8h                 1h30m  
+    DATA-2850  DE STATEMENT_DAILY_AGG: upstream moves drifted 131 historical EUR dates                               —               12h  due tomorrow          
+    DATA-2849  DE airflow-dags: extract duplicated Google auth and parsing helpers into utils (MR !809)              —               15h                   30m  
+  ─ IN REVIEW · 4 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  
+  ▌ DATA-2647  DE Client account balances as a daily warehouse table (private/business, EUR buckets)                 ASAP             4d  overdue 2d     7h12m  
+    DATA-1817  DE Replicate gateway.bank_transfer_data (transfer origin rows) to DS 31                               High             2d                    2h  
+    DATA-2788  DE cbk_accounts_report: close the duplicate-upload race and fix verdict handling (MR !805)            High             2d                    3h  
+    DATA-2773  DE KYC onboarding tables for funnel cohorts and questionnaire decisions                               High             2d                    4h  
+  ─ FEEDBACK · 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  
+    DATA-1289  DE Daily per-covenantee history of statement vs accounting balance                                    High            12d                    4h  
+  ─ DONE · 8 in the last 7 days ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  
+    DATA-2638  DE Enrich accounting_monitoring.statement_mismatches with operation details                           URGENT         ✔ 2h                    2h  
+    DATA-2737  DE Google Chat failure alerts for the 10 highest-impact enabled DAGs                                  High           ✔ 2d                    2h  
+    DATA-2650  DE Add all gateway.bank_account columns to the ClickHouse reporting table                             URGENT         ✔ 3d                   30m  
+    DATA-2653  DE Replicate CreditOnline tables to ClickHouse BI                                                     High           ✔ 3d                   30m  
+    DATA-2594  DE Schedule the refresh of the ClickHouse tables the warehouse reads                                  High           ✔ 3d                    6h  
+    DATA-2640  DE CBK DAG: immediate alerts with row errors, daily summary                                           ASAP           ✔ 4d                    3h  
+    DATA-2504  DE Replicate kyc_control_panel case, case_event and staff tables                                      ASAP           ✔ 4d                    6h  
+    DATA-2490  DE Accounting operations MV for the unmatched-instant dashboards                                      High           ✔ 5d                    3h  
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+  ─ DATA-2647 · Task · ASAP · In Review for 4d ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  
+  DE - Client account balances as a daily warehouse table (private/business, EUR buckets)                                                                       
+  from Jurgita Petrova · made Sep 27 · updated 3d ago · due 2026-10-02 (overdue 2d) · 7h12m logged                                                              
+  https://jira.example.net/browse/DATA-2647 · ⏎ opens it · y copies the link · r reads Jira again                                                               
+   ↑↓  move   ⏎  open in Jira   y  copy link   r  read now   p  pause   ?  help   q  quit                          9 nodes polled · slowest 896 ms · read-only  

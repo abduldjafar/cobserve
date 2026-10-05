@@ -1,36 +1,36 @@
-  ◆ cobserve   ✖ critical           1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
   ━━ Subuh 04: ◆ keys · ? closes                                                                          sya 18:59 ┄┄  
                                                                                                                         
   FLEET   9 no ─ KEYS ─────────────────────────────────────────────────────────────────────────────────    15 · 5 ✕     
   REDASH  19 w    ↑ ↓  j k  move the cursor · PgUp PgDn Home End jump                                        [2] queue  
-                         ⏎  open / close · on an insight, a queue job, a tile or a tape line: go there                  
-   NODE · USER    ← →  h l  collapse / expand, vim-style                                                  S  LONGEST    
-  ▌▾ clickhous    J K  ⇧↑↓  scroll the SQL under the selected query or Redash job                         2    4m55s ✕  
-   ├─ r_redash         tab  move between the tree and the insights                                        1    4m55s ✕  
-   ├─ r_redash       space  fold / unfold the healthy nodes                                               1    3m04s ✕  
-   ├─ airflow            u  pivot node ↔ user: who is burning the fleet                                   1      12s    
-   ├─ haris              c  SQL on the node under the cursor, in a query session: read-only, it sugges…   1       4s    
-   └─ server ·           s  sort: pressure, memory, CPU, name                                                           
-   ▸ clickhous           /  filter by node, user, person, SQL or query id · esc clears                    2    3m04s ✕  
-  ▎▸ clickhous   1 2 3 4 5  views: nodes · queue · map · tape · sessions — up to 50, the first five on…   1    5m20s ✕  
-   ▸ clickhous      ctrl+\  the sessions · then 1-4 a view, 5-9 or ↑↓ a session, / one by name, n new …   0        —    
-   ▸ clickhous              Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x clo…   2      12s    
-   ▸ 4 healthy     F1 … F9  the same tabs from anywhere, a session's screen too · or click them              ␣ unfold   
+                         ⏎  open / close · on an insight, a job, a tile, a tape line: go there · a run…                 
+   NODE · USER        y  r  on airflow and jira: copy the link of the row · read again now                S  LONGEST    
+  ▌▾ clickhous    ← →  h l  collapse / expand, vim-style                                                  2    4m55s ✕  
+   ├─ r_redash    J K  ⇧↑↓  scroll the SQL under the selected query or Redash job                         1    4m55s ✕  
+   ├─ r_redash         tab  move between the tree and the insights                                        1    3m04s ✕  
+   ├─ airflow        space  fold / unfold the healthy nodes                                               1      12s    
+   ├─ haris              u  pivot node ↔ user: who is burning the fleet                                   1       4s    
+   └─ server ·           c  SQL on the node under the cursor, in a query session: read-only, it sugges…                 
+   ▸ clickhous           s  sort: pressure, memory, CPU, name                                             2    3m04s ✕  
+  ▎▸ clickhous           /  filter by node, user, person, SQL or query id · esc clears                    1    5m20s ✕  
+   ▸ clickhous       1 … 7  views: nodes · queue · map · tape · airflow · jira · sessions — up to 50, …   0        —    
+   ▸ clickhous      ctrl+\  the sessions · then 1-6 a view, 7-9 or ↑↓ a session, / one by name, n new …   2      12s    
+   ▸ 4 healthy              Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x clo…      ␣ unfold   
+                   F1 … F9  the same tabs from anywhere, a session's screen too · or click them                         
                  x  then y  on view 2: cancel the Redash job under the cursor, as Redash's Cancel does                  
                 ⇧⏎  ctrl+j  a new line in Claude's or OpenCode's prompt — ctrl+j in any terminal                        
-                         z  the clock: the local zone ↔ UTC · or click it · ctrl+\ z in a session                       
-                         d  wave a prayer's reminder away · ctrl+\ d in a session · or click ✕                          
-                         p  pause: the numbers stop, the clock does not                                                 
-                 q  ctrl-c  quit                                                                                        
-  ─ INSIGHTS · ─ ON SCREEN ────────────────────────────────────────────────────────────────────────────   ────────────  
-   ✖ clickhous         ✖ ▲  critical (red) · warning (amber), by DESIGN.md §7                                           
-   ▲ clickhous           ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                                     
+                      z  d  the clock: local ↔ UTC (or click it) · d waves a prayer's reminder away · …                 
+                      p  q  pause: the numbers stop, the clock does not · q or ctrl-c quits                             
+               ─ ON SCREEN ────────────────────────────────────────────────────────────────────────────                 
+  ─ INSIGHTS ·         ✖ ▲  critical (red) · warning (amber), by DESIGN.md §7                             ────────────  
+   ✖ clickhous           ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                                     
    ▲ clickhous           ↯  node not answering — its numbers are unknown, not zero                                      
-   ▲ Redash       ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                                        
-   ▲ Redash #7       ▁▂▃▅▇  the last 4 minutes, each cell its worst moment                                              
-   ▲ Redash #8         NEW  joined the fleet during this session                                                        
-  ─ clickhouse       ━━●┄┄  the day: prayer times at the place, ● now · PRAYER_CITY or PRAYER_AT sets …   ────────────  
-  MEM 58.7/64            ↻  a session kept from the last run: it takes its conversation up when opened                  
+   ▲ clickhous    ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                                        
+   ▲ Redash          ▁▂▃▅▇  the last 4 minutes, each cell its worst moment                                              
+   ▲ Redash #7         NEW  joined the fleet during this session                                                        
+   ▲ Redash #8       ━━●┄┄  the day: prayer times at the place, ● now · PRAYER_CITY or PRAYER_AT sets …                 
+  ─ clickhouse     ▪ ✖ ▸ ◌  airflow's day, a cell an hour: runs that went well, failed, run now, wait     ────────────  
+  MEM 58.7/64            ↻  a session kept from the last run · on airflow: a task waiting for its retry                 
   memory: quer                                                                                            0 GiB query   
   shard 1 · re ClickHouse is only read: nothing here can kill or change a query there                                   
    ?  close   any other key goes back                                                                                   

@@ -1,4 +1,4 @@
-  ◆ cobserve   ✖ critical           1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
                                                                                                                         
   FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4% 280/768 GiB   cpu ━━━╺━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕     
@@ -11,16 +11,16 @@
                                                                                                                         
   SESSIONS  4                 ✻ Claude Code  ~/work/billing                                                             
                                                                                                                         
-  ▎ ✻  billing export   5     > make the invoice export stream its rows instead of building one big Vec                 
+  ▎ ✻  billing export   7     > make the invoice export stream its rows instead of building one big Vec                 
   ▎    …/billing  ⎇ main                                                                                                
                               ● I'll read the exporter first.                                                           
-    ▣  late partitio… ● 6                                                                                               
+    ▣  late partitio… ● 8                                                                                               
        …/pipelines  ⎇ fi…     ● Read(src/export/invoice.rs)                                                             
                                 └  214 lines                                                                            
-    ✻  weekly totals    7                                                                                               
+    ✻  weekly totals    9                                                                                               
        …/reports  ⎇ add-…     ● Update(src/export/invoice.rs)                                                           
                                 └  18 lines added, 31 removed                                                           
-    ❯  make totals      8                                                                                               
+    ❯  make totals     10                                                                                               
        …/reports  ⎇ add-…     ✻ Running the tests… (esc to interrupt)                                                   
                                                                                                                         
     +  new session            ────────────────────────────────────────────────────────────────────────────────          
@@ -33,4 +33,4 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-   ctrl+\  then   1-4  views   5-9 ↑↓  sessions   /  find one   n  new   r  rename   x  close   ctrl+j  new line        
+   ctrl+\  then   1-6  views   7-9 ↑↓  sessions   /  find one   n  new   r  rename   x  close   ctrl+j  new line        

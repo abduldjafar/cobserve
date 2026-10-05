@@ -699,29 +699,10 @@ fn describe(error: reqwest::Error) -> String {
     reason(&chain, timeout, connect).unwrap_or_else(|| clean_error(&error.without_url().to_string()))
 }
 
-/// The cause behind a transport error, from the text of its source chain.
+/// The cause behind a transport error, from the text of its source chain — in the words every
+/// source uses (`sources::reason`).
 fn reason(chain: &str, timeout: bool, connect: bool) -> Option<String> {
-    let text = chain.to_ascii_lowercase();
-    if timeout {
-        return Some(format!("no answer within {:.1} s", REQUEST_TIMEOUT.as_secs_f64()));
-    }
-    let said = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
-    if said(&["dns error", "failed to lookup address", "name or service not known", "nodename nor servname", "no such host"]) {
-        return Some("name does not resolve from here (DNS)".to_string());
-    }
-    if said(&["connection refused"]) {
-        return Some("connection refused — nothing listening on that port".to_string());
-    }
-    if said(&["no route to host", "network is unreachable", "host is unreachable"]) {
-        return Some("no route to host".to_string());
-    }
-    if said(&["connection reset"]) {
-        return Some("connection reset".to_string());
-    }
-    if said(&["certificate", "tls", "ssl"]) {
-        return Some("TLS handshake failed".to_string());
-    }
-    connect.then(|| "cannot connect".to_string())
+    super::reason(chain, timeout.then_some(REQUEST_TIMEOUT), connect)
 }
 
 fn quote(value: &str) -> String {

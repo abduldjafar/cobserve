@@ -51,6 +51,10 @@ pub enum View {
     Map,
     /// What changed, newest first (`tape.rs`).
     Tape,
+    /// What Airflow's DAGs did over the last day (`airflow.rs`).
+    Airflow,
+    /// Your Jira tickets, in the board's columns (`jira.rs`).
+    Jira,
     /// Sessions — Claude Code, OpenCode, a shell — in a pane, the monitor's band above it
     /// (`claude.rs`).
     Claude,
@@ -63,34 +67,41 @@ impl View {
             View::Queue => "QUEUE",
             View::Map => "MAP",
             View::Tape => "TAPE",
+            View::Airflow => "AIRFLOW",
+            View::Jira => "JIRA",
             View::Claude => "SESSIONS",
         }
     }
 
-    /// The tab order of §1, which is also the `1` … `5` keymap.
-    pub const ALL: [View; 5] = [View::Nodes, View::Queue, View::Map, View::Tape, View::Claude];
+    /// The tab order of §1, which is also the `1` … `7` keymap.
+    pub const ALL: [View; 7] = [View::Nodes, View::Queue, View::Map, View::Tape, View::Airflow, View::Jira, View::Claude];
 
-    /// `1` … `5`, the number that selects this view.
+    /// The monitor's own views are `1` to `6`; the sessions go on from 7.
+    pub const MONITOR: u8 = 6;
+
+    /// `1` … `7`, the number that selects this view.
     pub fn number(self) -> u8 {
         match self {
             View::Nodes => 1,
             View::Queue => 2,
             View::Map => 3,
             View::Tape => 4,
-            View::Claude => 5,
+            View::Airflow => 5,
+            View::Jira => 6,
+            View::Claude => 7,
         }
     }
 
     pub fn from_number(n: u8) -> Option<View> {
-        match n {
-            1 => Some(View::Nodes),
-            2 => Some(View::Queue),
-            3 => Some(View::Map),
-            4 => Some(View::Tape),
-            5 => Some(View::Claude),
-            _ => None,
-        }
+        View::ALL.into_iter().find(|v| v.number() == n)
     }
+}
+
+/// A source `r` asks to read again at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feed {
+    Airflow,
+    Jira,
 }
 
 /// Where the cursor keys go on view 1: the tree, or the insights under it (`tab`).
@@ -107,6 +118,8 @@ pub enum Focus {
 pub struct Viewport {
     pub tree: Cell<usize>,
     pub queue: Cell<usize>,
+    pub airflow: Cell<usize>,
+    pub jira: Cell<usize>,
     pub tape: Cell<usize>,
     pub map: Cell<usize>,
     pub insights: Cell<usize>,
@@ -179,6 +192,9 @@ pub enum Hit {
     Job(usize),
     TapeLine(usize),
     Tile(usize),
+    /// A row of view 5 (a run, a DAG) and a ticket of view 6, by their place in the lists.
+    AirflowRow(usize),
+    Ticket(usize),
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -248,6 +264,10 @@ pub enum Event {
     Assisted(u64, u64, Result<String, String>),
     /// What Redash answered to cancelling a job, by its id: yes, or why not.
     Cancelled(String, Result<(), String>),
+    /// What Airflow's DAGs did over the last day (view 5).
+    Airflow(Box<crate::airflow::Activity>),
+    /// Your Jira tickets (view 6).
+    Jira(Box<crate::jira::Board>),
     Quit,
 }
 
@@ -345,6 +365,22 @@ pub struct App {
     pub schemas: HashMap<String, SchemaState>,
     /// What was copied, for the loop to put on the clipboard.
     clipboard: Vec<String>,
+    /// View 5: what Airflow's DAGs did over the last day.
+    pub airflow: crate::airflow::Activity,
+    /// View 6: your Jira tickets.
+    pub jira: crate::jira::Board,
+    /// The row under view 5's cursor, by what it is about — the lists move under it every 15 s —
+    /// and its place, for when it is gone.
+    airflow_selected: Option<crate::airflow::RowKey>,
+    airflow_index: usize,
+    /// The ticket under view 6's cursor, by its key, and its place.
+    jira_selected: Option<String>,
+    jira_index: usize,
+    /// Pages to open in the browser — a ticket, a DAG's grid — for the loop.
+    opens: Vec<String>,
+    /// Sources `r` asked to read again, for the loop; and those whose answer is still awaited.
+    refreshes: Vec<Feed>,
+    reading: Vec<Feed>,
 }
 
 /// What a server has, for a query session: what was read last, and whether it is being read.
@@ -410,6 +446,194 @@ impl App {
             notifications: Vec::new(),
             schemas: HashMap::new(),
             clipboard: Vec::new(),
+            airflow: crate::airflow::Activity::unreachable(crate::airflow::NOT_READ),
+            jira: crate::jira::Board::unreachable(crate::jira::NOT_READ),
+            airflow_selected: None,
+            airflow_index: 0,
+            jira_selected: None,
+            jira_index: 0,
+            opens: Vec::new(),
+            refreshes: Vec::new(),
+            reading: Vec::new(),
+        }
+    }
+
+    /// Pages to open in the browser since the loop last asked.
+    pub fn take_opens(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.opens)
+    }
+
+    /// Sources to read again now, since the loop last asked.
+    pub fn take_refreshes(&mut self) -> Vec<Feed> {
+        std::mem::take(&mut self.refreshes)
+    }
+
+    /// Whether `r` asked a source to read again and its answer has not come yet.
+    pub fn is_reading(&self, feed: Feed) -> bool {
+        self.reading.contains(&feed)
+    }
+
+    /// The ticket under view 6's cursor, by key.
+    pub fn jira_selection(&self) -> Option<&str> {
+        self.jira_selected.as_deref()
+    }
+
+    /// The row under view 5's cursor.
+    pub fn airflow_selection(&self) -> Option<&crate::airflow::RowKey> {
+        self.airflow_selected.as_ref()
+    }
+
+    /// A read of Jira. One that failed after one that worked keeps the tickets on screen, with
+    /// why they are not new: a minute's timeout is no reason to empty the list.
+    fn on_jira(&mut self, board: crate::jira::Board) {
+        self.reading.retain(|f| *f != Feed::Jira);
+        if !board.reachable && !board.is_placeholder() && self.jira.reachable {
+            self.jira.error = board.error;
+            return;
+        }
+        self.jira = board;
+    }
+
+    /// A read of Airflow, kept the same way when it fails.
+    fn on_airflow(&mut self, activity: crate::airflow::Activity) {
+        self.reading.retain(|f| *f != Feed::Airflow);
+        if !activity.reachable && !activity.is_placeholder() && self.airflow.reachable {
+            self.airflow.error = activity.error;
+            return;
+        }
+        self.airflow = activity;
+    }
+
+    /// The rows of view 5, by key, in the order drawn.
+    pub fn airflow_rows(&self) -> Vec<crate::airflow::RowKey> {
+        self.airflow.sections(self.now()).keys()
+    }
+
+    fn move_airflow(&mut self, delta: isize) {
+        let rows = self.airflow_rows();
+        if rows.is_empty() {
+            self.airflow_selected = None;
+            return;
+        }
+        let at = self
+            .airflow_selected
+            .as_ref()
+            .and_then(|key| rows.iter().position(|r| r == key))
+            .unwrap_or(self.airflow_index);
+        let next = (at as isize + delta).clamp(0, rows.len() as isize - 1) as usize;
+        self.airflow_index = next;
+        self.airflow_selected = rows.get(next).cloned();
+    }
+
+    fn move_jira(&mut self, delta: isize) {
+        let keys: Vec<String> = self.jira.rows().iter().map(|t| t.key.clone()).collect();
+        if keys.is_empty() {
+            self.jira_selected = None;
+            return;
+        }
+        let at = self
+            .jira_selected
+            .as_ref()
+            .and_then(|key| keys.iter().position(|k| k == key))
+            .unwrap_or(self.jira_index);
+        let next = (at as isize + delta).clamp(0, keys.len() as isize - 1) as usize;
+        self.jira_index = next;
+        self.jira_selected = keys.get(next).cloned();
+    }
+
+    /// The page of the row under the cursor on view 5 or 6.
+    fn link_at_cursor(&self) -> Option<String> {
+        match self.view {
+            View::Airflow => self.airflow.link(self.airflow_selected.as_ref()?),
+            View::Jira => self.jira.link(self.jira_selected.as_deref()?),
+            _ => None,
+        }
+    }
+
+    /// `⏎`, or a second click: the row's page in the browser.
+    fn open_at_cursor(&mut self) {
+        if let Some(url) = self.link_at_cursor() {
+            self.opens.push(url);
+        }
+    }
+
+    /// `y`: the row's link on the clipboard.
+    fn copy_link(&mut self) {
+        if let Some(url) = self.link_at_cursor() {
+            self.notice = Some((format!("copied {url}"), SystemTime::now()));
+            self.clipboard.push(url);
+        }
+    }
+
+    /// `r`: the view's source reads again now.
+    fn read_again(&mut self, feed: Feed) {
+        if !self.refreshes.contains(&feed) {
+            self.refreshes.push(feed);
+        }
+        if !self.reading.contains(&feed) {
+            self.reading.push(feed);
+        }
+    }
+
+    /// View 5's keys: ↑ ↓ move, ⏎ opens the run or the DAG in Airflow, `y` copies its link, `r`
+    /// reads again.
+    fn on_airflow_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_airflow(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_airflow(1),
+            KeyCode::PageUp => self.move_airflow(-10),
+            KeyCode::PageDown => self.move_airflow(10),
+            KeyCode::Home => self.move_airflow(isize::MIN / 2),
+            KeyCode::End => self.move_airflow(isize::MAX / 2),
+            KeyCode::Enter => self.open_at_cursor(),
+            KeyCode::Char('y') => self.copy_link(),
+            KeyCode::Char('r') => self.read_again(Feed::Airflow),
+            _ => {}
+        }
+    }
+
+    /// View 6's keys, the same as view 5's for a ticket.
+    fn on_jira_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_jira(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_jira(1),
+            KeyCode::PageUp => self.move_jira(-10),
+            KeyCode::PageDown => self.move_jira(10),
+            KeyCode::Home => self.move_jira(isize::MIN / 2),
+            KeyCode::End => self.move_jira(isize::MAX / 2),
+            KeyCode::Enter => self.open_at_cursor(),
+            KeyCode::Char('y') => self.copy_link(),
+            KeyCode::Char('r') => self.read_again(Feed::Jira),
+            _ => {}
+        }
+    }
+
+    /// Keep views 5's and 6's cursors on what they were on, or at the same place when it is gone.
+    fn resolve_lists(&mut self) {
+        match self.view {
+            View::Airflow => {
+                let rows = self.airflow_rows();
+                match self.airflow_selected.as_ref().and_then(|key| rows.iter().position(|r| r == key)) {
+                    Some(at) => self.airflow_index = at,
+                    None if rows.is_empty() => self.airflow_selected = None,
+                    None => {
+                        self.airflow_index = self.airflow_index.min(rows.len() - 1);
+                        self.airflow_selected = rows.get(self.airflow_index).cloned();
+                    }
+                }
+            }
+            View::Jira => {
+                let keys: Vec<String> = self.jira.rows().iter().map(|t| t.key.clone()).collect();
+                match self.jira_selected.as_ref().and_then(|key| keys.iter().position(|k| k == key)) {
+                    Some(at) => self.jira_index = at,
+                    None if keys.is_empty() => self.jira_selected = None,
+                    None => {
+                        self.jira_index = self.jira_index.min(keys.len() - 1);
+                        self.jira_selected = keys.get(self.jira_index).cloned();
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -520,6 +744,16 @@ impl App {
                 }
             }
             Event::Cancelled(id, result) => self.on_cancelled(&id, result),
+            Event::Airflow(activity) => {
+                if !self.paused {
+                    self.on_airflow(*activity)
+                }
+            }
+            Event::Jira(board) => {
+                if !self.paused {
+                    self.on_jira(*board)
+                }
+            }
             Event::Notice(message) => {
                 let now = SystemTime::now();
                 // The same message twice in a row does not restart the clock: a source that
@@ -637,7 +871,7 @@ impl App {
         }
     }
 
-    /// Session `number` (5–9) on view 5. The first visit opens session 5; a number with no
+    /// Session `number` (7–9) on view 7. The first visit opens session 7; a number with no
     /// session behind it says how to open one.
     fn open_session(&mut self, number: usize) {
         match self.claude.index_of(number) {
@@ -984,6 +1218,28 @@ impl App {
                         self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
+                Some(Hit::AirflowRow(index)) => {
+                    let key = self.airflow_rows().get(index).cloned();
+                    let again = key.is_some() && key == self.airflow_selected;
+                    if key.is_some() {
+                        self.airflow_index = index;
+                        self.airflow_selected = key;
+                    }
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
+                Some(Hit::Ticket(index)) => {
+                    let key = self.jira.rows().get(index).map(|t| t.key.clone());
+                    let again = key.is_some() && key == self.jira_selected;
+                    if key.is_some() {
+                        self.jira_index = index;
+                        self.jira_selected = key;
+                    }
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
                 Some(Hit::Pane) | None => {}
             },
             // A drag in a query session's text selects, wherever the mouse goes meanwhile.
@@ -1008,6 +1264,8 @@ impl App {
                         self.insight_selection = self.insight_selection.saturating_add_signed(delta).min(last);
                     }
                     View::Nodes | View::Queue => self.move_by(delta),
+                    View::Airflow => self.move_airflow(delta),
+                    View::Jira => self.move_jira(delta),
                     View::Tape => {
                         let last = self.tape.len().saturating_sub(1);
                         self.tape_selection = self.tape_selection.saturating_add_signed(delta).min(last);
@@ -1056,14 +1314,14 @@ impl App {
     fn on_bar_key(&mut self, key: KeyEvent) {
         let closing = std::mem::take(&mut self.claude.closing);
         match key.code {
-            // One numbering for every tab: 1–4 the monitor's views, 5–9 the sessions.
-            KeyCode::Char(c @ '1'..='4') => {
+            // One numbering for every tab: 1–6 the monitor's views, 7–9 the sessions.
+            KeyCode::Char(c @ '1'..='9') if c as u8 - b'0' <= View::MONITOR => {
                 self.claude.mode = Mode::Typing;
                 if let Some(view) = View::from_number(c as u8 - b'0') {
                     self.view = view;
                 }
             }
-            KeyCode::Char(c @ '5'..='9') => {
+            KeyCode::Char(c @ '1'..='9') => {
                 if let Some(index) = self.claude.index_of(c as usize - '0' as usize) {
                     self.claude.select(index);
                 }
@@ -1744,10 +2002,10 @@ impl App {
         }
 
         let typing_text = matches!(self.claude.mode, Mode::Naming(_) | Mode::Opening(_) | Mode::Finding { .. }) && self.view == View::Claude;
-        // F1–F4 the views, F5–F9 the sessions — from anywhere, Claude's screen too, and with no
+        // F1–F6 the views, F7–F9 the sessions — from anywhere, Claude's screen too, and with no
         // key before them: a terminal that keeps ctrl+\ for itself still has these.
         if let (KeyCode::F(n @ 1..=9), false) = (key.code, typing_text) {
-            if n <= 4 {
+            if n <= View::MONITOR {
                 if let Some(view) = View::from_number(n) {
                     self.go_to_view(view);
                 }
@@ -1833,12 +2091,12 @@ impl App {
                 self.quit = true;
                 return;
             }
-            KeyCode::Char(c @ '5'..='9') => {
+            KeyCode::Char(c @ '1'..='9') if c as u8 - b'0' > View::MONITOR => {
                 self.open_session(c as usize - '0' as usize);
                 self.sync_view_state();
                 return;
             }
-            KeyCode::Char(c @ '1'..='4') => {
+            KeyCode::Char(c @ '1'..='9') => {
                 if let Some(view) = View::from_number(c as u8 - b'0') {
                     self.view = view;
                     self.focus = Focus::Tree;
@@ -1877,6 +2135,8 @@ impl App {
             View::Queue => self.on_queue_key(key),
             View::Map => self.on_map_key(key.code),
             View::Tape => self.on_tape_key(key.code),
+            View::Airflow => self.on_airflow_key(key.code),
+            View::Jira => self.on_jira_key(key.code),
             // Nothing running: ⏎ starts it (above); nothing else to do here.
             View::Claude => {}
         }
@@ -2266,6 +2526,7 @@ impl App {
             self.insight_selection = self.insight_selection.min(len.saturating_sub(1));
         }
         self.tape_selection = self.tape_selection.min(self.tape.len().saturating_sub(1));
+        self.resolve_lists();
 
         let len = self.rows_len();
         if len == 0 {
@@ -2783,10 +3044,10 @@ mod tests {
     }
 
     #[test]
-    fn five_opens_claude_and_asks_for_it_to_start() {
+    fn seven_opens_claude_and_asks_for_it_to_start() {
         let mut app = app_with_fake();
         app.update(key(KeyCode::Char('2')));
-        app.update(key(KeyCode::Char('5')));
+        app.update(key(KeyCode::Char('7')));
         assert_eq!(app.view, View::Claude);
         assert_eq!(app.claude.list.len(), 1, "the first visit opens a session");
         assert_eq!(pane(&mut app).state, PaneState::Starting);
@@ -2865,19 +3126,23 @@ mod tests {
         app.update(key(KeyCode::Enter));
         assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
 
-        // ctrl+\ 5: the first session — the sessions are numbered on from the views.
+        // ctrl+\ 7: the first session — the sessions are numbered on from the views.
         app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('5')));
+        app.update(key(KeyCode::Char('7')));
         assert_eq!(app.claude.current().unwrap().id, first);
-        // ctrl+\ 4: straight to the tape.
+        // ctrl+\ 4: straight to the tape; ctrl+\ 6 to Jira.
+        app.update(ctrl('\\'));
+        app.update(key(KeyCode::Char('6')));
+        assert_eq!(app.view, View::Jira);
+        app.update(key(KeyCode::Char('7')));
         app.update(ctrl('\\'));
         app.update(key(KeyCode::Char('4')));
         assert_eq!(app.view, View::Tape);
-        // And 6 from the monitor is session 6.
-        app.update(key(KeyCode::Char('6')));
+        // And 8 from the monitor is session 8.
+        app.update(key(KeyCode::Char('8')));
         assert_eq!((app.view, app.claude.current().unwrap().name.as_deref()), (View::Claude, Some("infra")));
-        app.update(key(KeyCode::Char('7')));
-        assert_eq!(pane(&mut app).take_outbox(), b"7", "on view 5 a digit is Claude's");
+        app.update(key(KeyCode::Char('9')));
+        assert_eq!(pane(&mut app).take_outbox(), b"9", "on view 7 a digit is Claude's");
 
         // ctrl+\ x x: closed — once is not enough.
         app.update(ctrl('\\'));
@@ -2992,13 +3257,17 @@ mod tests {
         app.update(f(4));
         assert_eq!(app.view, View::Tape, "F4 from Claude's screen, not passed on to it");
         assert!(pane(&mut app).take_outbox().is_empty());
-        app.update(f(5));
+        app.update(f(7));
         assert_eq!(app.view, View::Claude);
+        app.update(f(5));
+        assert_eq!(app.view, View::Airflow);
+        app.update(f(6));
+        assert_eq!(app.view, View::Jira);
         app.update(f(2));
         assert_eq!(app.view, View::Queue);
-        app.update(f(7));
-        assert_eq!(app.view, View::Queue, "no session 7: nothing happens but a word on how to open one");
-        assert!(app.notice().is_some_and(|n| n.contains("no session 7")));
+        app.update(f(9));
+        assert_eq!(app.view, View::Queue, "no session 9: nothing happens but a word on how to open one");
+        assert!(app.notice().is_some_and(|n| n.contains("no session 9")));
     }
 
     #[test]
@@ -3068,7 +3337,7 @@ mod tests {
         assert!(app.claude.list[0].pane.attention, "rang behind the session on screen");
         assert!(app.claude.calling());
         app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('5')));
+        app.update(key(KeyCode::Char('7')));
         assert!(!app.claude.calling(), "seen once it is on screen");
         // Behind the folder picker it is not on screen either.
         app.update(ctrl('\\'));

@@ -25,12 +25,12 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The number of the first session: the views are 1 to 4, so the sessions go on from 5, and
-/// one number picks any tab, view or session — a digit the first five.
-pub const FIRST_NUMBER: usize = 5;
-/// The sessions a digit picks, 5 to 9.
+/// The number of the first session: the views are 1 to 6, so the sessions go on from 7, and
+/// one number picks any tab, view or session — a digit the first three.
+pub const FIRST_NUMBER: usize = View::MONITOR as usize + 1;
+/// The sessions a digit picks, 7 to 9.
 pub const KEYED: usize = 10 - FIRST_NUMBER;
-/// The most sessions there can be. Those after the first five are reached from the list beside
+/// The most sessions there can be. Those after the first three are reached from the list beside
 /// them, with the arrows after `ctrl+\`, or by what they are called (`ctrl+\ /`).
 pub const MAX_SESSIONS: usize = 50;
 /// A name longer than this would push the other tabs off the bar.
@@ -741,7 +741,7 @@ impl Picker {
 pub enum Mode {
     /// Every key but `ctrl+\` goes to the session on screen.
     Typing,
-    /// After `ctrl+\`: a number (1–4 a view, 5–9 a session), `n`, `r`, `x`, `esc`.
+    /// After `ctrl+\`: a number (1–6 a view, 7–9 a session), `n`, `r`, `x`, `esc`.
     Bar,
     /// Renaming the session on screen; the text so far.
     Naming(String),
@@ -1487,9 +1487,9 @@ mod tests {
         assert_eq!(sessions.list[0].label(), "cobserve", "no title yet: the folder");
         sessions.list[0].pane.feed(b"\x1b]0;\xe2\x9c\xb3 Claude Code\x07", true);
         assert_eq!(sessions.list[0].label(), "cobserve", "Claude's title before a task is only its name");
-        // Numbered on from the views: the first session is tab 5.
-        assert_eq!((Sessions::number_of(0), Sessions::number_of(1)), (5, 6));
-        assert_eq!((sessions.index_of(5), sessions.index_of(6), sessions.index_of(7), sessions.index_of(4)), (Some(0), Some(1), None, None));
+        // Numbered on from the views: the first session is tab 7.
+        assert_eq!((Sessions::number_of(0), Sessions::number_of(1)), (7, 8));
+        assert_eq!((sessions.index_of(7), sessions.index_of(8), sessions.index_of(9), sessions.index_of(6)), (Some(0), Some(1), None, None));
 
         sessions.step(true);
         assert_eq!(sessions.active, 0, "round the bar");
@@ -1512,7 +1512,7 @@ mod tests {
         }
         assert!(sessions.open_new("", Kind::Claude).is_none(), "fifty at most");
         assert_eq!(sessions.list.len(), 50);
-        assert_eq!((sessions.index_of(54), sessions.index_of(55)), (Some(49), None), "numbered on to 54");
+        assert_eq!((sessions.index_of(56), sessions.index_of(57)), (Some(49), None), "numbered on to 56");
     }
 
     #[test]
@@ -1527,7 +1527,7 @@ mod tests {
         assert_eq!(sessions.matching("reports"), [1]);
         assert_eq!(sessions.matching("terminal"), [1]);
         assert_eq!(sessions.matching("house3"), [2]);
-        assert_eq!(sessions.matching("6"), [1], "by its number");
+        assert_eq!(sessions.matching("8"), [1], "by its number");
         assert!(sessions.matching("nothing like it").is_empty());
     }
 }

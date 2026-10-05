@@ -1045,6 +1045,256 @@ pub fn assist(ask: &crate::console::Ask) -> Result<String, String> {
     Ok(if comments.is_empty() { body.to_string() } else { format!("{}\n{body}", comments.join("\n")) })
 }
 
+// -- Airflow and Jira, views 5 and 6 ----------------------------------------------------------
+
+/// A made-up DAG on a schedule: every `every_s` seconds from `phase_s` past midnight UTC, each
+/// run taking about `took_s`. `fails` counts back from its latest run that has finished: `Some(0)`
+/// is the latest, which failed at `failed_task`.
+struct FakeDag {
+    id: &'static str,
+    owner: &'static str,
+    schedule: &'static str,
+    cron: &'static str,
+    every_s: i64,
+    phase_s: i64,
+    took_s: i64,
+    tasks: u32,
+    fails: Option<usize>,
+    failed_task: &'static str,
+    running_task: &'static str,
+    tags: &'static [&'static str],
+    description: &'static str,
+}
+
+const FAKE_DAGS: &[FakeDag] = &[
+    FakeDag { id: "clickhouse_replication_check", owner: "data-platform", schedule: "Every 15 minutes", cron: "*/15 * * * *", every_s: 900, phase_s: 0, took_s: 95, tasks: 3, fails: None, failed_task: "", running_task: "compare_row_counts", tags: &["clickhouse", "replication"], description: "Row counts of every replicated table against its source" },
+    FakeDag { id: "redash_scheduler_monitoring", owner: "airflow", schedule: "", cron: "1h", every_s: 3600, phase_s: 0, took_s: 40, tasks: 2, fails: None, failed_task: "", running_task: "read_rq_status", tags: &["redash"], description: "Alerts when Redash's scheduled queries stop running" },
+    FakeDag { id: "postgres_blacklist_etl", owner: "tomas.r", schedule: "Every 30 minutes", cron: "*/30 * * * *", every_s: 1800, phase_s: 0, took_s: 370, tasks: 6, fails: None, failed_task: "", running_task: "restriction_restrictions_etl_process", tags: &["postgres", "etl"], description: "Restrictions and blacklists from PostgreSQL into ClickHouse" },
+    FakeDag { id: "cbk_accounts_report", owner: "ana.k", schedule: "At 15 minutes past the hour, every 2 hours", cron: "15 */2 * * *", every_s: 7200, phase_s: 900, took_s: 240, tasks: 5, fails: Some(4), failed_task: "upload_report", running_task: "build_report", tags: &["accounting", "reports"], description: "The CBK accounts report, uploaded to the regulator's SFTP" },
+    FakeDag { id: "kyc_onboarding_tables", owner: "ana.k", schedule: "At 05:30", cron: "30 5 * * *", every_s: 86_400, phase_s: 5 * 3600 + 1800, took_s: 720, tasks: 8, fails: Some(0), failed_task: "build_cohorts", running_task: "build_cohorts", tags: &["kyc", "posthog"], description: "Onboarding funnel cohorts and questionnaire decisions" },
+    FakeDag { id: "accounting_statement_daily_agg", owner: "data-platform", schedule: "At 03:00", cron: "0 3 * * *", every_s: 86_400, phase_s: 3 * 3600, took_s: 2520, tasks: 12, fails: None, failed_task: "", running_task: "aggregate_currencies", tags: &["accounting", "clickhouse"], description: "STATEMENT_DAILY_AGG for every currency account" },
+    FakeDag { id: "dbt_daily_models", owner: "tomas.r", schedule: "", cron: "1 day", every_s: 86_400, phase_s: 3600, took_s: 7800, tasks: 41, fails: None, failed_task: "", running_task: "dbt_run_marts", tags: &["dbt"], description: "Every dbt model, staging to marts" },
+    FakeDag { id: "posthog_warehouse_refresh", owner: "data-platform", schedule: "At 20 minutes past the hour", cron: "20 * * * *", every_s: 3600, phase_s: 1200, took_s: 190, tasks: 4, fails: None, failed_task: "", running_task: "refresh_balances", tags: &["posthog", "clickhouse"], description: "The ClickHouse tables PostHog's warehouse reads" },
+    FakeDag { id: "replication_app_consistency_check", owner: "j.petrova", schedule: "At 06:00", cron: "0 6 * * *", every_s: 86_400, phase_s: 6 * 3600, took_s: 540, tasks: 3, fails: Some(0), failed_task: "check_consistency", running_task: "check_consistency", tags: &["replication"], description: "Source and replica agree, table by table" },
+    FakeDag { id: "single_table_reconcile", owner: "j.petrova", schedule: "At 10 minutes past the hour, every 4 hours", cron: "10 */4 * * *", every_s: 4 * 3600, phase_s: 600, took_s: 1320, tasks: 6, fails: None, failed_task: "", running_task: "reconcile", tags: &["accounting"], description: "Reconciles the largest tables one at a time" },
+];
+
+/// Made-up DAGs that are paused: listed, never run.
+const FAKE_PAUSED: &[&str] = &["legacy_mysql_sync", "grafana_dashboard_export", "adhoc_backfill_2025"];
+
+fn fake_time(at: i64) -> String {
+    chrono::DateTime::from_timestamp(at, 0)
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%S+00:00").to_string())
+        .unwrap_or_default()
+}
+
+/// FAKE=1's Airflow at `now`: the day of ten DAGs on their schedules — three failures, one
+/// stretch of dbt two hours long — plus a manual reload running, a backfill waiting, and a test
+/// run stuck since January, the shape of what the real one shows.
+pub fn airflow(now: i64) -> crate::airflow::Activity {
+    use crate::airflow::{Activity, Beat, Dag, Health, Progress, Run, RunState, Task, WINDOW_S};
+    let mut runs: Vec<Run> = Vec::new();
+    let mut tasks: Vec<Task> = Vec::new();
+    let mut progress = std::collections::HashMap::new();
+    let mut dags: Vec<Dag> = Vec::new();
+
+    for d in FAKE_DAGS {
+        // The runs that began in the day, oldest first; each a little late, a little long or short.
+        let first = ((now - WINDOW_S - d.phase_s).div_euclid(d.every_s) + 1) * d.every_s + d.phase_s;
+        let starts: Vec<i64> = (0..).map(|k| first + k * d.every_s).take_while(|&t| t <= now).collect();
+        let ends: Vec<i64> = starts.iter().map(|&slot| slot + 3 + d.took_s + d.took_s / 10 * ((slot / d.every_s) % 3 - 1)).collect();
+        let finished: Vec<usize> = (0..starts.len()).filter(|&i| ends[i] <= now).collect();
+        for (i, &slot) in starts.iter().enumerate() {
+            let start = slot + 3;
+            let end = ends[i];
+            let logical = slot - d.every_s;
+            let id = format!("scheduled__{}", fake_time(logical));
+            let failed = d.fails.is_some_and(|back| finished.len() > back && finished[finished.len() - 1 - back] == i);
+            let (state, end) = if end > now {
+                (RunState::Running, None)
+            } else if failed {
+                (RunState::Failed, Some(end))
+            } else {
+                (RunState::Success, Some(end))
+            };
+            let key = (d.id.to_string(), id.clone());
+            match state {
+                RunState::Running => {
+                    let done = (((now - start) as f64 / d.took_s as f64) * d.tasks as f64) as u32;
+                    progress.insert(key, Progress { total: d.tasks, done: done.min(d.tasks - 1), running: vec![d.running_task.to_string()], ..Progress::default() });
+                    tasks.push(Task {
+                        dag: d.id.to_string(),
+                        run: id.clone(),
+                        id: d.running_task.to_string(),
+                        state: "running".into(),
+                        start: Some(start + 5),
+                        try_number: 1,
+                        max_tries: 2,
+                        operator: Some("PythonOperator".into()),
+                        host: Some("airflow-worker-1".into()),
+                    });
+                }
+                RunState::Failed => {
+                    progress.insert(key, Progress { total: d.tasks, failed: vec![d.failed_task.to_string()], ..Progress::default() });
+                }
+                _ => {}
+            }
+            runs.push(Run { dag: d.id.into(), id, kind: "scheduled".into(), state, logical: Some(logical), queued: Some(slot), start: Some(start), end, note: None });
+        }
+        let next = ((now - d.phase_s).div_euclid(d.every_s) + 1) * d.every_s + d.phase_s;
+        dags.push(Dag {
+            id: d.id.into(),
+            owners: vec![d.owner.into()],
+            paused: false,
+            schedule: (!d.schedule.is_empty()).then(|| d.schedule.to_string()),
+            cron: Some(d.cron.into()),
+            next: Some(next),
+            tags: d.tags.iter().map(|t| t.to_string()).collect(),
+            description: Some(d.description.into()),
+        });
+    }
+
+    // Manual runs, as people start them.
+    let manual = |dag: &str, started: i64, state: RunState| Run {
+        dag: dag.into(),
+        id: format!("manual__{}", fake_time(started)),
+        kind: "manual".into(),
+        state,
+        logical: Some(started),
+        queued: Some(started),
+        start: (state != RunState::Queued).then_some(started + 1),
+        end: None,
+        note: None,
+    };
+    let reload = manual("statement_daily_agg_reload", now - 2 * 3600 - 13 * 60, RunState::Running);
+    progress.insert((reload.dag.clone(), reload.id.clone()), Progress { total: 7, done: 4, running: vec!["reload_partitions".into()], ..Progress::default() });
+    tasks.push(Task {
+        dag: reload.dag.clone(),
+        run: reload.id.clone(),
+        id: "reload_partitions".into(),
+        state: "running".into(),
+        start: Some(now - 41 * 60),
+        try_number: 1,
+        max_tries: 1,
+        operator: Some("PythonOperator".into()),
+        host: Some("airflow-worker-3".into()),
+    });
+    let stuck = manual("test_clickhouse_connection", now - 262 * 86_400 - 5 * 3600, RunState::Running);
+    progress.insert((stuck.dag.clone(), stuck.id.clone()), Progress { total: 1, retrying: vec!["ping_clickhouse".into()], ..Progress::default() });
+    tasks.push(Task {
+        dag: stuck.dag.clone(),
+        run: stuck.id.clone(),
+        id: "ping_clickhouse".into(),
+        state: "up_for_retry".into(),
+        start: None,
+        try_number: 1,
+        max_tries: 1,
+        operator: Some("PythonOperator".into()),
+        host: None,
+    });
+    let waiting = manual("gateway_transfers_backfill", now - 4 * 60 - 12, RunState::Queued);
+    for (id, owner, schedule, description) in [
+        ("statement_daily_agg_reload", "data-platform", "Never, external triggers only", "Reloads STATEMENT_DAILY_AGG for the dates given"),
+        ("test_clickhouse_connection", "airflow", "Never, external triggers only", "Pings every ClickHouse connection"),
+        ("gateway_transfers_backfill", "tomas.r", "Never, external triggers only", "Backfills gateway.transfers for a range of days"),
+    ] {
+        dags.push(Dag { id: id.into(), owners: vec![owner.into()], schedule: Some(schedule.into()), description: Some(description.into()), ..Dag::default() });
+    }
+    runs.extend([reload, stuck, waiting]);
+    for id in FAKE_PAUSED {
+        dags.push(Dag { id: id.to_string(), owners: vec!["airflow".into()], paused: true, schedule: Some("At 04:00".into()), cron: Some("0 4 * * *".into()), ..Dag::default() });
+    }
+
+    Activity {
+        reachable: true,
+        error: None,
+        base_url: Some("https://airflow.example.net".into()),
+        version: Some("2.10.2".into()),
+        health: Health {
+            metadatabase: Some("healthy".into()),
+            scheduler: Beat { status: Some("healthy".into()), at: Some(now - 2) },
+            triggerer: Beat { status: Some("healthy".into()), at: Some(now - 4) },
+            dag_processor: Beat::default(),
+        },
+        dags,
+        import_errors: Some(0),
+        runs,
+        tasks,
+        progress,
+        day_read: true,
+        taken_at: std::time::UNIX_EPOCH + Duration::from_secs(now.max(0) as u64),
+    }
+}
+
+/// FAKE=1's Jira at `now`: seventeen tickets of a data engineer's week across the board's
+/// columns — one overdue in review, one due tomorrow, a week of finished ones.
+pub fn jira(now: i64) -> crate::jira::Board {
+    use crate::jira::{Board, Ticket, DEFAULT_DONE_DAYS, DEFAULT_STATUSES};
+    const H: i64 = 3600;
+    const D: i64 = 86_400;
+    let day = |offset_days: i64| {
+        let date = chrono::DateTime::from_timestamp(now + offset_days * D, 0).map(|t| t.date_naive());
+        date.map(|d| d.format("%Y-%m-%d").to_string())
+    };
+    // (key, summary, status, priority, rank, kind, in status for, logged, due in days)
+    #[allow(clippy::type_complexity)]
+    let rows: &[(&str, &str, &str, &str, u32, &str, i64, u64, Option<i64>)] = &[
+        ("DATA-2850", "DE - STATEMENT_DAILY_AGG: upstream moves drifted 131 historical EUR dates", "In progress", "Unspecified", 6, "Task", 12 * H, 0, Some(1)),
+        ("DATA-2849", "DE - airflow-dags: extract duplicated Google auth and parsing helpers into utils (MR !809)", "In progress", "Unspecified", 6, "Task", 15 * H, 1800, None),
+        ("DATA-2804", "DE - Reload mv_statement_daily_agg for 198 dates missing rows of 18 currency accounts", "In progress", "Medium", 3, "Task", 8 * H, 5400, None),
+        ("DATA-2207", "DE - Product metrics integration — PostHog + ClickHouse → portal (PoC)", "In progress", "High", 2, "Story", 11 * D, 0, None),
+        ("DATA-2647", "DE - Client account balances as a daily warehouse table (private/business, EUR buckets)", "In Review", "ASAP", 1, "Task", 4 * D, 25_920, Some(-2)),
+        ("DATA-2773", "DE - KYC onboarding tables for funnel cohorts and questionnaire decisions", "In Review", "High", 2, "Task", 2 * D + 5 * H, 14_400, None),
+        ("DATA-2788", "DE - cbk_accounts_report: close the duplicate-upload race and fix verdict handling (MR !805)", "In Review", "High", 2, "Task", 2 * D + 4 * H, 10_800, None),
+        ("DATA-1817", "DE - Replicate gateway.bank_transfer_data (transfer origin rows) to DS 31", "In Review", "High", 2, "Task", 2 * D + 3 * H, 7200, None),
+        ("DATA-1289", "DE - Daily per-covenantee history of statement vs accounting balance", "Feedback", "High", 2, "Task", 12 * D, 14_400, None),
+        ("DATA-2638", "DE - Enrich accounting_monitoring.statement_mismatches with operation details", "Done", "URGENT", 0, "Task", 2 * H, 7200, None),
+        ("DATA-2737", "DE - Google Chat failure alerts for the 10 highest-impact enabled DAGs", "Done", "High", 2, "Task", 2 * D, 7200, None),
+        ("DATA-2650", "DE - Add all gateway.bank_account columns to the ClickHouse reporting table", "Done", "URGENT", 0, "Code review", 3 * D + 2 * H, 1800, None),
+        ("DATA-2653", "DE - Replicate CreditOnline tables to ClickHouse BI", "Done", "High", 2, "Code review", 3 * D + 3 * H, 1800, None),
+        ("DATA-2594", "DE - Schedule the refresh of the ClickHouse tables the warehouse reads", "Done", "High", 2, "Task", 3 * D + 5 * H, 21_600, None),
+        ("DATA-2640", "DE - CBK DAG: immediate alerts with row errors, daily summary", "Done", "ASAP", 1, "Code review", 4 * D, 10_800, None),
+        ("DATA-2504", "DE - Replicate kyc_control_panel case, case_event and staff tables", "Done", "ASAP", 1, "Task", 4 * D + 2 * H, 21_600, None),
+        ("DATA-2490", "DE - Accounting operations MV for the unmatched-instant dashboards", "Done", "High", 2, "Task", 5 * D + 6 * H, 10_800, None),
+    ];
+    let tickets = rows
+        .iter()
+        .map(|&(key, summary, status, priority, rank, kind, since, logged, due)| {
+            let moved = now - since;
+            let done = status == "Done" || status == "Feedback";
+            Ticket {
+                key: key.into(),
+                summary: summary.into(),
+                status: status.into(),
+                category: if done { "done" } else { "indeterminate" }.into(),
+                kind: Some(kind.into()),
+                priority: Some(priority.into()),
+                priority_rank: Some(rank),
+                created: Some(moved - 3 * D),
+                updated: Some(moved + since.min(3 * H) / 2),
+                resolved: done.then_some(moved),
+                due: due.and_then(day),
+                status_since: Some(moved),
+                parent: (kind == "Code review").then(|| "DATA-2611".to_string()),
+                labels: if key == "DATA-2207" { vec!["posthog".into(), "clickhouse".into(), "poc".into()] } else { Vec::new() },
+                reporter: Some(if key.ends_with('7') { "Jurgita Petrova" } else { "Tomas Rimkus" }.into()),
+                logged_s: (logged > 0).then_some(logged),
+            }
+        })
+        .collect();
+    Board {
+        reachable: true,
+        error: None,
+        base_url: Some("https://jira.example.net".into()),
+        version: Some("9.12.1".into()),
+        user: Some("Sam Example".into()),
+        statuses: DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
+        done_days: DEFAULT_DONE_DAYS,
+        tickets,
+        taken_at: std::time::UNIX_EPOCH + Duration::from_secs(now.max(0) as u64),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

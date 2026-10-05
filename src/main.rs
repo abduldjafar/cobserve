@@ -5,6 +5,7 @@
 //! clock, and **the UI never blocks on the network**: a slow node, a dead Redash, or a
 //! ClickHouse that never answers all show up as numbers that do not move.
 
+mod airflow;
 mod app;
 mod assist;
 mod attrib;
@@ -19,6 +20,7 @@ mod fmt;
 mod folders;
 mod history;
 mod insight;
+mod jira;
 mod model;
 mod prayer;
 mod saved;
@@ -194,9 +196,13 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         fake: config.fake,
         assist_dir: assist::dir(),
     };
-    // A Redash job cancelled from view 2 goes to the task that talks to Redash.
+    // A Redash job cancelled from view 2 goes to the task that talks to Redash; `r` on views 5
+    // and 6 to the task that reads Airflow or Jira.
     let (cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
-    spawn_sources(&config, tx.clone(), Arc::clone(&consoles.targets), cancel_rx);
+    let (airflow_tx, airflow_rx) = mpsc::unbounded_channel::<()>();
+    let (jira_tx, jira_rx) = mpsc::unbounded_channel::<()>();
+    let asks = Asks { cancels: cancel_rx, airflow: airflow_rx, jira: jira_rx };
+    spawn_sources(&config, tx.clone(), Arc::clone(&consoles.targets), asks);
     // Anything a source could not even start with belongs on screen, not in a log file.
     for warning in &config.warnings {
         app.update(Event::Notice(warning.clone()));
@@ -285,6 +291,15 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
             if let Err(lost) = cancel_tx.send(id) {
                 app.update(Event::Cancelled(lost.0, Err("the Redash source has stopped".into())));
             }
+        }
+        for feed in app.take_refreshes() {
+            let _ = match feed {
+                app::Feed::Airflow => airflow_tx.send(()),
+                app::Feed::Jira => jira_tx.send(()),
+            };
+        }
+        for url in app.take_opens() {
+            open_in_browser(&url);
         }
 
         if app.quit {
@@ -722,6 +737,32 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// A page in the browser — a ticket, a DAG's grid — from a program of its own that is not
+/// waited for. Only the http(s) links views 5 and 6 make get this far.
+fn open_in_browser(url: &str) {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return;
+    }
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "linux") {
+        "xdg-open"
+    } else {
+        return;
+    };
+    let child = std::process::Command::new(program)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Ok(mut child) = child {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+}
+
 /// The system's notification, from a program of its own that is not waited for.
 fn system_notification(text: &str) {
     let command: Option<(&str, Vec<String>)> = if cfg!(target_os = "macos") {
@@ -815,15 +856,41 @@ fn spawn_key_reader(tx: mpsc::UnboundedSender<Event>) {
     });
 }
 
+/// What the screen asks of the sources: a Redash job cancelled, Airflow or Jira read again.
+struct Asks {
+    cancels: mpsc::UnboundedReceiver<String>,
+    airflow: mpsc::UnboundedReceiver<()>,
+    jira: mpsc::UnboundedReceiver<()>,
+}
+
 fn spawn_sources(
     config: &Config,
     tx: mpsc::UnboundedSender<Event>,
     console_targets: Arc<std::sync::Mutex<HashMap<String, sources::clickhouse::ConsoleTarget>>>,
-    mut cancels: mpsc::UnboundedReceiver<String>,
+    asks: Asks,
 ) {
+    let Asks { mut cancels, airflow: airflow_asks, jira: jira_asks } = asks;
     if config.fake {
-        tokio::spawn(fake_loop(config.poll, tx, cancels));
+        tokio::spawn(fake_loop(config.poll, tx, cancels, airflow_asks, jira_asks));
         return;
+    }
+
+    // Airflow and Jira are optional (§9, like Redash): unconfigured, their views say how.
+    match sources::airflow::AirflowSource::new(&config.airflow) {
+        Some(airflow) => {
+            tokio::spawn(airflow.run(tx.clone(), airflow_asks));
+        }
+        None => {
+            let _ = tx.send(Event::Airflow(Box::new(airflow::Activity::unreachable(airflow::NOT_CONFIGURED))));
+        }
+    }
+    match sources::jira::JiraSource::new(&config.jira) {
+        Some(jira) => {
+            tokio::spawn(jira.run(tx.clone(), jira_asks));
+        }
+        None => {
+            let _ = tx.send(Event::Jira(Box::new(jira::Board::unreachable(jira::NOT_CONFIGURED))));
+        }
     }
 
     let clickhouse = config.clickhouse.clone();
@@ -899,13 +966,25 @@ fn spawn_sources(
 
 /// FAKE=1: generated data on the same timers the real sources use, so the UI cannot tell the
 /// difference (DESIGN.md §8, step 1 of the build order).
-async fn fake_loop(poll: Duration, tx: mpsc::UnboundedSender<Event>, mut cancels: mpsc::UnboundedReceiver<String>) {
+async fn fake_loop(
+    poll: Duration,
+    tx: mpsc::UnboundedSender<Event>,
+    mut cancels: mpsc::UnboundedReceiver<String>,
+    mut airflow_asks: mpsc::UnboundedReceiver<()>,
+    mut jira_asks: mpsc::UnboundedReceiver<()>,
+) {
     let mut fake = fake::FakeSource::new();
     let mut polling = tokio::time::interval(poll);
     polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // §6.3: the queue moves every 3 s, the fleet every POLL_MS.
+    // §6.3: the queue moves every 3 s, the fleet every POLL_MS; Airflow is read every 15 s and
+    // Jira every minute, as their sources do.
     let mut queue = tokio::time::interval(Duration::from_secs(3));
     queue.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut airflow = tokio::time::interval(Duration::from_secs(15));
+    airflow.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut jira = tokio::time::interval(Duration::from_secs(60));
+    jira.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
 
     loop {
         tokio::select! {
@@ -916,6 +995,25 @@ async fn fake_loop(poll: Duration, tx: mpsc::UnboundedSender<Event>, mut cancels
             }
             _ = queue.tick() => {
                 if tx.send(Event::Queue(Box::new(fake.queue()))).is_err() {
+                    return;
+                }
+            }
+            // A moment's wait when asked, so `r` looks like a read.
+            Some(()) = airflow_asks.recv() => {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                let _ = tx.send(Event::Airflow(Box::new(fake::airflow(now()))));
+            }
+            Some(()) = jira_asks.recv() => {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                let _ = tx.send(Event::Jira(Box::new(fake::jira(now()))));
+            }
+            _ = airflow.tick() => {
+                if tx.send(Event::Airflow(Box::new(fake::airflow(now())))).is_err() {
+                    return;
+                }
+            }
+            _ = jira.tick() => {
+                if tx.send(Event::Jira(Box::new(fake::jira(now())))).is_err() {
                     return;
                 }
             }

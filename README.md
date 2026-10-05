@@ -7,9 +7,10 @@ asking — what Redash's own Cancel button does.
 
 A terminal monitor for on call: the ClickHouse fleet and the Redash queue on one screen,
 **who** is using each node, and **what it means**: ranked insights, trends and forecasts, a
-fleet map, a tape of everything that changed — and in the same window Claude Code, OpenCode or
-a shell, and a **SQL console on any server** of the fleet, read-only, that suggests as you type
-and has Claude or OpenCode write the query for you. Around it all, the **day**: your local
+fleet map, a tape of everything that changed, **every Airflow DAG's day** and **your Jira
+tickets** — and in the same window Claude Code, OpenCode or a shell, and a **SQL console on any
+server** of the fleet, read-only, that suggests as you type and has Claude or OpenCode write the
+query for you. Around it all, the **day**: your local
 time, the prayer times where you are, and a reminder ten minutes before each.
 
 ![NODES view](docs/screenshots/120x36-nodes.png)
@@ -42,7 +43,9 @@ on top of it and are listed in `DESIGN.md` §13.
 | **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL; `x`, then `y`, cancels the job in Redash. |
 | **MAP** | `3` | The whole fleet as cards, marked by their severity, with bars and history. A forty-node fleet on one screen. |
 | **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
-| **SESSIONS** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need, while the fleet and the Redash queue stay in sight above them. |
+| **AIRFLOW** | `5` | Every DAG's last 24 hours: what **runs** now and how far its tasks are — a run going for a day is **stuck**, and says since when — what **waits**, what **failed** and at which task, and a line per DAG with its day on a timeline, an hour a cell, beside its schedule, its runs, when it last ran and when it runs next. |
+| **JIRA** | `6` | Your tickets in your board's columns — **In progress**, **In Review**, **Feedback** and what was **Done** this week — with their priority, how long each has been in its column, its due date against today and the time logged. |
+| **SESSIONS** | `7` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need, while the fleet and the Redash queue stay in sight above them. |
 
 ![Query detail](docs/screenshots/140x40-query.png)
 
@@ -105,6 +108,81 @@ it runs on (name and type). The one thing it sends is a cancel you asked for.
 
 ![Redash with leftovers in its started list](docs/screenshots/120x36-queue-leftovers.png)
 
+### Airflow: every DAG's day
+
+View 5 reads Airflow's stable REST API (`/api/v1`, Airflow 2): every 15 s what runs and waits
+and how the scheduler and the triggerer are, every minute the runs of the last 24 hours, every
+five minutes the DAGs. It signs in as the web UI does — the login form and its CSRF token, then
+the session cookie — because an Airflow whose API takes only its own session (the default)
+answers Basic auth with 403. A refused login is not sent again for five minutes, or until `r`:
+a wrong password cannot lock the account. Everything after the login is GET.
+
+```text
+  ─ RUNNING · 2 · 1 stuck ────────────────────────────────────────────────────────────────────
+  ▌ ✖ test_clickhouse_connection         manual · Jan 15     262d04h    0/1 ━━━━━━━━  stuck since Jan 15
+    ▸ statement_daily_agg_reload         manual · 13:39        2h12m    4/7 ━━━━╸━━━  ▸ reload_partitions
+  ─ FAILED · 3 in the last 24 h ──────────────────────────────────────────────────────────────
+    ✖ kyc_onboarding_tables              scheduled · 12:30    10m48s  ended 12:40 · 3h ago  at build_cohorts
+  ─ ACTIVITY · 13 DAGs ran in the last 24 h ──────────────────────────────────────────────────
+    DAG                                SCHEDULE        RUNS    18    00    06    12     LAST RUN     TOOK
+    clickhouse_replication_check       every 15m         96  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪     7m ago    1m44s
+    cbk_accounts_report                :15 every 2h   12 ✖1  ·▪·▪·▪·▪·▪·▪·▪·✖·▪·▪·▪·▪    37m ago    4m00s
+    dbt_daily_models                   1 day              1  ········▪━━━············     7h ago    1h57m
+```
+
+- **RUNNING**: every run in progress — for how long, how far its tasks are, which task runs and
+  which waits for its retry. Past six hours a run is amber; past a day it is red and **stuck
+  since** its date: a run whose worker died, left running for months.
+- **QUEUED**: what waits to start; amber after an hour.
+- **FAILED**: the day's failed runs, when each ended and the task it failed at — or *no task
+  failed · 1 skipped* when the scheduler, a person or a timeout failed the run itself.
+- **ACTIVITY**: a line per DAG that ran in the last 24 hours, its day on a timeline — a cell an
+  hour (half an hour from 160 columns), on the hours of the clock on screen: `▪` runs that went
+  well, `✖` a failure, `▸` one running now, `◌` one waiting, `━` a run that went on past its
+  cell. Beside it the schedule as Airflow says it, shortened (`every 15m`, `:20 hourly`,
+  `Sun 22:00`, `triggered`), the day's runs (`12 ✖1`), when it last ran, how long that took and
+  when it runs next — and from 150 columns its owner.
+
+The first read comes in two: what runs now in a few seconds, the day a dozen more after it.
+`⏎` opens the run, or the DAG's grid, in your browser; `y` copies its link; `r` reads it all
+again now. Set `AIRFLOW_URL`, `AIRFLOW_USER` and `AIRFLOW_PASSWORD` (the login of its web UI), or
+an `airflow:` section in the credential file.
+
+![Airflow](docs/screenshots/120x36-airflow.png)
+
+### Jira: your tickets
+
+View 6 is your Jira board, for you alone: the tickets assigned to the token's owner, in the
+board's columns — by default **In progress**, **In Review**, **Feedback** and **Done**, the last
+only for what was resolved in the last seven days, as the board itself hides older ones. It
+reads the REST API of Jira Server and Data Center (`/rest/api/2`) with a personal access token,
+every minute, GET only.
+
+```text
+    In progress 4  ›  In Review 4  ›  Feedback 1  ›  Done 8 in 7 days     ✖ 1 overdue  ▲ 1 due soon
+
+    KEY        SUMMARY                                                  PRIORITY  IN COLUMN  DUE           LOGGED
+  ─ IN REVIEW · 4 ──────────────────────────────────────────────────────────────────────────────────────
+    DATA-2647  DE Client account balances as a daily warehouse table   ASAP             4d  overdue 2d     7h12m
+    DATA-2773  DE KYC onboarding tables for funnel cohorts             High             2d                    4h
+```
+
+- The board's flow on one line, and how many open tickets are **overdue** (red) or due **today
+  or tomorrow** (amber).
+- Each column under its rule, ranked as the board ranks it — by priority, then the latest
+  touched — and Done by when each was finished: the key, the summary (the team's tag, `DE -`,
+  drawn faint), the priority (`URGENT` and `ASAP` red), how long it has been in the column —
+  from its history, read again only when the ticket changes — its due date and the time logged.
+- The drawer has the rest: the whole summary, who reported it, when it was made and updated, its
+  parent and labels, and its link. `⏎` opens it in your browser, `y` copies the link, `r` reads
+  again.
+
+Set `JIRA_URL` and `JIRA_TOKEN` (in Jira: Profile → Personal Access Tokens), or a `jira:` section
+in the credential file. For another board, `JIRA_STATUSES` names its columns, left to right
+(the last is where finished tickets go), and `JIRA_DONE_DAYS` how far back that one reaches.
+
+![Jira](docs/screenshots/120x36-jira.png)
+
 ### The day, and prayer times
 
 The line under the masthead is the day where you are, from Subuh to Isya: every prayer time a
@@ -139,7 +217,7 @@ The terminal's own title carries the next prayer, for a tab in the background.
 
 ### Claude, OpenCode and a terminal in the monitor
 
-View 5 runs programs in a terminal inside the monitor — the official `claude`, `opencode`, or
+View 7 runs programs in a terminal inside the monitor — the official `claude`, `opencode`, or
 your own shell: the shelf — the FLEET and REDASH lines and a card for every node — stays on
 top, the session gets the rest. Each is the same as in a terminal tab of its own — any
 project, any question, its own permission prompts.
@@ -153,18 +231,18 @@ project, any question, its own permission prompts.
 - Nothing here uses an API key: `ANTHROPIC_API_KEY` is taken out of every session's
   environment, so Claude Code bills the plan you signed in with even when your shell has a
   key set; so are the monitor's own credentials (`CH_PASSWORD`, `CH_SEED_URLS`,
-  `REDASH_ADMIN_API_KEY`, `REDIS_URL`).
+  `REDASH_ADMIN_API_KEY`, `REDIS_URL`, `AIRFLOW_PASSWORD`, `JIRA_TOKEN`).
 - Each session works in a folder of its own — the first in the one the monitor was started
   from. What runs there can read files there, so keep the credential file somewhere else.
-  `--claude` opens on view 5.
+  `--claude` opens on view 7.
 
 Up to fifty sessions run side by side, each its own program with its own conversation, listed
 beside it like a terminal's tabs, the one on screen raised: what it runs (`✻` Claude, `▣`
 OpenCode, `❯` a terminal, `▦` SQL), its name — the one you gave it, what the program says it is
 working on, or else its folder — and number, and under them the folder and its git branch. A
-session that rings while you are elsewhere is marked `●` there and on `5 sessions`; one that
-ended, `✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5` on the
-sessions — a digit picks the first five, `ctrl+\` then `↑` `↓` walks through all of them, and
+session that rings while you are elsewhere is marked `●` there and on `7 sessions`; one that
+ended, `✕`. The sessions are numbered on from the views: `1`–`6` are the monitor, `7` on the
+sessions — a digit picks the first three, `ctrl+\` then `↑` `↓` walks through all of them, and
 `ctrl+\` then `/` finds one by its name, folder, kind, server or number. The more there are, the
 closer the list packs them — a line each for many, the one on screen keeping its folder — and it
 follows the one on screen, with how many more are above and below it.
@@ -202,12 +280,12 @@ or `shift+tab` does. Typing searches the folders below by name — up to six lev
 nearest first, `node_modules` and the like left out — and a path (`~/`, `/`, `../`) is
 completed like a shell does. A repository shows its branch.
 
-| On view 5 | |
+| On view 7 | |
 |---|---|
 | any key | goes to the session — `q`, the digits and `ctrl+c` too |
 | `⇧⏎` · `ctrl+j` | a new line in Claude's or OpenCode's prompt. `⇧⏎` (and `⌘⏎`, `ctrl+⏎`) where the terminal tells them from `⏎` — the kitty keyboard protocol: Ghostty, kitty, foot and others that speak it — and `ctrl+j`, `⌥⏎` (⌥ as Meta) or `\` then `⏎` in any; the footer says which |
-| `ctrl+\` then `1`…`4` | that view of the monitor |
-| `ctrl+\` then `5`…`9` | that session — the first five |
+| `ctrl+\` then `1`…`6` | that view of the monitor |
+| `ctrl+\` then `7`…`9` | that session — the first three |
 | `ctrl+\` then `↑` `↓` | the one before or after, through all of them |
 | `ctrl+\` then `/` | find one: type part of its name, folder, kind, server or number, `↑` `↓`, `⏎` |
 | `ctrl+\` then `n` | a new session, of the kind on screen: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `shift+tab` changes what it runs, `esc` clears the search or gives up |
@@ -222,13 +300,13 @@ completed like a shell does. A repository shows its branch.
 | a click | a tab in the masthead, the clock, a session, **+ new session**, **past conversations**, a folder, what to run, a node's card, the reminder's ✕ |
 | the wheel | over Claude, its page up and down; over a shell, back through what went past (a key comes back down), and in `less` or `vim` the arrow keys; over OpenCode, what it asked for; elsewhere, the cursor |
 
-From the monitor, `5`…`9` or `ctrl+\` go to the sessions. `ctrl+z` is not passed on to Claude
+From the monitor, `7`…`9` or `ctrl+\` go to the sessions. `ctrl+z` is not passed on to Claude
 or OpenCode — there is no shell around them to bring them back — but it is to a terminal,
 whose shell suspends its own jobs. With the mouse on, selecting text takes the terminal's
 modifier — Shift in most, ⌥ in iTerm2 and Terminal — and `MOUSE=0` leaves the mouse to the
 terminal altogether.
 
-![Claude, OpenCode and a terminal in view 5](docs/screenshots/160x48-claude.png)
+![Claude, OpenCode and a terminal in view 7](docs/screenshots/160x48-claude.png)
 
 ![A new session's folder, picked with clicks](docs/screenshots/160x48-claude-new.png)
 
@@ -237,7 +315,7 @@ terminal altogether.
 ### SQL on any server: query sessions
 
 A query session is a SQL console on one server of the fleet, beside the other sessions on
-view 5: `c` on a node in view 1 (or a tile in view 3) opens one there, `ctrl+\ q` asks which
+view 7: `c` on a node in view 1 (or a tile in view 3) opens one there, `ctrl+\ q` asks which
 server, and so does **▦ Query** in a new session's picker. Everything it runs is read-only —
 `readonly=1`, 30 seconds at most, the first 1000 rows — and stopped on the server when you stop
 it (`ctrl+c`) or close the session. The server is a chip at its top: a click, or `ctrl+o`,
@@ -296,7 +374,7 @@ switches it to any other server of the fleet, each with the login the monitor ha
 | `ctrl+o` | run on another server |
 | `shift+tab` | the answer: the arrows move, `y` `Y` copy, `tab` comes back |
 | `↑` on the first line | what ran before |
-| `ctrl+\` | the session bar, as everywhere on view 5 |
+| `ctrl+\` | the session bar, as everywhere on view 7 |
 
 ### Reading the screen
 
@@ -359,7 +437,9 @@ cobserve --credential credentials.yaml     # or: cargo run --release -- --creden
   YAML's own rules apply: quote one that starts with a quote, `#`, `{`, `[`, `&`, `*`, `!`, `|`,
   `>`, `%` or `@`, or holds ` #`.
 - What the file says wins over the environment; `CH_SEED_URLS` adds servers to its list. An
-  optional `redash:` section holds `url`, `api_key`, `redis_url` and `email_domain`.
+  optional `redash:` section holds `url`, `api_key`, `redis_url` and `email_domain`; `airflow:`
+  holds `url`, `user` and `password`; `jira:` holds `url`, `token`, and optionally `statuses`
+  and `done_days`.
 - A wrong password shows on its node as *login refused for user monitor_ch2* — the user,
   never the password. A file other users can read gets a warning in the footer. A mistake in
   the file is reported with its key and line, never with the value in it.
@@ -379,6 +459,10 @@ have a user the other one does not know.
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — the strip says *not configured* |
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |
 | `EMAIL_DOMAIN` | your organisation's e-mail domain: people there are shown by name alone (`grigol.gankava`), everyone else by the whole address | unset — every address whole |
+| `AIRFLOW_URL` / `AIRFLOW_USER` / `AIRFLOW_PASSWORD` | Airflow 2 for view 5, and the login of its web UI | optional — view 5 says how to set it |
+| `JIRA_URL` / `JIRA_TOKEN` | Jira Server or Data Center for view 6, and a personal access token | optional — view 6 says how to set it |
+| `JIRA_STATUSES` | the board's columns, left to right, comma-separated; the last is where finished tickets go | `In progress,In Review,Feedback,Done` |
+| `JIRA_DONE_DAYS` | how many days of finished tickets the last column shows | `7` |
 | `CLAUDE_CMD` | what a Claude session runs, with its arguments | `claude` |
 | `OPENCODE_CMD` | what an OpenCode session runs | `opencode` |
 | `SHELL_CMD` | what a terminal session runs | `$SHELL`, else `/bin/sh` |
@@ -397,7 +481,7 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | Key | |
 |---|---|
 | `↑ ↓` `j k` | move · `PgUp PgDn Home End` jump |
-| `⏎` | open / close a node or user · on an insight, a queue job, a tile or a tape line: go there |
+| `⏎` | open / close a node or user · on an insight, a queue job, a tile or a tape line: go there · on a run, a DAG or a ticket: its page in the browser |
 | `← →` `h l` | collapse / expand |
 | `J K` `shift ↑↓` | scroll the SQL of the selected query or Redash job (it opens right under its row) |
 | `tab` | move between the tree and the insights |
@@ -407,10 +491,11 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `s` | sort: pressure, memory, CPU, name |
 | `/` | filter by node, user, person, SQL or query id · `esc` clears |
 | `x` then `y` | view 2: cancel the Redash job under the cursor — any other key keeps it |
-| `1 2 3 4` | views · `5`…`9` the sessions |
+| `y` · `r` | views 5 and 6: copy the link of the row under the cursor · read Airflow or Jira again now |
+| `1`…`6` | views: nodes, queue, map, tape, airflow, jira · `7`…`9` the sessions |
 | `F1`…`F9` | the same, from anywhere — Claude's screen too |
-| `ctrl+\` | the sessions (view 5); there, the key before a number — see *Claude, OpenCode and a terminal in the monitor* |
-| a click · the wheel | a row, an insight, a job, a tile or a tape line puts the cursor there, a second click opens it; a tab, a session · the wheel moves the cursor (on view 5, the session's page up and down) |
+| `ctrl+\` | the sessions (view 7); there, the key before a number — see *Claude, OpenCode and a terminal in the monitor* |
+| a click · the wheel | a row, an insight, a job, a run, a ticket, a tile or a tape line puts the cursor there, a second click opens it; a tab, a session · the wheel moves the cursor (on view 7, the session's page up and down) |
 | `p` | pause (the numbers stop, the clock does not) |
 | `?` | help · `q` quit |
 
@@ -427,6 +512,8 @@ the cancel of that one job.
 cargo test                            # model, insights, tape, history, every view at every size
 cargo clippy --all-targets -- -D warnings
 ./dev/screenshots.sh                  # docs/screenshots/: text for every view, PNGs for these
+cargo test live_airflow_and_jira -- --ignored --nocapture   # views 5 and 6 against your own
+                                      # Airflow and Jira, read once and drawn (AIRFLOW_*, JIRA_* set)
 ```
 
 | | |

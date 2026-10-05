@@ -23,6 +23,8 @@ pub const NOT_PASSED_ON: &[&str] = &[
     "CH_SEED_URLS",
     "REDASH_ADMIN_API_KEY",
     "REDIS_URL",
+    "AIRFLOW_PASSWORD",
+    "JIRA_TOKEN",
 ];
 
 pub struct PtyProcess {
