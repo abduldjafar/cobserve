@@ -14,6 +14,22 @@ time, the prayer times where you are, and a reminder ten minutes before each.
 
 ![NODES view](docs/screenshots/120x36-nodes.png)
 
+**New here?** [GUIDE.md](GUIDE.md) goes from zero to everyday use:
+
+- what you need, and installing it;
+- trying it with no fleet (`FAKE=1 cobserve`);
+- creating the read-only ClickHouse user and connecting it to your fleet and Redash;
+- a tour of every view and session, recipes for on call, and troubleshooting.
+
+The quick version:
+
+```sh
+git clone https://github.com/abduldjafar/cobserve.git && cd cobserve
+cargo install --path .                 # Rust 1.88+; puts `cobserve` in ~/.cargo/bin
+FAKE=1 cobserve                        # a generated fleet: look around, ? for keys, q quits
+cobserve --credential ~/.config/cobserve/credentials.yaml    # your fleet (GUIDE.md §5)
+```
+
 It reads ClickHouse directly over HTTP, read-only, so it keeps working when the web app is
 down. `DESIGN.md` is the contract for every number on screen (§5); the additions here sit
 on top of it and are listed in `DESIGN.md` §13.
