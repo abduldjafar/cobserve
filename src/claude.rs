@@ -269,11 +269,16 @@ impl ClaudePane {
         }
     }
 
-    /// A key for the program, as a terminal would send it — and, as a terminal does, back
-    /// down to the bottom from wherever the wheel had scrolled.
-    pub fn key(&mut self, key: &KeyEvent) {
+    /// A key for the program `kind` runs, as a terminal would send it — and, as a terminal
+    /// does, back down to the bottom from wherever the wheel had scrolled.
+    pub fn key(&mut self, key: &KeyEvent, kind: Kind) {
         self.parser.screen_mut().set_scrollback(0);
-        let bytes = encode_key(key, self.parser.screen().application_cursor());
+        let bytes = match kind {
+            // Enter with shift, ⌘, ctrl or ⌥ is a new line in the prompt: sent as ctrl+j, the
+            // line feed Claude Code and OpenCode both take as one, whatever the terminal is.
+            Kind::Claude | Kind::OpenCode if is_new_line(key) => b"\n".to_vec(),
+            _ => encode_key(key, self.parser.screen().application_cursor()),
+        };
         self.outbox.extend(bytes);
     }
 
@@ -964,7 +969,7 @@ impl Sessions {
         if session.kind != Kind::Claude {
             if session.pane.screen().alternate_screen() {
                 let up = KeyEvent::new(if wheel < 0 { KeyCode::Up } else { KeyCode::Down }, KeyModifiers::NONE);
-                session.pane.key(&up);
+                session.pane.key(&up, session.kind);
             } else {
                 session.pane.scroll_back(-3 * isize::from(wheel));
             }
@@ -1100,6 +1105,13 @@ fn button_code(button: MouseButton) -> u32 {
     }
 }
 
+/// Enter with a modifier — shift, ⌘, ctrl or ⌥ — which the terminal can tell apart from Enter
+/// alone when it speaks the kitty keyboard protocol (⌥ as Meta it always can).
+pub fn is_new_line(key: &KeyEvent) -> bool {
+    let modifiers = KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::HYPER;
+    key.code == KeyCode::Enter && key.modifiers.intersects(modifiers)
+}
+
 /// A key as an xterm sends it.
 pub fn encode_key(key: &KeyEvent, application_cursor: bool) -> Vec<u8> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -1147,8 +1159,8 @@ pub fn encode_key(key: &KeyEvent, application_cursor: bool) -> Vec<u8> {
             with_alt(vec![byte])
         }
         KeyCode::Char(c) => with_alt(c.to_string().into_bytes()),
-        // Claude Code takes meta-Enter as a new line in the prompt.
-        KeyCode::Enter if alt || shift => b"\x1b\r".to_vec(),
+        // ⌥ as Meta puts an escape before it; shift, ctrl and ⌘ an xterm leaves out.
+        KeyCode::Enter if alt => b"\x1b\r".to_vec(),
         KeyCode::Enter => b"\r".to_vec(),
         KeyCode::Tab => b"\t".to_vec(),
         KeyCode::BackTab => esc("[Z"),
@@ -1192,7 +1204,8 @@ mod tests {
         assert_eq!(send(KeyCode::Char('c'), ctrl), [0x03], "ctrl+c interrupts Claude, not the monitor");
         assert_eq!(send(KeyCode::Char('x'), KeyModifiers::ALT), b"\x1bx");
         assert_eq!(send(KeyCode::Enter, plain), b"\r");
-        assert_eq!(send(KeyCode::Enter, KeyModifiers::SHIFT), b"\x1b\r", "a new line in the prompt");
+        assert_eq!(send(KeyCode::Enter, KeyModifiers::SHIFT), b"\r", "as an xterm sends it");
+        assert_eq!(send(KeyCode::Enter, KeyModifiers::ALT), b"\x1b\r", "⌥ as Meta");
         assert_eq!(send(KeyCode::Backspace, plain), [0x7f]);
         assert_eq!(send(KeyCode::Esc, plain), [0x1b]);
         assert_eq!(send(KeyCode::BackTab, KeyModifiers::SHIFT), b"\x1b[Z", "shift+tab cycles Claude's modes");
@@ -1203,6 +1216,28 @@ mod tests {
         assert_eq!(send(KeyCode::Delete, KeyModifiers::SHIFT), b"\x1b[3;2~");
         assert_eq!(send(KeyCode::F(1), plain), b"\x1bOP");
         assert_eq!(send(KeyCode::F(12), plain), b"\x1b[24~");
+    }
+
+    #[test]
+    fn enter_with_a_modifier_is_a_new_line_for_claude_and_opencode_and_enter_for_a_shell() {
+        let mut pane = ClaudePane::default();
+        let enter = |modifiers| key(KeyCode::Enter, modifiers);
+        // ⇧⏎, ⌘⏎ (the kitty keyboard protocol's super), ctrl+⏎ and ⌥⏎: ctrl+j, a new line.
+        for modifiers in [KeyModifiers::SHIFT, KeyModifiers::SUPER, KeyModifiers::CONTROL, KeyModifiers::ALT] {
+            for kind in [Kind::Claude, Kind::OpenCode] {
+                pane.key(&enter(modifiers), kind);
+                assert_eq!(pane.take_outbox(), b"\n", "{modifiers:?} in {kind:?}");
+            }
+        }
+        pane.key(&enter(KeyModifiers::NONE), Kind::Claude);
+        assert_eq!(pane.take_outbox(), b"\r", "Enter alone sends the prompt");
+        pane.key(&key(KeyCode::Char('j'), KeyModifiers::CONTROL), Kind::OpenCode);
+        assert_eq!(pane.take_outbox(), b"\n", "ctrl+j itself, in any terminal");
+        // A shell gets what an xterm sends: Enter is Enter, ⌥ puts an escape before it.
+        pane.key(&enter(KeyModifiers::SHIFT), Kind::Terminal);
+        assert_eq!(pane.take_outbox(), b"\r");
+        pane.key(&enter(KeyModifiers::ALT), Kind::Terminal);
+        assert_eq!(pane.take_outbox(), b"\x1b\r");
     }
 
     #[test]
@@ -1416,7 +1451,7 @@ mod tests {
         assert_eq!(pane.scrolled_back(), 6, "three lines a tick, as a terminal scrolls");
         assert!(pane.take_outbox().is_empty(), "nothing typed into the shell — no stray ~");
         assert!(pane.screen().contents().starts_with("line 36\n"), "six lines up from line 42: {}", pane.screen().contents());
-        pane.key(&key(KeyCode::Char('l'), KeyModifiers::NONE));
+        pane.key(&key(KeyCode::Char('l'), KeyModifiers::NONE), Kind::Terminal);
         assert_eq!(pane.scrolled_back(), 0, "a key goes back down");
         pane.take_outbox();
         // less, vim: a screen of their own, which the arrows move.

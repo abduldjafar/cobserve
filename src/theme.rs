@@ -56,6 +56,7 @@ struct Palette {
     tint_ok: (u8, u8, u8),
     tint_warn: (u8, u8, u8),
     tint_crit: (u8, u8, u8),
+    tint_claude: (u8, u8, u8),
 }
 
 const DARK: Palette = Palette {
@@ -82,6 +83,7 @@ const DARK: Palette = Palette {
     tint_ok: (22, 49, 37),
     tint_warn: (60, 47, 20),
     tint_crit: (66, 29, 31),
+    tint_claude: (61, 38, 31),
 };
 
 const LIGHT: Palette = Palette {
@@ -108,6 +110,7 @@ const LIGHT: Palette = Palette {
     tint_ok: (218, 241, 226),
     tint_warn: (251, 238, 204),
     tint_crit: (251, 223, 221),
+    tint_claude: (250, 226, 214),
 };
 
 /// Every colour role the UI uses.
@@ -140,6 +143,8 @@ pub struct Theme {
     pub tint_ok: Color,
     pub tint_warn: Color,
     pub tint_crit: Color,
+    /// Under what a helper just wrote into a query.
+    pub tint_claude: Color,
 }
 
 impl Theme {
@@ -179,6 +184,7 @@ impl Theme {
                     tint_ok: c(p.tint_ok),
                     tint_warn: c(p.tint_warn),
                     tint_crit: c(p.tint_crit),
+                    tint_claude: c(p.tint_claude),
                 }
             }
             // 16 colours: the terminal's own background stays, so nothing here paints one.
@@ -207,6 +213,7 @@ impl Theme {
                 tint_ok: Color::Reset,
                 tint_warn: Color::Reset,
                 tint_crit: Color::Reset,
+                tint_claude: Color::Reset,
             },
             Depth::Mono => Theme {
                 depth,
@@ -233,6 +240,7 @@ impl Theme {
                 tint_ok: Color::Reset,
                 tint_warn: Color::Reset,
                 tint_crit: Color::Reset,
+                tint_claude: Color::Reset,
             },
         }
     }
@@ -407,6 +415,23 @@ impl Theme {
         match self.depth {
             Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.keycap),
             _ => Style::default(),
+        }
+    }
+
+    /// What a helper wrote in place of a part of the text, until it is changed or run.
+    /// Underlined where backgrounds are not painted.
+    pub fn written(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.tint_claude),
+            _ => Style::default().add_modifier(Modifier::UNDERLINED),
+        }
+    }
+
+    /// Text selected in a field.
+    pub fn marked(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.border),
+            _ => Style::default().add_modifier(Modifier::REVERSED),
         }
     }
 

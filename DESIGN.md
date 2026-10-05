@@ -714,7 +714,13 @@ or from a slope over the last minutes of it.
   program makes (cursor position, device attributes, default colours) are answered, and the
   rest (OpenCode asks for many more) left to time out as an older terminal would; `ctrl+z` is
   held back from Claude and OpenCode, since nothing in the pane could resume them — a shell
-  gets it, for its own jobs.
+  gets it, for its own jobs. Keys reach the program as an xterm sends them. Where the terminal
+  speaks the kitty keyboard protocol — asked once at the start, given back on the way out, its
+  escape codes made unambiguous and nothing more — Enter with shift, ⌘ or ctrl comes through as
+  itself, as it does for Claude Code run on its own; that, and ⌥⏎, reaches Claude and OpenCode
+  as `ctrl+j`, the line feed both take as a new line in the prompt, while a shell gets Enter
+  as an xterm would send it. The footer names the key for a new line: `⇧⏎`, or `ctrl+j` where
+  the terminal cannot tell.
 - **Sessions kept, and conversations taken up** (`src/saved.rs`, `src/conversations.rs`): the
   list of sessions — what each runs, where, its name and the conversation it is in — is kept in
   `$XDG_STATE_HOME/cobserve/sessions.json` (`~/.local/state/cobserve/` without it, mode 600)
@@ -774,7 +780,12 @@ or from a slope over the last minutes of it.
   wrote them there, without its version and never with the password. The logins stay in
   `main.rs` with the code that sends them, refreshed after every discovery; `App` knows the
   servers by name only. The text, what ran (`↑` on the first line) and the server are kept with
-  the session for the next start. `FAKE=1` answers from the made-up fleet.
+  the session for the next start. `FAKE=1` answers from the made-up fleet. The text is selected
+  as in an editor — a drag of the mouse (past the field's edge it scrolls along), `shift` with
+  the arrows, `ctrl+a` — and what is selected is deleted, typed over, copied (`ctrl+c`), cut
+  (`ctrl+x`) or run alone (`ctrl+r`); `ctrl+w` takes a word, `ctrl+u` everything, `ctrl+z` gives
+  back the last of these. Where the terminal tells them apart, `⇧⏎` is always a new line and
+  `ctrl+⏎` or `⌘⏎` runs, as in Redash.
 - **Suggestions** (`src/complete.rs`): as a word is typed in a query session, what the cursor's
   place in the statement calls for — tables after `FROM`/`JOIN`/`INTO`/`DESCRIBE`, a database's
   tables after `db.`, the columns of the tables the statement reads (by name or alias, the whole
@@ -787,17 +798,22 @@ or from a slope over the last minutes of it.
   bounded — read when a session first runs on it and again after fifteen minutes; until then,
   the system tables and common functions.
 - **A helper for the SQL** (`src/assist.rs`): `ctrl+k` (or a click on *asks Claude* under the
-  text; `ctrl+g` as well, where a global shortcut does not take it first) asks Claude Code — `claude -p` with
+  text; `ctrl+g` as well, where a global shortcut does not take it first) opens a line under the
+  text to say what to do, in any language, and `⏎` asks Claude Code — `claude -p` with
   `--tools ""`, `--strict-mcp-config`, `--no-session-persistence` and the rules appended to its
   own system prompt, so it answers on the user's Pro or Max plan — or OpenCode — `opencode run`
-  with `OPENCODE_PERMISSION` denying every tool — to write what the text's `--` comments ask
-  for, or to put right what failed with what the server said. Both run in an empty folder of
+  with `OPENCODE_PERMISSION` denying every tool — for that; with nothing typed, to write what
+  the text's `--` comments ask for, or to put right what failed with what the server said. With
+  part of the text selected it is told the whole text and asked about that part alone; its
+  answer takes that part's place if the text is as it was when asked, and is marked (Claude's
+  tint) until it is changed or run — not selected, so `ctrl+r` runs all of it. Both run in an empty folder of
   their own (`~/.cache/cobserve/assist`), without `ANTHROPIC_API_KEY` or the monitor's
   credentials, for two minutes at most; `ctrl+c` kills them. They are told the server, its
   version, the text, the error, and the tables the text names or its words point at with their
   columns (the others by name) — never a row or a login. The answer, out of its fences and its
-  long lines broken before their clauses, takes the text's place; `ctrl+z` puts the text back;
-  nothing runs until asked. OpenCode's conversations from here are left out of *past
+  long lines broken before their clauses, takes the text's place — the question kept on top as
+  a `--` comment when the answer does not carry it; `ctrl+z` puts the text back; nothing runs
+  until asked. OpenCode's conversations from here are left out of *past
   conversations*. `ASSISTANT=opencode` chooses OpenCode first; `ctrl+t` or the chip switches.
 - **Every row a click**: on view 1 a row of the tree or an insight, on view 2 a job, on view 3 a
   tile, on view 4 a line of the tape — a click puts the cursor there, a second does what `⏎`

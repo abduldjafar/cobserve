@@ -200,6 +200,7 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
     // What can be clicked is what this frame draws.
     app.viewport.hits.borrow_mut().clear();
+    app.viewport.console_text.set(None);
     frame.render_widget(Block::new().style(theme.base()), area);
     if area.width < 4 || area.height < 3 {
         return;
@@ -430,6 +431,21 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
     let mut tail: Option<String> = None;
     // What the session on screen runs, for what its keys say.
     let kind = app.claude.current().map_or(crate::claude::Kind::Claude, |s| s.kind);
+    // Under a program that runs, the bar's keys — and for Claude or OpenCode the way to a new
+    // line in its prompt, before the F-keys: ⇧⏎ where the terminal tells it from ⏎, ctrl+j
+    // anywhere.
+    let mut running_keys = vec![
+        ("1-4", "views"),
+        ("5-9 ↑↓", "sessions"),
+        ("/", "find one"),
+        ("n", "new"),
+        ("r", "rename"),
+        ("x", "close"),
+        ("F1-F9", "any tab"),
+    ];
+    if matches!(kind, crate::claude::Kind::Claude | crate::claude::Kind::OpenCode) {
+        running_keys.insert(6, (if app.modified_enter { "⇧⏎" } else { "ctrl+j" }, "new line"));
+    }
     let keys: &[(&str, &str)] = match app.view {
         View::Nodes if app.focus == Focus::Insights => &[
             ("↑↓", "choose"),
@@ -528,6 +544,18 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
                     tail = Some("a click takes one too".into());
                     &[("tab", "take it"), ("↑↓", "choose"), ("esc", "close them")]
                 }
+                Some(c) if c.instruction.is_some() => {
+                    tail = Some("type what it should do, in any language".into());
+                    &[("⏎", "ask"), ("esc", "cancel")]
+                }
+                Some(c) if c.selection().is_some() => &[
+                    ("⌫", "delete it"),
+                    ("ctrl+k", "ask about it"),
+                    ("ctrl+r", "run it"),
+                    ("ctrl+c", "copy"),
+                    ("ctrl+x", "cut"),
+                    ("esc", "unselect"),
+                ],
                 Some(c) if c.assistant == Assistant::OpenCode => &[
                     ("ctrl+r", "run"),
                     ("tab", "complete"),
@@ -549,19 +577,11 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             }
         }
         View::Claude if app.claude.is_running() => {
-            // Every other key is Claude's; the one that is not leads the bar.
+            // Every other key is the program's; the one that is not leads the bar.
             cells.push(" ctrl+\\ ", theme.keycap());
             cells.push(" then", theme.muted());
             tail = Some(format!("every other key goes to {}", kind.listener()));
-            &[
-                ("1-4", "views"),
-                ("5-9 ↑↓", "sessions"),
-                ("/", "find one"),
-                ("n", "new"),
-                ("r", "rename"),
-                ("x", "close"),
-                ("F1-F9", "any tab"),
-            ]
+            &running_keys
         }
         View::Claude => match kind {
             crate::claude::Kind::Claude => &[("⏎", "start Claude"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
@@ -625,6 +645,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("ctrl+\\", "the sessions · then 1-4 a view, 5-9 or ↑↓ a session, / one by name, n new (c o t q:"),
     ("", "Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x close"),
     ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
+    ("⇧⏎  ctrl+j", "a new line in Claude's or OpenCode's prompt — ctrl+j in any terminal"),
     ("z", "the clock: the local zone ↔ UTC · or click it · ctrl+\\ z in a session"),
     ("d", "wave a prayer's reminder away · ctrl+\\ d in a session · or click ✕"),
     ("p", "pause: the numbers stop, the clock does not"),

@@ -13,14 +13,17 @@ use crate::console::{Ask, Assistant};
 
 /// What the helper is told it is for, and how to answer.
 pub const RULES: &str = "You write ClickHouse SQL for a read-only query console in a terminal. \
-Answer with the SQL alone: no explanation before or after it, no Markdown, no code fences.
+Answer with SQL alone: no Markdown, no code fences, nothing before or after it — whatever needs \
+saying (an explanation, an answer to a question) goes in short -- comment lines above the SQL.
 - One statement that only reads: SELECT (WITH … SELECT too), SHOW, DESCRIBE, EXISTS or EXPLAIN. \
 It runs with readonly=1 and a 30 second limit, and only its first 1000 rows come back.
 - Keep the request's -- comment lines at the top as they are.
 - Use the tables and columns you are given and ClickHouse's own functions; never make a name up. \
 When the question cannot be answered from them, answer with one -- comment line that says why.
 - Prefer what is cheap: a LIMIT where many rows could come back.
-- End the statement with a semicolon.";
+- When asked about a part of the text, answer with what should take that part's place, and \
+nothing else of the text.
+- End a whole statement with a semicolon.";
 
 /// What OpenCode may do while it answers: nothing — no shell, no files, no web. Applied over
 /// whatever its own configuration allows.
@@ -112,13 +115,24 @@ pub fn prompt(ask: &Ask, schema: Option<&Schema>, version: Option<&str>) -> Stri
     out.push_str("The console's text:\n-----\n");
     out.push_str(ask.sql.trim_end());
     out.push_str("\n-----\n\n");
-    match &ask.error {
-        Some(error) => {
-            out.push_str("It ran, and the server said:\n");
-            out.push_str(error);
-            out.push_str("\n\nPut it right.");
-        }
-        None => out.push_str("Write the query its comments ask for — or finish, or correct, the SQL that is there."),
+    if let Some(part) = &ask.selected {
+        out.push_str("The part of it selected:\n-----\n");
+        out.push_str(part.trim_end());
+        out.push_str("\n-----\n\n");
+    }
+    if let Some(error) = &ask.error {
+        out.push_str("It ran, and the server said:\n");
+        out.push_str(error);
+        out.push_str("\n\n");
+    }
+    let asked = ask.instruction.trim();
+    match (&ask.selected, asked.is_empty(), &ask.error) {
+        (Some(_), false, _) => out.push_str(&format!("Asked, of the selected part: {asked}\nAnswer with what should take that part's place.")),
+        (Some(_), true, Some(_)) => out.push_str("Put the selected part right. Answer with what should take its place."),
+        (Some(_), true, None) => out.push_str("Finish or correct the selected part. Answer with what should take its place."),
+        (None, false, _) => out.push_str(&format!("Asked: {asked}")),
+        (None, true, Some(_)) => out.push_str("Put it right."),
+        (None, true, None) => out.push_str("Write the query its comments ask for — or finish, or correct, the SQL that is there."),
     }
     out
 }
@@ -187,8 +201,9 @@ const STOP_WORDS: &[&str] = &[
 ];
 
 /// What a helper answered, as SQL for the session: what was between fences when it fenced it,
-/// without a terminal's colours, ended with `;` so one `⏎` runs it. Nothing at all is said so.
-pub fn clean(answer: &str) -> Result<String, String> {
+/// without a terminal's colours — a whole statement ended with `;` so one `⏎` runs it. Nothing
+/// at all is said so.
+pub fn clean(answer: &str, whole: bool) -> Result<String, String> {
     let plain = strip_ansi(answer);
     let text = plain.trim();
     let text = fenced(text).unwrap_or(text).trim();
@@ -204,8 +219,9 @@ pub fn clean(answer: &str) -> Result<String, String> {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // A whole statement ends with `;`, so one ⏎ runs it; a part takes its place as it came.
     let only_comments = sql.lines().all(|l| l.trim().is_empty() || l.trim_start().starts_with("--"));
-    if !only_comments && !sql.trim_end().ends_with(';') {
+    if whole && !only_comments && !sql.trim_end().ends_with(';') {
         sql.push(';');
     }
     Ok(sql)
@@ -296,7 +312,7 @@ mod tests {
     }
 
     fn ask(sql: &str, error: Option<&str>, assistant: Assistant) -> Ask {
-        Ask { id: 1, assistant, node: Some("clickhouse3".into()), sql: sql.into(), error: error.map(str::to_string) }
+        Ask { id: 1, assistant, node: Some("clickhouse3".into()), sql: sql.into(), error: error.map(str::to_string), instruction: String::new(), selected: None }
     }
 
     #[test]
@@ -313,6 +329,16 @@ mod tests {
         assert!(fix.starts_with(RULES), "OpenCode has them first");
         assert!(fix.contains("system.processes (MergeTree): query_id String, user String"));
         assert!(fix.contains("the server said:\nCode 47 · Unknown identifier usr\n\nPut it right."));
+        // A question typed after ctrl+k, about a selected part.
+        let mut part = ask("SELECT user FROM system.processes WHERE elapsed > 10", None, Assistant::Claude);
+        part.instruction = "only queries over a minute".into();
+        part.selected = Some("WHERE elapsed > 10".into());
+        let text = prompt(&part, Some(&schema()), None);
+        assert!(text.contains("The part of it selected:\n-----\nWHERE elapsed > 10\n-----"), "{text}");
+        assert!(text.ends_with("Asked, of the selected part: only queries over a minute\nAnswer with what should take that part's place."), "{text}");
+        let mut asked = ask("", None, Assistant::Claude);
+        asked.instruction = "top 10 users by memory".into();
+        assert!(prompt(&asked, Some(&schema()), None).ends_with("Asked: top 10 users by memory"));
         // Nothing points anywhere: the server's own tables.
         let schema = schema();
         let vague = tables_for("-- how is it doing", &schema);
@@ -331,15 +357,16 @@ mod tests {
         assert_eq!(command(Assistant::OpenCode, &["opencode".to_string()], "/tmp/x"), ["opencode", "run", "--dir", "/tmp/x"]);
         assert!(serde_json::from_str::<serde_json::Value>(OPENCODE_PERMISSION).unwrap()["bash"] == "deny");
 
-        assert_eq!(clean("```sql\nSELECT 1\n```\nThis counts.").unwrap(), "SELECT 1;");
-        assert_eq!(clean("\x1b[1m-- top users\nSELECT user FROM system.processes;\x1b[0m\n").unwrap(), "-- top users\nSELECT user FROM system.processes;");
-        assert_eq!(clean("-- no table has refunds").unwrap(), "-- no table has refunds", "a comment alone is not ended with ;");
+        assert_eq!(clean("```sql\nSELECT 1\n```\nThis counts.", true).unwrap(), "SELECT 1;");
+        assert_eq!(clean("\x1b[1m-- top users\nSELECT user FROM system.processes;\x1b[0m\n", true).unwrap(), "-- top users\nSELECT user FROM system.processes;");
+        assert_eq!(clean("-- no table has refunds", true).unwrap(), "-- no table has refunds", "a comment alone is not ended with ;");
         let long = "SELECT database, name, total_rows FROM system.tables WHERE database = 'testing' ORDER BY total_rows DESC LIMIT 5";
         assert_eq!(
-            clean(&format!("-- the five biggest\n{long}")).unwrap(),
+            clean(&format!("-- the five biggest\n{long}"), true).unwrap(),
             "-- the five biggest\nSELECT database, name, total_rows\nFROM system.tables\nWHERE database = 'testing'\nORDER BY total_rows DESC\nLIMIT 5;"
         );
-        assert!(clean("  \n").is_err());
+        assert!(clean("  \n", true).is_err());
+        assert_eq!(clean("WHERE ts > now() - INTERVAL 1 DAY", false).unwrap(), "WHERE ts > now() - INTERVAL 1 DAY", "a part takes no ;");
         assert!(failure(Assistant::Claude, Some(1), "Invalid API key · Please run /login", "").contains("/login"));
         assert_eq!(failure(Assistant::OpenCode, Some(1), "", "Error: model not found\n"), "Error: model not found");
         assert_eq!(failure(Assistant::Claude, None, "", ""), "Claude was stopped");

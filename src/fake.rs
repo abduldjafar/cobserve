@@ -990,8 +990,12 @@ fn sample(kind: &str, i: usize) -> String {
 /// What the made-up helper writes: a query for what the comments ask — the users by memory, the
 /// biggest tables, the slowest queries, what runs — with the comments kept, after a moment.
 pub fn assist(ask: &crate::console::Ask) -> Result<String, String> {
+    // A part comes back as it was, said to be made up.
+    if let Some(part) = &ask.selected {
+        return Ok(format!("/* FAKE=1: as it was */ {}", part.trim()));
+    }
     let comments: Vec<&str> = ask.sql.lines().filter(|l| l.trim_start().starts_with("--")).collect();
-    let words = ask.sql.to_lowercase();
+    let words = format!("{} {}", ask.sql, ask.instruction).to_lowercase();
     let has = |list: &[&str]| list.iter().any(|w| words.contains(w));
     let body = if has(&["memory", "memori", "ram"]) {
         "SELECT user, count() AS queries, formatReadableSize(sum(memory_usage)) AS memory\nFROM system.processes\nGROUP BY user\nORDER BY sum(memory_usage) DESC\nLIMIT 10;"
@@ -1163,7 +1167,7 @@ mod tests {
         // Its tables are the ones its queries read.
         let schema = schema();
         assert!(schema.table(Some("gateway"), "transfers").is_some() && schema.table(Some("system"), "processes").is_some());
-        let ask = crate::console::Ask { id: 1, assistant: crate::console::Assistant::Claude, node: None, sql: "-- top users by memory".into(), error: None };
+        let ask = crate::console::Ask { id: 1, assistant: crate::console::Assistant::Claude, node: None, sql: "-- top users by memory".into(), error: None, instruction: String::new(), selected: None };
         let sql = assist(&ask).unwrap();
         assert!(sql.starts_with("-- top users by memory\nSELECT user") && sql.ends_with(';'), "{sql}");
     }

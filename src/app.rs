@@ -118,6 +118,20 @@ pub struct Viewport {
     pub hits: RefCell<Vec<(Rect, Hit)>>,
     /// The nodes listed under the sessions, as last drawn, for `Hit::Node`.
     pub listed_nodes: RefCell<Vec<String>>,
+    /// Where a query session's text was last drawn, for a click or a drag in it.
+    pub console_text: Cell<Option<TextLayout>>,
+}
+
+/// A query session's text as drawn: where its lines start on screen, the first line shown, and
+/// how far the cursor's line slid along to keep the cursor in sight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextLayout {
+    pub text_x: u16,
+    pub top: u16,
+    pub height: u16,
+    pub first: usize,
+    pub cursor_row: usize,
+    pub shift: usize,
 }
 
 /// Something on screen a click means something on.
@@ -283,6 +297,9 @@ pub struct App {
     tape_selection: usize,
     /// `POLL_MS`, so the header can say how often it polls and notice when data is late.
     pub poll_interval: Duration,
+    /// The terminal tells Enter with shift or ⌘ from Enter alone (the kitty keyboard protocol),
+    /// so ⇧⏎ is a new line for Claude and OpenCode; without it, ctrl+j is.
+    pub modified_enter: bool,
     /// Wall time the last snapshot arrived: data older than a few polls is called stale.
     last_snapshot_wall: Option<SystemTime>,
     pub viewport: Viewport,
@@ -351,6 +368,7 @@ impl App {
             map_selection: 0,
             tape_selection: 0,
             poll_interval: Duration::from_millis(2000),
+            modified_enter: false,
             last_snapshot_wall: None,
             viewport: Viewport::default(),
             claude: Sessions::default(),
@@ -837,11 +855,18 @@ impl App {
                         console.connect(node);
                     }
                 }
+                // The cursor where the click is; a drag from there selects.
                 Some(Hit::ConsoleText) => {
+                    let spot = self.text_spot(event.column, event.row);
                     if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
-                        console.focus = crate::console::Focus::Editor;
-                        console.choosing = None;
-                        console.suggest = None;
+                        match spot {
+                            Some(spot) => console.press(spot),
+                            None => {
+                                console.focus = crate::console::Focus::Editor;
+                                console.choosing = None;
+                                console.suggest = None;
+                            }
+                        }
                     }
                 }
                 Some(Hit::ConsoleAnswer) => {
@@ -860,9 +885,8 @@ impl App {
                     }
                 }
                 Some(Hit::ConsoleAsk) => {
-                    let now = self.now();
                     if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
-                        console.ask_for_sql(now);
+                        console.open_instruction();
                     }
                 }
                 Some(Hit::Suggestion(index)) => {
@@ -924,6 +948,20 @@ impl App {
                 }
                 Some(Hit::Pane) | None => {}
             },
+            // A drag in a query session's text selects, wherever the mouse goes meanwhile.
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let spot = self.text_spot(event.column, event.row);
+                if let (Some(spot), Some(console)) = (spot, self.claude.current_mut().and_then(|s| s.console.as_deref_mut()))
+                    && console.dragging()
+                {
+                    console.drag_to(spot);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
+                    console.release();
+                }
+            }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let delta = if event.kind == MouseEventKind::ScrollUp { -1 } else { 1 };
                 match self.view {
@@ -949,6 +987,21 @@ impl App {
             _ => {}
         }
         self.sync_view_state();
+    }
+
+    /// The place in a query session's text under the mouse, as the text was last drawn. Past
+    /// its top or its bottom it is a line further, so a drag out of the field scrolls along.
+    fn text_spot(&self, x: u16, y: u16) -> Option<crate::console::Spot> {
+        let layout = self.viewport.console_text.get()?;
+        let row = if y < layout.top {
+            layout.first.saturating_sub(1)
+        } else if y >= layout.top + layout.height {
+            layout.first + layout.height as usize
+        } else {
+            layout.first + (y - layout.top) as usize
+        };
+        let shift = if row == layout.cursor_row { layout.shift } else { 0 };
+        Some((row, x.saturating_sub(layout.text_x) as usize + shift))
     }
 
     /// One of the monitor's views, leaving Claude's modes behind.
@@ -1611,7 +1664,7 @@ impl App {
                     self.notice = Some((format!("ctrl+z is not passed on — nothing here could bring {who} back"), SystemTime::now()));
                     return;
                 }
-                session.pane.key(&key);
+                session.pane.key(&key, session.kind);
                 return;
             }
             if key.code == KeyCode::Enter {

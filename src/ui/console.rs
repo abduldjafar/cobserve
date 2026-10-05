@@ -94,11 +94,19 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, console: &C
     let field = Rect::new(area.x, y, area.width, rows.min(bottom.saturating_sub(y)));
     frame.render_widget(Block::new().style(theme.raised()), field);
     hit(field, Hit::ConsoleText);
-    let first = console.row.saturating_sub(field.height.saturating_sub(1) as usize);
+    // The text scrolls only as far as the cursor needs.
+    let height = field.height as usize;
+    let mut first = console.top.get().min(console.row);
+    if console.row >= first + height {
+        first = console.row + 1 - height;
+    }
+    let first = first.min(console.lines.len().saturating_sub(height));
+    console.top.set(first);
     let text_width = width.saturating_sub(GUTTER + 1);
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut cursor = None;
     let mut shift_on_row = 0;
+    let selection = console.selection();
     for (n, text) in console.lines.iter().enumerate().skip(first).take(field.height as usize) {
         let mut cells = Cells::new();
         cells.cell_right(&(n + 1).to_string(), 4, theme.faint());
@@ -110,13 +118,38 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, console: &C
             cursor = Some((field.x + GUTTER as u16 + (console.col - shift) as u16, field.y + (n - first) as u16));
         }
         let shown: String = text.chars().skip(shift).collect();
-        cells.spans(fit(coloured(&shown, theme), text_width, false));
+        let mut spans = coloured(&shown, theme);
+        // What is selected on this line — its end too, when the selection goes on past it.
+        if let Some(((r0, c0), (r1, c1))) = selection
+            && (r0..=r1).contains(&n)
+        {
+            let from = if n == r0 { c0 } else { 0 };
+            let to = if n == r1 { c1 } else { text.chars().count() + 1 };
+            spans = marked(spans, from.saturating_sub(shift), to.saturating_sub(shift), theme.marked());
+        }
+        // What the helper just wrote in place of a part, under its colour until it is changed.
+        if let Assisting::Wrote { part: Some(((r0, c0), (r1, c1))) } = console.assisting
+            && (r0..=r1).contains(&n)
+        {
+            let from = if n == r0 { c0 } else { 0 };
+            let to = if n == r1 { c1 } else { text.chars().count() };
+            spans = marked(spans, from.saturating_sub(shift), to.saturating_sub(shift), theme.written());
+        }
+        cells.spans(fit(spans, text_width, false));
         lines.push(on_raised(cells.line(width, Style::default()), theme));
     }
+    app.viewport.console_text.set(Some(crate::app::TextLayout {
+        text_x: field.x + GUTTER as u16,
+        top: field.y,
+        height: field.height,
+        first,
+        cursor_row: console.row,
+        shift: shift_on_row,
+    }));
     if console.lines.len() == 1 && console.lines[0].is_empty() {
         // What to do, where there is nothing yet.
         let hints = [
-            format!("-- say what it should show, then ctrl+k: {} writes the SQL", console.assistant.name()),
+            format!("ctrl+k: tell {} what it should show — it writes the SQL", console.assistant.name()),
             "SELECT … FROM system.processes;    ⏎ after its ; runs it".to_string(),
         ];
         lines.clear();
@@ -131,6 +164,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, console: &C
     frame.render_widget(Paragraph::new(lines), field);
     if console.focus == Focus::Editor
         && console.choosing.is_none()
+        && console.instruction.is_none()
         && let Some((x, cy)) = cursor
         && x < area.x + area.width
     {
@@ -138,13 +172,19 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, console: &C
     }
     y += field.height;
 
-    // Under the field: the helper's turn, or how to go on.
+    // Under the field: the line to tell the helper what to do, its turn, or how to go on.
     if y < bottom {
-        let (line, asks) = helper_line(app, theme, console, width);
-        if let Some((at, cells)) = asks {
-            hit(Rect::new(area.x + at as u16, y, cells as u16, 1), Hit::ConsoleAsk);
+        if let Some(text) = &console.instruction {
+            let (line, cursor_at) = instruction_line(theme, console, text, width);
+            frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
+            frame.set_cursor_position((area.x + (cursor_at as u16).min(area.width.saturating_sub(1)), y));
+        } else {
+            let (line, asks) = helper_line(app, theme, console, width);
+            if let Some((at, cells)) = asks {
+                hit(Rect::new(area.x + at as u16, y, cells as u16, 1), Hit::ConsoleAsk);
+            }
+            frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
         }
-        frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
         y += 2;
     }
 
@@ -180,6 +220,79 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, console: &C
 /// A line of the field, its spans on the raised surface.
 fn on_raised(line: Line<'static>, theme: &Theme) -> Line<'static> {
     Line::from(line.spans.into_iter().map(|span| Span::styled(span.content, theme.raised().patch(span.style))).collect::<Vec<_>>())
+}
+
+/// `spans` with the characters `from..to` in `style` — and, when `to` is past their end, a cell
+/// more, for the line's end that is selected too.
+fn marked(spans: Vec<Span<'static>>, from: usize, to: usize, style: Style) -> Vec<Span<'static>> {
+    let mut out = Vec::with_capacity(spans.len() + 2);
+    let mut at = 0;
+    for span in spans {
+        let chars: Vec<char> = span.content.chars().collect();
+        let (start, end) = (at, at + chars.len());
+        at = end;
+        if end <= from || start >= to {
+            out.push(span);
+            continue;
+        }
+        let (a, b) = (from.saturating_sub(start).min(chars.len()), (to - start).min(chars.len()));
+        let piece = |x: usize, y: usize| chars[x..y].iter().collect::<String>();
+        if a > 0 {
+            out.push(Span::styled(piece(0, a), span.style));
+        }
+        out.push(Span::styled(piece(a, b), span.style.patch(style)));
+        if b < chars.len() {
+            out.push(Span::styled(piece(b, chars.len()), span.style));
+        }
+    }
+    if to > at && from <= at {
+        out.push(Span::styled(" ", style));
+    }
+    out
+}
+
+/// The line `ctrl+k` opens: what to ask the helper, typed — about the selected part, when there
+/// is one. Returns the line and where its cursor is.
+fn instruction_line(theme: &Theme, console: &Console, text: &str, width: usize) -> (Line<'static>, usize) {
+    let fill = theme.popup();
+    let mut cells = Cells::new();
+    cells.push("      ", Style::default());
+    cells.push(format!("{} ", console.assistant.glyph()), theme.claude());
+    let about = if console.selection().is_some() { " about the selection" } else { "" };
+    cells.push(format!("ask {}{about} ▸ ", console.assistant.name()), theme.strong());
+    let keys = "⏎ asks · esc ";
+    let room = width.saturating_sub(cells.width() + fmt::width(keys) + 2);
+    // The end of a long question stays in sight, as the cursor is there.
+    let shown: String = {
+        let chars: Vec<char> = text.chars().collect();
+        chars[chars.len().saturating_sub(room.max(1))..].iter().collect()
+    };
+    cells.push(shown, theme.text());
+    let cursor_at = cells.width();
+    // Nothing typed yet: what to type — and what ⏎ alone does.
+    if text.is_empty() {
+        let failed = matches!(&console.state, RunState::Failed { node, .. } if !node.is_empty());
+        let hint = if console.selection().is_some() {
+            "make it faster, explain it, fix it…"
+        } else if failed {
+            "what it should do — or just ⏎: put right what the server said"
+        } else if !console.sql().trim().is_empty() {
+            "what it should do — or just ⏎: what its -- comments ask"
+        } else {
+            "what it should show — top 10 users by memory, slow queries today…"
+        };
+        cells.push(fmt::truncate(hint, room), theme.faint().add_modifier(Modifier::ITALIC));
+    }
+    cells.pad_to(width.saturating_sub(fmt::width(keys)));
+    cells.push(keys, theme.faint());
+    let line = cells.line(width, Style::default());
+    let spans: Vec<Span<'static>> = line
+        .spans
+        .into_iter()
+        .enumerate()
+        .map(|(i, span)| if i == 0 { span } else { Span::styled(span.content, fill.patch(span.style)) })
+        .collect();
+    (Line::from(spans), cursor_at)
 }
 
 /// A line of SQL in colour: keywords, strings, numbers, and a `--` comment dimmed to its end.
@@ -242,10 +355,15 @@ fn helper_line(app: &App, theme: &Theme, console: &Console, width: usize) -> (Li
             cells.push(format!(" · {}", fmt::dur((app.now() - since).max(0) as f64)), theme.muted());
             cells.push(" · ctrl+c stops", theme.faint());
         }
-        Assisting::Wrote => {
+        Assisting::Wrote { part: None } => {
             cells.push(mark, theme.claude());
             cells.push(format!("{who} wrote this"), theme.strong());
             cells.push(" — read it first: ⏎ after its ; runs it · ctrl+z puts back what was there", theme.muted());
+        }
+        Assisting::Wrote { part: Some(_) } => {
+            cells.push(mark, theme.claude());
+            cells.push(format!("{who} rewrote the part marked"), theme.strong());
+            cells.push(" — read it first: ctrl+r runs all of it · ctrl+z puts back what was there", theme.muted());
         }
         Assisting::Failed(why) => {
             cells.push(mark, theme.sev(Severity::Warn));
@@ -261,9 +379,38 @@ fn helper_line(app: &App, theme: &Theme, console: &Console, width: usize) -> (Li
             asks = Some((at, cells.width() - at));
             cells.push(" · ctrl+r runs it again", theme.faint());
         }
+        // Something selected: what can be done with it.
+        Assisting::Idle if console.selection().is_some() => {
+            let count = console.selected_text().map_or(0, |t| t.chars().count());
+            cells.push(fmt::plural(count, "character", "characters"), theme.strong());
+            cells.push(" selected", theme.muted());
+            let ask = format!("asks {who} about it");
+            let words: [(&str, &str); 4] = [("⌫", "deletes it"), ("ctrl+k", &ask), ("ctrl+r", "runs it"), ("ctrl+c", "copies")];
+            for (key, what) in words {
+                let mut piece = Cells::new();
+                piece.push(" · ", theme.faint());
+                let at = cells.width() + piece.width();
+                piece.push(key, theme.muted().add_modifier(Modifier::BOLD));
+                piece.push(format!(" {what}"), theme.faint());
+                if cells.width() + piece.width() > width {
+                    break;
+                }
+                if key == "ctrl+k" {
+                    asks = Some((at, cells.width() + piece.width() - at));
+                }
+                cells.spans(piece.into_spans());
+            }
+        }
         Assisting::Idle => {
             let ask = format!("asks {who}");
-            let words: [(&str, &str); 5] = [("⏎", "after ; runs"), ("ctrl+r", "runs"), ("tab", "completes"), ("ctrl+k", &ask), ("ctrl+o", "another server")];
+            let words: [(&str, &str); 6] = [
+                ("⏎", "after ; runs"),
+                ("ctrl+k", &ask),
+                ("ctrl+a", "selects all"),
+                ("ctrl+u", "clears"),
+                ("tab", "completes"),
+                ("ctrl+o", "another server"),
+            ];
             for (i, (key, what)) in words.iter().enumerate() {
                 let mut piece = Cells::new();
                 if i > 0 {

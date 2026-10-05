@@ -65,6 +65,28 @@ pub struct Console {
     undo: Option<Vec<String>>,
     /// What `y` or `Y` copied from the answer, for `main.rs` to put on the clipboard, once.
     clipboard: Option<(String, String)>,
+    /// Where the selection began — it runs from there to the cursor — while there is one.
+    pub anchor: Option<Spot>,
+    /// The mouse's button is down in the text: moving it selects.
+    dragging: bool,
+    /// The first line of the text on screen, as it was last drawn. It moves only as far as the
+    /// cursor needs, so the line under the mouse stays where it is.
+    pub top: std::cell::Cell<usize>,
+    /// What is being typed for the helper (`ctrl+k`), while the line for it is open.
+    pub instruction: Option<String>,
+    /// The text a question was asked of, the part of it selected then, and what was asked: what
+    /// comes back takes that part's place.
+    asked: Option<Asked>,
+}
+
+/// A place in the text: a line, and a character in it.
+pub type Spot = (usize, usize);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Asked {
+    text: String,
+    part: Option<(Spot, Spot)>,
+    instruction: String,
 }
 
 /// Suggestions open under the cursor: for the word at `from` on line `row`.
@@ -118,8 +140,9 @@ pub enum Assisting {
     Idle,
     /// Asked at `since`, Unix seconds.
     Asking { id: u64, since: i64 },
-    /// The text is what it wrote, not changed or run yet.
-    Wrote,
+    /// The text is what it wrote — or `part` of it is, when it was asked about a part — not
+    /// changed or run yet.
+    Wrote { part: Option<(Spot, Spot)> },
     /// It could not — or there was nothing to ask it.
     Failed(String),
 }
@@ -134,6 +157,10 @@ pub struct Ask {
     pub sql: String,
     /// What the server said, when the text is what ran last and it said no.
     pub error: Option<String>,
+    /// What was typed for it after `ctrl+k`, if anything.
+    pub instruction: String,
+    /// The part of the text selected, when one was: the answer takes its place alone.
+    pub selected: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -274,23 +301,46 @@ impl Console {
         matches!(self.assisting, Assisting::Asking { .. })
     }
 
-    /// Ask the helper to write what the text asks for — its `--` comments — or to put right
-    /// what failed. What it writes takes the text's place; nothing runs until asked.
-    pub fn ask_for_sql(&mut self, now: i64) {
+    /// The line to say what the helper should do, open (`ctrl+k`, or a click on *asks Claude*).
+    pub fn open_instruction(&mut self) {
+        if !self.asking() {
+            self.instruction = Some(String::new());
+            self.suggest = None;
+            self.focus = Focus::Editor;
+        }
+    }
+
+    /// Ask the helper for what `instruction` says — or, with nothing typed, what the text's `--`
+    /// comments ask for, or to put right what failed. With a part of the text selected it works
+    /// on that part alone. What it writes takes the text's place, or the part's; nothing runs
+    /// until asked.
+    pub fn ask_for_sql(&mut self, now: i64, instruction: &str) {
         if self.asking() {
             return;
         }
         let sql = self.sql();
-        if sql.trim().is_empty() {
-            self.assisting = Assisting::Failed("say what the query should do after --, then ctrl+k".into());
+        let instruction = instruction.trim().to_string();
+        if sql.trim().is_empty() && instruction.is_empty() {
+            self.assisting = Assisting::Failed("say what the query should do: ctrl+k, then type it".into());
             return;
         }
+        let part = self.selection().filter(|_| self.selected_text().is_some_and(|t| !t.trim().is_empty()));
+        let selected = part.and_then(|_| self.selected_text());
         let error = match &self.state {
             RunState::Failed { error, .. } if self.history.last().map(|h| h.trim()) == Some(sql.trim()) => Some(error.clone()),
             _ => None,
         };
         self.asks += 1;
-        self.ask = Some(Ask { id: self.asks, assistant: self.assistant, node: self.node.clone(), sql, error });
+        self.ask = Some(Ask {
+            id: self.asks,
+            assistant: self.assistant,
+            node: self.node.clone(),
+            sql: sql.clone(),
+            error,
+            instruction: instruction.clone(),
+            selected,
+        });
+        self.asked = Some(Asked { text: sql, part, instruction });
         self.assisting = Assisting::Asking { id: self.asks, since: now };
         self.suggest = None;
     }
@@ -309,16 +359,170 @@ impl Console {
         if !matches!(self.assisting, Assisting::Asking { id: asked, .. } if asked == id) {
             return;
         }
-        match result {
-            Ok(sql) => {
-                self.undo = Some(self.lines.clone());
-                self.set_sql(&sql);
-                self.focus = Focus::Editor;
-                self.suggest = None;
-                self.assisting = Assisting::Wrote;
+        let asked = self.asked.take();
+        let sql = match result {
+            Ok(sql) => sql,
+            Err(error) => {
+                self.assisting = Assisting::Failed(error);
+                return;
             }
-            Err(error) => self.assisting = Assisting::Failed(error),
+        };
+        let part = match asked {
+            // The part it was asked about, replaced — marked, to be seen, but not selected: what
+            // runs next is the whole text.
+            Some(Asked { text, part: Some((start, end)), .. }) => {
+                if text != self.sql() {
+                    self.assisting = Assisting::Failed("the text changed while it was writing — select the part again, then ctrl+k".into());
+                    return;
+                }
+                (self.anchor, self.row, self.col) = (Some(start), end.0, end.1);
+                self.delete_selection();
+                let from = (self.row, self.col);
+                self.insert_text(&sql);
+                Some((from, (self.row, self.col)))
+            }
+            // The whole text, what was asked kept on top of it.
+            asked => {
+                self.undo = Some(self.lines.clone());
+                let instruction = asked.map(|a| a.instruction).unwrap_or_default();
+                let said = instruction.is_empty() || sql.to_lowercase().contains(&instruction.to_lowercase());
+                let sql = if said { sql } else { format!("-- {instruction}\n{sql}") };
+                self.set_sql(&sql);
+                None
+            }
+        };
+        self.anchor = None;
+        self.focus = Focus::Editor;
+        self.suggest = None;
+        self.assisting = Assisting::Wrote { part };
+    }
+
+    /// The part of the text selected, from its start to its end, when there is one.
+    pub fn selection(&self) -> Option<(Spot, Spot)> {
+        let anchor = self.anchor?;
+        let cursor = (self.row, self.col);
+        (anchor != cursor).then_some(if anchor < cursor { (anchor, cursor) } else { (cursor, anchor) })
+    }
+
+    /// What is selected, its lines joined.
+    pub fn selected_text(&self) -> Option<String> {
+        let ((r0, c0), (r1, c1)) = self.selection()?;
+        if r0 == r1 {
+            return Some(self.lines[r0].chars().skip(c0).take(c1 - c0).collect());
         }
+        let mut text: String = self.lines[r0].chars().skip(c0).collect();
+        for line in &self.lines[r0 + 1..r1] {
+            text.push('\n');
+            text.push_str(line);
+        }
+        text.push('\n');
+        text.extend(self.lines[r1].chars().take(c1));
+        Some(text)
+    }
+
+    /// The selection taken out of the text — `ctrl+z` puts it back — the cursor where it began;
+    /// `false` when there was none.
+    fn delete_selection(&mut self) -> bool {
+        let Some(((r0, c0), (r1, c1))) = self.selection() else {
+            self.anchor = None;
+            return false;
+        };
+        self.undo = Some(self.lines.clone());
+        let head: String = self.lines[r0].chars().take(c0).collect();
+        let tail: String = self.lines[r1].chars().skip(c1).collect();
+        self.lines.splice(r0..=r1, [format!("{head}{tail}")]);
+        (self.row, self.col, self.anchor) = (r0, c0, None);
+        self.browsing = None;
+        self.edited();
+        true
+    }
+
+    /// `text` where the cursor is, its lines as they are — no indent added — the cursor after it.
+    fn insert_text(&mut self, text: &str) {
+        let at = self.byte_at(self.col);
+        let rest = self.lines[self.row].split_off(at);
+        let text = text.replace('\r', "").replace('\t', "  ");
+        let mut pieces = text.split('\n');
+        self.lines[self.row].push_str(pieces.next().unwrap_or_default());
+        let mut row = self.row;
+        for piece in pieces {
+            row += 1;
+            self.lines.insert(row, piece.to_string());
+        }
+        self.col = self.lines[row].chars().count();
+        self.lines[row].push_str(&rest);
+        self.row = row;
+        self.browsing = None;
+        self.edited();
+    }
+
+    /// Everything selected.
+    fn select_all(&mut self) {
+        self.anchor = Some((0, 0));
+        self.row = self.lines.len() - 1;
+        self.col = self.line_len();
+    }
+
+    /// The word before the cursor taken out, as `ctrl+w` does in a shell — or the line break.
+    fn delete_word(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
+        if self.col == 0 {
+            self.backspace();
+            return;
+        }
+        let chars: Vec<char> = self.lines[self.row].chars().collect();
+        let mut from = self.col;
+        while from > 0 && chars[from - 1] == ' ' {
+            from -= 1;
+        }
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        if from > 0 && word(chars[from - 1]) {
+            while from > 0 && word(chars[from - 1]) {
+                from -= 1;
+            }
+        } else {
+            from = from.saturating_sub(1);
+        }
+        self.anchor = Some((self.row, from));
+        self.delete_selection();
+    }
+
+    /// A press of the mouse in the text, at `spot`: the cursor there and nothing selected — a
+    /// drag from it selects.
+    pub fn press(&mut self, spot: Spot) {
+        let spot = self.clamp(spot);
+        (self.row, self.col, self.anchor) = (spot.0, spot.1, Some(spot));
+        self.dragging = true;
+        self.focus = Focus::Editor;
+        self.choosing = None;
+        self.suggest = None;
+        self.instruction = None;
+    }
+
+    /// The mouse moved with its button down: the selection runs to `spot`.
+    pub fn drag_to(&mut self, spot: Spot) {
+        if self.dragging {
+            (self.row, self.col) = self.clamp(spot);
+        }
+    }
+
+    /// The button let go: a click selects nothing.
+    pub fn release(&mut self) {
+        self.dragging = false;
+        if self.anchor == Some((self.row, self.col)) {
+            self.anchor = None;
+        }
+    }
+
+    pub fn dragging(&self) -> bool {
+        self.dragging
+    }
+
+    fn clamp(&self, (row, col): Spot) -> Spot {
+        let row = row.min(self.lines.len() - 1);
+        (row, col.min(self.lines[row].chars().count()))
     }
 
     /// The text before its last change of all of it, back — and what it was, kept to come back
@@ -345,15 +549,19 @@ impl Console {
 
     /// The text changed by hand: what the helper said of it no longer holds.
     fn edited(&mut self) {
-        if matches!(self.assisting, Assisting::Wrote | Assisting::Failed(_)) {
+        if matches!(self.assisting, Assisting::Wrote { .. } | Assisting::Failed(_)) {
             self.assisting = Assisting::Idle;
         }
     }
 
-    /// Run what is typed on the server chosen.
+    /// Run what is typed on the server chosen — what is selected, when something is.
     pub fn run(&mut self, now: i64) {
-        let sql = self.sql();
-        let sql = sql.trim().trim_end_matches(';').trim().to_string();
+        let text = self.selected_text().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| self.sql());
+        self.run_text(&text, now);
+    }
+
+    fn run_text(&mut self, text: &str, now: i64) {
+        let sql = text.trim().trim_end_matches(';').trim().to_string();
         if sql.is_empty() || self.running() {
             return;
         }
@@ -367,7 +575,7 @@ impl Console {
         let id = self.runs;
         self.request = Some(Request { id, node: node.clone(), sql });
         self.state = RunState::Running { id, node, since: now };
-        let text = self.sql().trim().to_string();
+        let text = text.trim().to_string();
         if self.history.last() != Some(&text) {
             self.history.push(text);
             let over = self.history.len().saturating_sub(HISTORY);
@@ -429,6 +637,25 @@ impl Console {
                 KeyCode::Esc => self.choosing = None,
                 KeyCode::Char('o') if ctrl => self.choosing = None,
                 _ => return Outcome::Handled,
+            }
+            return Outcome::Handled;
+        }
+        // The line for the helper takes what is typed until ⏎ asks or esc closes it.
+        if let Some(text) = self.instruction.as_mut() {
+            match key.code {
+                KeyCode::Enter => {
+                    let text = std::mem::take(text);
+                    self.instruction = None;
+                    self.ask_for_sql(now, &text);
+                }
+                KeyCode::Esc => self.instruction = None,
+                KeyCode::Char('c') if ctrl => self.instruction = None,
+                KeyCode::Char('u') if ctrl => text.clear(),
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) if !ctrl => text.push(c),
+                _ => {}
             }
             return Outcome::Handled;
         }
@@ -532,14 +759,57 @@ impl Console {
 
     fn edit_key(&mut self, key: &KeyEvent, servers: &[String], now: i64, schema: Option<&Schema>) -> Outcome {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        // Moving the cursor: with shift it selects on from where it was, without it lets go.
+        let moves = matches!(key.code, KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End)
+            || (ctrl && matches!(key.code, KeyCode::Char('e')));
+        if self.focus == Focus::Editor && moves {
+            if shift {
+                self.anchor.get_or_insert((self.row, self.col));
+            } else {
+                self.anchor = None;
+            }
+        }
+        let selected = self.focus == Focus::Editor && self.selection().is_some();
+        // Where the terminal tells them apart: ctrl+⏎ or ⌘⏎ runs it, as in Redash; ⇧⏎ or ⌥⏎ is
+        // a new line, after a ; too.
+        let enter_runs = key.code == KeyCode::Enter && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
+        let enter_breaks = key.code == KeyCode::Enter && key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
         match (key.code, ctrl) {
+            _ if enter_runs && self.focus == Focus::Editor => self.run(now),
+            // What is selected: copied, cut, typed over, taken out.
+            (KeyCode::Char('a'), true) if self.focus == Focus::Editor => self.select_all(),
+            (KeyCode::Char('c'), true) if selected && !self.running() && !self.asking() => {
+                if let Some(text) = self.selected_text() {
+                    self.clipboard = Some((text, "the selection".into()));
+                }
+            }
+            (KeyCode::Char('x'), true) if selected => {
+                if let Some(text) = self.selected_text() {
+                    self.clipboard = Some((text, "the selection".into()));
+                }
+                self.delete_selection();
+            }
+            (KeyCode::Backspace | KeyCode::Delete, _) if selected => {
+                self.delete_selection();
+            }
+            (KeyCode::Enter, _) | (KeyCode::Char('j'), true) if selected => {
+                self.delete_selection();
+                self.newline();
+            }
+            (KeyCode::Char(c), false) if selected => {
+                self.delete_selection();
+                self.type_char(c);
+            }
+            (KeyCode::Esc, _) if selected => self.anchor = None,
+            (KeyCode::Char('w'), true) => self.delete_word(),
             (KeyCode::Char('o'), true) => {
                 let at = self.node.as_ref().and_then(|n| servers.iter().position(|s| s == n)).unwrap_or(0);
                 self.choosing = Some(at);
             }
             (KeyCode::Char('r'), true) => self.run(now),
             // ctrl+k — ctrl+g too, where nothing outside the terminal takes it first.
-            (KeyCode::Char('k' | 'g'), true) => self.ask_for_sql(now),
+            (KeyCode::Char('k' | 'g'), true) => self.open_instruction(),
             (KeyCode::Char('t'), true) => self.assistant = self.assistant.other(),
             (KeyCode::Char('z'), true) => self.undo(),
             (KeyCode::Char('c'), true) => {
@@ -579,7 +849,7 @@ impl Console {
                 _ => {}
             },
             (KeyCode::Enter, _) => {
-                if self.sql().trim_end().ends_with(';') {
+                if self.sql().trim_end().ends_with(';') && !enter_breaks {
                     self.run(now);
                 } else {
                     self.newline();
@@ -587,7 +857,7 @@ impl Console {
             }
             (KeyCode::Char('j'), true) => self.newline(),
             (KeyCode::Char('u'), true) => self.clear(),
-            (KeyCode::Char('a'), true) | (KeyCode::Home, _) => self.col = 0,
+            (KeyCode::Home, _) => self.col = 0,
             (KeyCode::Char('e'), true) | (KeyCode::End, _) => self.col = self.line_len(),
             (KeyCode::Char(c), false) => self.type_char(c),
             (KeyCode::Backspace, _) => self.backspace(),
@@ -608,6 +878,9 @@ impl Console {
                     self.col = 0;
                 }
             }
+            // Selecting, the first and last lines end at their ends rather than at the history.
+            (KeyCode::Up, _) if shift && self.row == 0 => self.col = 0,
+            (KeyCode::Down, _) if shift && self.row + 1 >= self.lines.len() => self.col = self.line_len(),
             (KeyCode::Up, _) => {
                 if self.row == 0 {
                     self.back_in_history();
@@ -629,21 +902,17 @@ impl Console {
         Outcome::Handled
     }
 
-    /// Pasted text, typed where the cursor is — a newline a new line.
+    /// Pasted text where the cursor is — over what is selected — its lines as they came; into
+    /// the helper's line, when it is open.
     pub fn paste(&mut self, text: &str) {
-        self.focus = Focus::Editor;
-        for c in text.chars() {
-            match c {
-                '\n' => self.newline(),
-                '\r' => {}
-                '\t' => {
-                    self.insert(' ');
-                    self.insert(' ');
-                }
-                c if !c.is_control() => self.insert(c),
-                _ => {}
-            }
+        if let Some(line) = self.instruction.as_mut() {
+            line.push_str(&text.replace(['\r', '\n'], " "));
+            return;
         }
+        self.focus = Focus::Editor;
+        self.delete_selection();
+        let text: String = text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect();
+        self.insert_text(&text);
     }
 
     /// The answer moved by rows and columns, within it.
@@ -868,8 +1137,8 @@ mod tests {
         console.key(&key(KeyCode::Left), &[], 0, None);
         console.key(&key(KeyCode::Delete), &[], 0, None);
         assert_eq!(console.lines, ["  WHERE x = ''"]);
-        console.paste("\nAND y = 1\r\n\tLIMIT 5");
-        assert_eq!(console.lines, ["  WHERE x = '", "  AND y = 1", "    LIMIT 5'"]);
+        console.paste("\n  AND y = 1\r\n\tLIMIT 5");
+        assert_eq!(console.lines, ["  WHERE x = '", "  AND y = 1", "  LIMIT 5'"], "pasted lines keep their own indent, and get none added");
         console.key(&ctrl('u'), &[], 0, None);
         assert_eq!(console.sql(), "");
     }
@@ -949,11 +1218,14 @@ mod tests {
     fn ctrl_k_asks_the_helper_and_what_it_writes_takes_the_text_s_place_until_ctrl_z() {
         let mut console = Console::new(Some("ch1".into()));
         console.key(&ctrl('k'), &[], 10, None);
-        assert!(matches!(&console.assisting, Assisting::Failed(why) if why.contains("--")), "nothing to ask");
+        assert_eq!(console.instruction.as_deref(), Some(""), "ctrl+k opens the line to say what");
+        console.key(&key(KeyCode::Enter), &[], 10, None);
+        assert!(matches!(&console.assisting, Assisting::Failed(why) if why.contains("ctrl+k")), "nothing to ask");
         assert!(console.take_ask().is_none());
 
         typed(&mut console, "-- the ten users using the most memory");
         console.key(&ctrl('k'), &[], 10, None);
+        console.key(&key(KeyCode::Enter), &[], 10, None);
         let ask = console.take_ask().expect("asked");
         assert_eq!((ask.assistant, ask.node.as_deref(), ask.error.as_deref()), (Assistant::Claude, Some("ch1"), None));
         assert!(ask.sql.starts_with("-- the ten users"));
@@ -961,7 +1233,7 @@ mod tests {
         console.assisted(ask.id + 1, Ok("SELECT 2;".into()));
         assert!(console.asking(), "an answer to another question is not taken");
         console.assisted(ask.id, Ok("-- the ten users using the most memory\nSELECT user FROM system.processes;".into()));
-        assert_eq!(console.assisting, Assisting::Wrote);
+        assert_eq!(console.assisting, Assisting::Wrote { part: None });
         assert_eq!(console.lines.len(), 2);
         assert!(console.take_request().is_none(), "nothing runs until asked");
         console.key(&ctrl('z'), &[], 11, None);
@@ -977,6 +1249,7 @@ mod tests {
         console.answered(id, Err("Code 47 · Unknown identifier".into()));
         // ctrl+g asks as ctrl+k does.
         console.key(&ctrl('g'), &[], 13, None);
+        console.key(&key(KeyCode::Enter), &[], 13, None);
         let ask = console.take_ask().unwrap();
         assert_eq!(ask.error.as_deref(), Some("Code 47 · Unknown identifier"));
         // ctrl+c withdraws the question; ctrl+t is the other helper.
@@ -1006,5 +1279,126 @@ mod tests {
         console.key(&key(KeyCode::Char('Y')), &[], 0, None);
         assert_eq!(console.take_clipboard().unwrap().0, "user\tn\nr_redash\t2\nairflow\tNULL");
         assert_eq!(console.focus, Focus::Answer, "still in the answer");
+    }
+
+    fn with(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn a_selection_is_made_with_shift_or_ctrl_a_and_deleted_typed_over_or_cut_at_once() {
+        let mut console = Console::new(Some("ch1".into()));
+        console.paste("SELECT user\nFROM system.processes\nWHERE elapsed > 10;");
+        // ctrl+a, then ⌫: the whole text gone at once — and back with ctrl+z.
+        console.key(&ctrl('a'), &[], 0, None);
+        assert_eq!(console.selected_text().as_deref(), Some("SELECT user\nFROM system.processes\nWHERE elapsed > 10;"));
+        console.key(&key(KeyCode::Backspace), &[], 0, None);
+        assert_eq!(console.sql(), "");
+        console.key(&ctrl('z'), &[], 0, None);
+        assert!(console.sql().starts_with("SELECT user"));
+
+        // shift+arrows select from the cursor; typing replaces what is selected.
+        console.row = 2;
+        console.col = 0;
+        for _ in 0..5 {
+            console.key(&with(KeyCode::Right, KeyModifiers::SHIFT), &[], 0, None);
+        }
+        assert_eq!(console.selected_text().as_deref(), Some("WHERE"));
+        console.key(&key(KeyCode::Char('X')), &[], 0, None);
+        assert_eq!(console.lines[2], "X elapsed > 10;");
+        // Up a line with shift: from the same column a line up, across the line's break.
+        console.key(&with(KeyCode::Up, KeyModifiers::SHIFT), &[], 0, None);
+        assert_eq!(console.selected_text().as_deref(), Some("ROM system.processes\nX"));
+        console.key(&key(KeyCode::Esc), &[], 0, None);
+        assert!(console.selection().is_none(), "esc lets go");
+
+        // ctrl+c copies a selection — it does not clear the text — ctrl+x cuts it.
+        console.row = 0;
+        console.col = 0;
+        console.key(&with(KeyCode::End, KeyModifiers::SHIFT), &[], 0, None);
+        console.key(&ctrl('c'), &[], 0, None);
+        assert_eq!(console.take_clipboard().map(|(text, _)| text).as_deref(), Some("SELECT user"));
+        assert!(console.sql().starts_with("SELECT user"));
+        console.key(&ctrl('x'), &[], 0, None);
+        assert_eq!(console.lines[0], "");
+        // ctrl+w takes the word before the cursor.
+        console.set_sql("SELECT count() FROM system.processes");
+        console.key(&ctrl('w'), &[], 0, None);
+        assert_eq!(console.sql(), "SELECT count() FROM system.");
+        console.key(&ctrl('w'), &[], 0, None);
+        console.key(&ctrl('w'), &[], 0, None);
+        assert_eq!(console.sql(), "SELECT count() FROM ");
+    }
+
+    #[test]
+    fn shift_enter_is_a_new_line_after_a_semicolon_and_ctrl_or_cmd_enter_runs_as_in_redash() {
+        let mut console = Console::new(Some("ch1".into()));
+        console.paste("SELECT 1;");
+        console.key(&with(KeyCode::Enter, KeyModifiers::SHIFT), &[], 0, None);
+        assert!(console.take_request().is_none(), "⇧⏎ does not run it");
+        assert_eq!(console.lines, ["SELECT 1;", ""]);
+        console.paste("SELECT 2");
+        console.key(&with(KeyCode::Enter, KeyModifiers::SUPER), &[], 0, None);
+        let run = console.take_request().expect("⌘⏎ runs it, no ; needed");
+        assert_eq!(run.sql, "SELECT 1;\nSELECT 2");
+        console.answered(run.id, Ok(Answer::default()));
+        // ctrl+⏎ on a selection runs what is selected, as ctrl+r does.
+        console.anchor = Some((1, 0));
+        (console.row, console.col) = (1, 8);
+        console.key(&with(KeyCode::Enter, KeyModifiers::CONTROL), &[], 1, None);
+        assert_eq!(console.take_request().map(|r| r.sql).as_deref(), Some("SELECT 2"));
+    }
+
+    #[test]
+    fn a_drag_selects_and_ctrl_r_runs_the_selection_alone() {
+        let mut console = Console::new(Some("ch1".into()));
+        console.paste("SELECT 1;\nSELECT user FROM system.processes;");
+        console.press((1, 0));
+        console.drag_to((1, 34));
+        console.release();
+        assert_eq!(console.selected_text().as_deref(), Some("SELECT user FROM system.processes;"));
+        console.key(&ctrl('r'), &[], 0, None);
+        assert_eq!(console.take_request().map(|r| r.sql).as_deref(), Some("SELECT user FROM system.processes"), "the selection alone");
+        // A click selects nothing; past the end of a line it is at its end.
+        console.press((0, 50));
+        console.release();
+        assert_eq!(((console.row, console.col), console.selection()), ((0, 9), None));
+    }
+
+    #[test]
+    fn ctrl_k_on_a_selection_asks_about_that_part_and_the_answer_takes_its_place() {
+        let mut console = Console::new(Some("ch1".into()));
+        console.paste("SELECT user\nFROM system.processes\nWHERE elapsed > 10;");
+        console.anchor = Some((2, 0));
+        (console.row, console.col) = (2, 18);
+        console.key(&ctrl('k'), &[], 0, None);
+        for c in "over a minute".chars() {
+            console.key(&key(KeyCode::Char(c)), &[], 0, None);
+        }
+        console.key(&key(KeyCode::Enter), &[], 0, None);
+        let ask = console.take_ask().expect("asked");
+        assert_eq!((ask.instruction.as_str(), ask.selected.as_deref()), ("over a minute", Some("WHERE elapsed > 10")));
+        console.assisted(ask.id, Ok("WHERE elapsed > 60".into()));
+        assert_eq!(console.sql(), "SELECT user\nFROM system.processes\nWHERE elapsed > 60;", "the part alone replaced");
+        assert_eq!(console.assisting, Assisting::Wrote { part: Some(((2, 0), (2, 18))) }, "and marked, to be seen");
+        assert!(console.selection().is_none(), "not selected: ctrl+r runs all of it");
+        console.key(&ctrl('r'), &[], 0, None);
+        assert_eq!(console.take_request().map(|r| r.sql).as_deref(), Some("SELECT user\nFROM system.processes\nWHERE elapsed > 60"));
+        console.key(&ctrl('z'), &[], 0, None);
+        assert!(console.sql().ends_with("WHERE elapsed > 10;"), "ctrl+z puts it back");
+
+        // Typed with nothing in the text: the question is kept on top of what it wrote.
+        let mut empty = Console::new(Some("ch1".into()));
+        empty.key(&ctrl('k'), &[], 0, None);
+        empty.paste("top 10 users by memory");
+        empty.key(&key(KeyCode::Enter), &[], 0, None);
+        let ask = empty.take_ask().unwrap();
+        assert_eq!((ask.sql.as_str(), ask.instruction.as_str()), ("", "top 10 users by memory"));
+        empty.assisted(ask.id, Ok("SELECT user FROM system.processes LIMIT 10;".into()));
+        assert_eq!(empty.lines[0], "-- top 10 users by memory");
+        // esc closes the line without asking.
+        empty.key(&ctrl('k'), &[], 0, None);
+        empty.key(&key(KeyCode::Esc), &[], 0, None);
+        assert!(empty.instruction.is_none() && empty.take_ask().is_none());
     }
 }

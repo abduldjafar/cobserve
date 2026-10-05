@@ -179,6 +179,7 @@ completed like a shell does. A repository shows its branch.
 | On view 5 | |
 |---|---|
 | any key | goes to the session — `q`, the digits and `ctrl+c` too |
+| `⇧⏎` · `ctrl+j` | a new line in Claude's or OpenCode's prompt. `⇧⏎` (and `⌘⏎`, `ctrl+⏎`) where the terminal tells them from `⏎` — the kitty keyboard protocol: Ghostty, kitty, foot and others that speak it — and `ctrl+j`, `⌥⏎` (⌥ as Meta) or `\` then `⏎` in any; the footer says which |
 | `ctrl+\` then `1`…`4` | that view of the monitor |
 | `ctrl+\` then `5`…`9` | that session — the first five |
 | `ctrl+\` then `↑` `↓` | the one before or after, through all of them |
@@ -223,16 +224,24 @@ switches it to any other server of the fleet, each with the login the monitor ha
   aliases too, wherever the cursor is in it), functions with their parentheses, keywords, and
   formats after `FORMAT`. `tab` takes one, `↑` `↓` choose (then `⏎` takes it too), `esc`
   closes them, `ctrl+space` asks for them anywhere.
-- **Claude or OpenCode writes it**: say what you want in a `--` comment and press `ctrl+k` (or
-  click *asks Claude* under the text; `ctrl+g` does the same where nothing outside the terminal
-  takes it first — Gemini in Chrome does on a Mac).
+- **Quick to change**: drag over the text with the mouse, or `shift` with the arrows, to select
+  — `ctrl+a` selects all of it. `⌫` then takes all that out at once and typing replaces it;
+  `ctrl+c` copies it, `ctrl+x` cuts it, `ctrl+r` runs only what is selected. `ctrl+w` takes the
+  word before the cursor, `ctrl+u` the whole text (`ctrl+z` brings it back).
+- **Claude or OpenCode writes it**: `ctrl+k` (or a click on *asks Claude* under the text;
+  `ctrl+g` does the same where nothing outside the terminal takes it first — Gemini in Chrome
+  does on a Mac) opens a line to say what it should do, in any language — *top 10 users by
+  memory*, *make it faster*, *why does it fail* — and `⏎` asks; with nothing typed it writes
+  what the text's `--` comments say. With part of the text selected it is asked about that
+  part alone, the rest given for context, and what it writes takes that part's place — marked,
+  so you see what changed, while `ctrl+r` still runs all of it.
   Claude Code answers signed in with your Pro or Max plan (`claude -p`, no tools, no API key,
   nothing saved), OpenCode as you signed it in (`opencode run`, every permission denied); both
   run in an empty folder of their own, without the monitor's secrets. They get the server's name
   and version, your text, the tables its words point at with their columns and the names of
   the others — no rows, no logins. On a query that failed, `ctrl+k` sends what the server said,
-  to put it right. What comes back takes the text's place — read it, then `⏎` runs it;
-  `ctrl+z` puts back what was there. `ctrl+t` or a click on the chip switches between Claude
+  to put it right. What comes back takes the text's place (or the selected part's) — read it,
+  then `⏎` runs it; `ctrl+z` puts back what was there. `ctrl+t` or a click on the chip switches between Claude
   and OpenCode; `ASSISTANT=opencode` starts with OpenCode.
 - **The answer** is a table under it — numbers on the right, `NULL` dimmed, as many columns as
   fit — with how long it took and what the server read. `shift+tab` goes into it: the arrows
@@ -243,15 +252,20 @@ switches it to any other server of the fleet, each with the login the monitor ha
 
 ![A query session: what Claude wrote for a comment, and its answer](docs/screenshots/140x40-query-session.png)
 
+![A line of it selected, and Claude asked about that line alone](docs/screenshots/140x40-query-ask.png)
+
 ![Suggestions as it is typed](docs/screenshots/140x40-query-suggest.png)
 
 | In a query session | |
 |---|---|
 | `⏎` | a new line — or runs the statement once it ends with `;` |
-| `ctrl+r` | run what is there |
+| `⇧⏎` · `ctrl+⏎` `⌘⏎` | always a new line · run it, as in Redash (where the terminal tells them from `⏎`) |
+| `ctrl+r` | run what is there — what is selected, when something is |
+| a drag · `shift`+arrows · `ctrl+a` | select · select all — then `⌫` deletes it, typing replaces it, `ctrl+c` copies, `ctrl+x` cuts, `esc` lets go |
+| `ctrl+w` · `ctrl+u` | delete the word before the cursor · clear the whole text |
 | `tab` · `↑` `↓` · `esc` | take a suggestion · choose one · close them — `tab` after `FROM ` lists the tables |
-| `ctrl+k` · `ctrl+t` | Claude (or OpenCode) writes it, or puts it right · the other one |
-| `ctrl+z` | put back what was there before Claude wrote, or before a clear |
+| `ctrl+k` · `ctrl+t` | say what Claude (or OpenCode) should write, then `⏎` — on a selection, about that part alone · the other one |
+| `ctrl+z` | put back what was there before Claude wrote, or before a clear or a deletion |
 | `ctrl+c` | stop the query or the writing · clear the text |
 | `ctrl+o` | run on another server |
 | `shift+tab` | the answer: the arrows move, `y` `Y` copy, `tab` comes back |
