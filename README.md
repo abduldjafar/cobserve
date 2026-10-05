@@ -1,5 +1,9 @@
 # cobserve
 
+*co-observe* — keep watch over a data fleet together: you, the people using it, and the AI
+sessions you work with, all in one terminal. It only ever **observes**: nothing in it can
+change a query or a table.
+
 A terminal monitor for on call: the ClickHouse fleet and the Redash queue on one screen,
 **who** is using each node, and **what it means**: ranked insights, trends and forecasts, a
 fleet map, a tape of everything that changed — and in the same window Claude Code, OpenCode or

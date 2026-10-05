@@ -2,6 +2,7 @@
 name = "cobserve"
 version = "0.1.0"
 edition = "2024"
+description = "Co-observe a data fleet from the terminal: ClickHouse and Redash at a glance, read-only, with your AI sessions beside them"
 
 [dependencies]
 color-eyre = "0.6.5"
