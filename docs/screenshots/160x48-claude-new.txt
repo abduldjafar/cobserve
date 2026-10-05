@@ -1,4 +1,4 @@
-  ◆ fleetlens   ✖ critical                              1 nodes   2 queue   3 map   4 tape   5 sessions                               ● live 2s   15:52:07 WIB  
+  ◆ cobserve   ✖ critical                               1 nodes   2 queue   3 map   4 tape   5 sessions                               ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━━━━━━━━ Terbit 05:33 ━━━━━━━━━━ Dzuhur 11:45 ━━━━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
                                                                                                                                                                 
   FLEET   9 nodes · 1 hot   mem ━━━━╸━━━━━━━ 36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   cpu ━━━╸━━━━━━━━ 28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄   queries 15 · 4 ✕                   
@@ -11,7 +11,7 @@
                                                                                                                                                                 
   SESSIONS  4                        ✻ New Claude session  ·  where should it work?                                                                  ✕ cancel   
                                                                                                                                                                 
-    ✻  billing export          5     run    ✻ Claude    ▣ OpenCode    ❯ Terminal     shift+tab switches                                                         
+    ✻  billing export          5     run    ✻ Claude    ▣ OpenCode    ❯ Terminal    ▦ Query     shift+tab switches                                              
        ~/work/billing  ⎇ main                                                                                                                                   
                                        ⌕  ▏search the folders below here, or type a path                                                         7 folders      
     ▣  late partitions       ● 6                                                                                                                                

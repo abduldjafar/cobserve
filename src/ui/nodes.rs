@@ -5,7 +5,7 @@
 //! same scale: you can see the user rows plus the closing row add up to the node (§5.3).
 
 use super::widgets::{code_block, rule, sparkline, thin_bar, tone_spans, Cells, PCT_SHAPE};
-use crate::app::{scroll_into_view, App, Focus};
+use crate::app::{scroll_into_view, App, Focus, Hit};
 use crate::fmt;
 use crate::history::Trend;
 use crate::insight::Insight;
@@ -329,17 +329,20 @@ pub fn draw_tree(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, termin
         app.viewport.tree.set(offset);
 
         let mut lines = Vec::with_capacity(body_height);
+        let mut clickable = Vec::new();
         for (i, row) in rows.iter().enumerate().skip(offset) {
             if lines.len() >= body_height {
                 break;
             }
             let is_selected = selected == Some(i);
+            clickable.push((Rect::new(area.x, area.y + 1 + lines.len() as u16, area.width, 1), Hit::Row(i)));
             lines.push(row_line(row, &links[i], app, theme, &grid, width, &totals, is_selected));
             if is_selected && let Some(block) = &block {
                 lines.extend(block.iter().cloned());
             }
         }
         lines.truncate(body_height);
+        app.viewport.hits.borrow_mut().extend(clickable);
         (header, lines)
     });
 
@@ -972,6 +975,7 @@ pub fn draw_insights(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, in
             break;
         }
         let is_selected = selected == Some(*index);
+        app.viewport.hits.borrow_mut().push((Rect::new(area.x, area.y + 1 + n as u16, area.width, 1), Hit::Insight(*index)));
         let mut cells = Cells::new();
         cells.push(if is_selected { "▌" } else { " " }, theme.accent());
         cells.push(format!("{} ", insight.level.glyph()), theme.sev(insight.level).add_modifier(Modifier::BOLD));

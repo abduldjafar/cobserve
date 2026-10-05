@@ -142,8 +142,26 @@ pub enum Hit {
     Clock,
     /// The way to a conversation had elsewhere, to take up in a new session.
     Resume,
+    /// A query session's server: a click lists the others.
+    ConsoleServer,
+    /// One of the servers listed, by its place in the fleet's order.
+    ConsolePick(usize),
+    /// A query session's text, or its answer: a click puts the keys there.
+    ConsoleText,
+    ConsoleAnswer,
+    /// The helper that writes a query session's SQL: a click changes it.
+    ConsoleAssistant,
+    /// One of the suggestions open, by its place among them: a click takes it.
+    Suggestion(usize),
     /// The way out of a prayer's reminder.
     Dismiss,
+    /// A row of view 1's tree, an insight, a job of view 2, a line of the tape, a tile of the
+    /// map — by its place in their lists: a click puts the cursor there, a second opens it.
+    Row(usize),
+    Insight(usize),
+    Job(usize),
+    TapeLine(usize),
+    Tile(usize),
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -205,6 +223,12 @@ pub enum Event {
     Conversations(u64, Kind, bool, Vec<crate::conversations::Conversation>),
     /// The conversation a session's program is in now, as it says (by session id).
     Conversation(u64, String),
+    /// What a query session's query answered: the session, the run, the answer.
+    ConsoleAnswer(u64, u64, Result<crate::console::Answer, String>),
+    /// A server's databases, tables and columns, for a query session's suggestions.
+    Schema(String, Result<crate::complete::Schema, String>),
+    /// What a helper wrote for a query session: the session, the question, the SQL.
+    Assisted(u64, u64, Result<String, String>),
     Quit,
 }
 
@@ -268,7 +292,26 @@ pub struct App {
     pub prayers: Prayers,
     /// What to say beyond the screen — a prayer's reminder — for the loop to send on.
     notifications: Vec<String>,
+    /// What each server has, by name, for query sessions' suggestions and their helper.
+    pub schemas: HashMap<String, SchemaState>,
+    /// What was copied, for the loop to put on the clipboard.
+    clipboard: Vec<String>,
 }
+
+/// What a server has, for a query session: what was read last, and whether it is being read.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SchemaState {
+    pub schema: Option<crate::complete::Schema>,
+    pub reading: bool,
+    /// When it was last read, or failed to be, Unix seconds.
+    pub at: i64,
+    pub error: Option<String>,
+}
+
+/// How long a server's tables are taken as they were read — then read again, as a session uses
+/// it — and how long after a failure it is tried again.
+const SCHEMA_FRESH_S: i64 = 15 * 60;
+const SCHEMA_RETRY_S: i64 = 60;
 
 impl Default for App {
     fn default() -> Self {
@@ -312,7 +355,57 @@ impl App {
             time: Clock::default(),
             prayers: Prayers::default(),
             notifications: Vec::new(),
+            schemas: HashMap::new(),
+            clipboard: Vec::new(),
         }
+    }
+
+    /// What was copied since the loop last asked.
+    pub fn take_clipboard(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.clipboard)
+    }
+
+    /// The servers whose tables a query session needs read now: not read yet, read a while
+    /// ago, or failed a minute ago. Each is marked as being read.
+    pub fn schemas_wanted(&mut self) -> Vec<String> {
+        let now = self.now();
+        let nodes: HashSet<String> = self.claude.list.iter().filter_map(|s| s.console.as_ref()?.node.clone()).collect();
+        let mut wanted = Vec::new();
+        for node in nodes {
+            let state = self.schemas.entry(node.clone()).or_default();
+            let due = match (&state.schema, &state.error) {
+                _ if state.reading => false,
+                (None, None) => true,
+                (None, Some(_)) => now - state.at >= SCHEMA_RETRY_S,
+                (Some(_), _) => now - state.at >= SCHEMA_FRESH_S,
+            };
+            if due {
+                state.reading = true;
+                wanted.push(node);
+            }
+        }
+        wanted.sort();
+        wanted
+    }
+
+    /// The schema of the server a query session runs on, as last read.
+    pub fn schema_of(&self, node: Option<&str>) -> Option<&crate::complete::Schema> {
+        self.schemas.get(node?)?.schema.as_ref()
+    }
+
+    /// The fleet's servers, by name in view 1's order: what a query session can run on.
+    pub fn server_names(&self) -> Vec<String> {
+        self.servers().into_iter().map(|(name, _)| name).collect()
+    }
+
+    /// The fleet's servers by name, in view 1's order, and whether each answers.
+    pub fn servers(&self) -> Vec<(String, bool)> {
+        let Some(snapshot) = self.snapshot() else {
+            return Vec::new();
+        };
+        let mut nodes: Vec<&crate::model::NodeSnapshot> = snapshot.nodes.iter().collect();
+        nodes.sort_by(|a, b| a.name.cmp(&b.name));
+        nodes.into_iter().map(|n| (n.name.clone(), n.reachable)).collect()
     }
 
     /// Now, in Unix seconds, as the clock last ticked.
@@ -415,6 +508,29 @@ impl App {
                     session.conversation = Some(conversation);
                 }
             }
+            Event::ConsoleAnswer(id, run, result) => {
+                if let Some(console) = self.claude.by_id_mut(id).and_then(|s| s.console.as_deref_mut()) {
+                    console.answered(run, result);
+                }
+            }
+            Event::Schema(node, result) => {
+                let now = self.now();
+                let state = self.schemas.entry(node).or_default();
+                state.reading = false;
+                state.at = now;
+                match result {
+                    Ok(schema) => {
+                        state.schema = Some(schema);
+                        state.error = None;
+                    }
+                    Err(error) => state.error = Some(error),
+                }
+            }
+            Event::Assisted(id, ask, result) => {
+                if let Some(console) = self.claude.by_id_mut(id).and_then(|s| s.console.as_deref_mut()) {
+                    console.assisted(ask, result);
+                }
+            }
             Event::Paste(text) => {
                 let line = text.lines().next().unwrap_or_default();
                 if self.view == View::Claude {
@@ -424,11 +540,15 @@ impl App {
                             name.extend(line.chars().take(room));
                         }
                         Mode::Opening(picker) => picker.type_text(line),
-                        Mode::Typing => {
-                            if let Some(session) = self.claude.current_mut().filter(|s| s.pane.is_running()) {
-                                session.pane.paste(&text);
+                        Mode::Typing => match self.claude.current_mut() {
+                            Some(session) if session.console.is_some() => {
+                                if let Some(console) = session.console.as_deref_mut() {
+                                    console.paste(&text);
+                                }
                             }
-                        }
+                            Some(session) if session.pane.is_running() => session.pane.paste(&text),
+                            _ => {}
+                        },
                         Mode::Bar => {}
                     }
                 } else if let Some(input) = self.filter_input.as_mut() {
@@ -499,7 +619,44 @@ impl App {
         }
         let dir = crate::pty::expand(&self.claude.next_dir());
         let kind = kind.unwrap_or_else(|| self.claude.next_kind());
-        self.claude.mode = Mode::Opening(Picker::new(dir, kind));
+        let mut picker = Picker::new(dir, kind);
+        picker.servers = self.servers();
+        // A query session starts on the node view 1 has the cursor on, else the one on screen's.
+        if kind == Kind::Query {
+            let near = match self.selected() {
+                Some(RowId::Node(name)) => Some(name.clone()),
+                _ => self.claude.current().and_then(|s| s.console.as_ref()).and_then(|c| c.node.clone()),
+            };
+            if let Some(at) = near.and_then(|n| picker.servers.iter().position(|(name, _)| *name == n)) {
+                picker.cursor = at;
+            }
+        }
+        self.claude.mode = Mode::Opening(picker);
+    }
+
+    /// A query session on `node`, on view 5 — straight there, nothing else started on the way.
+    pub fn open_query_on(&mut self, node: Option<String>) {
+        if self.view != View::Claude {
+            self.claude.back_to = self.view;
+        }
+        self.view = View::Claude;
+        self.focus = Focus::Tree;
+        self.queue_selection = None;
+        self.claude.mode = Mode::Typing;
+        if self.claude.open_query(node.as_deref()).is_none() {
+            self.notice = Some((
+                format!("sessions are 5 to 9: {} is as many as there are numbers for — close one with x", crate::claude::MAX_SESSIONS),
+                SystemTime::now(),
+            ));
+        }
+    }
+
+    /// The node of the row under view 1's cursor: the node, a user or a query on it.
+    fn node_at_cursor(&self) -> Option<String> {
+        match self.selected()? {
+            RowId::Node(node) | RowId::User { node, .. } | RowId::Query { node, .. } | RowId::PivotNode { node, .. } => Some(node.clone()),
+            _ => None,
+        }
     }
 
     /// The picker, on every folder's past conversations: Claude Code's, or OpenCode's when that
@@ -521,7 +678,13 @@ impl App {
             return;
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // A query session's servers are a list, not folders: there is nothing to go into or up.
+        let servers = picker.kind == Kind::Query;
         match key.code {
+            KeyCode::Left | KeyCode::Right if servers => {}
+            KeyCode::Backspace if servers => {
+                picker.backspace();
+            }
             // A search first, then the picker.
             KeyCode::Esc if picker.searching() => picker.clear_query(),
             // Every folder's conversations: ← or esc goes back to the folders.
@@ -572,6 +735,13 @@ impl App {
         match (row, picker.path_of(row)) {
             (PickRow::Up, _) => picker.up(),
             (PickRow::Everywhere, _) => picker.show_everywhere(true),
+            (PickRow::Server(index), _) => {
+                let node = picker.servers.get(index).map(|(name, _)| name.clone());
+                self.claude.mode = Mode::Typing;
+                if self.claude.open_query(node.as_deref()).is_none() {
+                    self.ask_new_session(Some(Kind::Query));
+                }
+            }
             // A conversation is taken up with a click or ⏎ alike: there is nothing to go into.
             (PickRow::Conversation(index), _) => {
                 if let Some(conversation) = picker.conversations_shown().get(index).cloned() {
@@ -648,6 +818,50 @@ impl App {
                     }
                 }
                 Some(Hit::Clock) => self.time.flip(),
+                Some(Hit::ConsoleServer) => {
+                    let servers = self.server_names();
+                    if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
+                        let at = console.node.as_ref().and_then(|n| servers.iter().position(|s| s == n)).unwrap_or(0);
+                        console.choosing = if console.choosing.is_some() { None } else { Some(at) };
+                    }
+                }
+                Some(Hit::ConsolePick(index)) => {
+                    let servers = self.server_names();
+                    if let (Some(console), Some(node)) = (self.claude.current_mut().and_then(|s| s.console.as_deref_mut()), servers.get(index)) {
+                        console.connect(node);
+                    }
+                }
+                Some(Hit::ConsoleText) => {
+                    if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
+                        console.focus = crate::console::Focus::Editor;
+                        console.choosing = None;
+                        console.suggest = None;
+                    }
+                }
+                Some(Hit::ConsoleAnswer) => {
+                    if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut())
+                        && console.answer.is_some()
+                    {
+                        console.focus = crate::console::Focus::Answer;
+                        console.choosing = None;
+                        console.suggest = None;
+                    }
+                }
+                Some(Hit::ConsoleAssistant) => {
+                    if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
+                        console.assistant = console.assistant.other();
+                        self.claude.assistant = console.assistant;
+                    }
+                }
+                Some(Hit::Suggestion(index)) => {
+                    if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut())
+                        && let Some(open) = console.suggest.as_mut()
+                        && index < open.items.len()
+                    {
+                        open.at = index;
+                        console.accept();
+                    }
+                }
                 Some(Hit::Resume) => {
                     self.open_claude();
                     self.ask_past_conversation();
@@ -655,6 +869,46 @@ impl App {
                 Some(Hit::Dismiss) => {
                     let now = self.now();
                     self.prayers.dismiss(now);
+                }
+                Some(Hit::Row(index)) => {
+                    let id = self.with_rows(|_, rows| rows.get(index).map(|row| row.id.clone())).flatten();
+                    let again = self.focus == Focus::Tree && id.is_some() && id == self.selected;
+                    if id.is_some() {
+                        self.selected = id;
+                        self.focus = Focus::Tree;
+                    }
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
+                Some(Hit::Insight(index)) => {
+                    let again = self.focus == Focus::Insights && self.insight_selection == index;
+                    self.focus = Focus::Insights;
+                    self.insight_selection = index;
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
+                Some(Hit::Job(index)) => {
+                    let again = self.queue_selection == Some(index);
+                    self.queue_selection = Some(index);
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
+                Some(Hit::TapeLine(index)) => {
+                    let again = self.tape_selection == index;
+                    self.tape_selection = index;
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
+                Some(Hit::Tile(index)) => {
+                    let again = self.map_selection == index;
+                    self.map_selection = index;
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
                 }
                 Some(Hit::Pane) | None => {}
             },
@@ -673,6 +927,8 @@ impl App {
                     View::Claude => {
                         if let Mode::Opening(picker) = &mut self.claude.mode {
                             picker.step(delta * 3);
+                        } else if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
+                            console.scroll(delta * 3, 0);
                         }
                     }
                     View::Map => {}
@@ -717,6 +973,7 @@ impl App {
             KeyCode::Char('c') => self.ask_new_session(Some(Kind::Claude)),
             KeyCode::Char('o') => self.ask_new_session(Some(Kind::OpenCode)),
             KeyCode::Char('t') => self.ask_new_session(Some(Kind::Terminal)),
+            KeyCode::Char('q') => self.ask_new_session(Some(Kind::Query)),
             KeyCode::Char('r') => {
                 if let Some(name) = self.claude.current().map(|s| s.name.clone().unwrap_or_default()) {
                     self.claude.mode = Mode::Naming(name);
@@ -1268,6 +1525,20 @@ impl App {
                 }
                 Mode::Typing => {}
             }
+            // A query session takes every key as a SQL prompt would.
+            let servers = self.server_names();
+            let now = self.now();
+            let node = self.claude.current().and_then(|s| s.console.as_ref()).and_then(|c| c.node.clone());
+            let schema = node.as_deref().and_then(|n| self.schemas.get(n)).and_then(|s| s.schema.as_ref());
+            if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
+                console.key(&key, &servers, now, schema);
+                if let Some((text, what)) = console.take_clipboard() {
+                    self.clipboard.push(text);
+                    self.notice = Some((format!("copied {what} — on the clipboard"), SystemTime::now()));
+                }
+                self.sync_view_state();
+                return;
+            }
             // With a program running, every other key is its — q, the digits and ctrl+c
             // included: it is a terminal, and a terminal does not keep keys for itself.
             if let Some(session) = self.claude.current_mut().filter(|s| s.pane.is_running()) {
@@ -1362,6 +1633,11 @@ impl App {
             KeyCode::Char('K') => self.scroll_sql(-1),
             KeyCode::Char('J') => self.scroll_sql(1),
             KeyCode::Char('s') => self.tree.sort = self.tree.sort.next(),
+            // SQL on the node under the cursor, in a query session of its own.
+            KeyCode::Char('c') => {
+                let node = self.node_at_cursor();
+                self.open_query_on(node);
+            }
             KeyCode::Char('u') => {
                 self.tree.pivot = !self.tree.pivot;
                 // Identity is per direction, so the cursor cannot stay on a row that is gone.
@@ -1460,6 +1736,11 @@ impl App {
                 if let Some(name) = self.map_nodes().get(current).cloned() {
                     self.go_to(&Subject::Node(name));
                 }
+                return;
+            }
+            KeyCode::Char('c') => {
+                let node = self.map_nodes().get(current).cloned();
+                self.open_query_on(node);
                 return;
             }
             _ => current,
@@ -1682,6 +1963,19 @@ impl App {
             .is_some_and(|age| age >= self.notice_ttl)
         {
             self.notice = None;
+        }
+
+        // The servers a query session can be opened on, as the fleet stands.
+        if let Mode::Opening(picker) = &self.claude.mode
+            && picker.kind == Kind::Query
+        {
+            let servers = self.servers();
+            if let Mode::Opening(picker) = &mut self.claude.mode
+                && picker.servers != servers
+            {
+                picker.servers = servers;
+                picker.cursor = picker.cursor.min(picker.rows().len().saturating_sub(1));
+            }
         }
 
         self.footer = if self.filter_input.is_some() {

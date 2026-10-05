@@ -1,4 +1,4 @@
-# pay_monitoring — View 1 · NODES × USERS
+# cobserve — View 1 · NODES × USERS
 
 **Design + implementation guide.** Written for an implementer with no prior context.
 Read all of it before writing code; §5 (the math) and §10 (tests) are the contract.
@@ -711,7 +711,7 @@ or from a slope over the last minutes of it.
   gets it, for its own jobs.
 - **Sessions kept, and conversations taken up** (`src/saved.rs`, `src/conversations.rs`): the
   list of sessions — what each runs, where, its name and the conversation it is in — is kept in
-  `$XDG_STATE_HOME/fleetlens/sessions.json` (`~/.local/state/fleetlens/` without it, mode 600)
+  `$XDG_STATE_HOME/cobserve/sessions.json` (`~/.local/state/cobserve/` without it, mode 600)
   as it changes, and on the way out, a closed terminal (SIGHUP) or a SIGTERM included. The next
   run lists them again, marked `↻`, and each takes its conversation up when it is first shown:
   `claude --resume <id>` (started under `--session-id`, so its id is known from the start, and
@@ -754,6 +754,49 @@ or from a slope over the last minutes of it.
   Bars are thin (`━`, half-cell steps) everywhere; the map's tiles are cards on the surface;
   the session on screen and the tile under the cursor are raised, a bar of the accent at their
   left. Without painted backgrounds (16 colours, mono) lines take the surfaces' place.
+- **Query sessions** (`src/console.rs`, `src/ui/console.rs`, `src/sources/clickhouse.rs`): a
+  session of view 5 that is a SQL console on one server of the fleet — `c` on a node of view 1
+  or a tile of view 3, `ctrl+\ q`, or *Query* in the picker, which then lists the servers. Its
+  queries go over HTTP with the login the monitor has for that server, `readonly=1` always,
+  with `max_execution_time=30`, `max_result_rows=1000` (`break`), `wait_end_of_query=1` so the
+  summary header says what was read, and `cancel_http_readonly_queries_on_client_close=1`: a
+  query stopped with `ctrl+c`, or whose session closes, is let go and the server stops it. A
+  login whose read-only profile refuses those settings is asked again with `readonly=1` alone.
+  The answer is read as `JSONCompactEachRowWithNamesAndTypes`, at most 1000 rows and 8 MiB; a
+  query with a `FORMAT` of its own is shown as the text it sent. ClickHouse's errors are shown
+  in its words (`Code 164 · … (READONLY)`), taken out of the answer's format when the server
+  wrote them there, without its version and never with the password. The logins stay in
+  `main.rs` with the code that sends them, refreshed after every discovery; `App` knows the
+  servers by name only. The text, what ran (`↑` on the first line) and the server are kept with
+  the session for the next start. `FAKE=1` answers from the made-up fleet.
+- **Suggestions** (`src/complete.rs`): as a word is typed in a query session, what the cursor's
+  place in the statement calls for — tables after `FROM`/`JOIN`/`INTO`/`DESCRIBE`, a database's
+  tables after `db.`, the columns of the tables the statement reads (by name or alias, the whole
+  statement read, not only what is before the cursor), functions (with their parentheses),
+  keywords in the case typed, formats after `FORMAT`; nothing in a string or a comment, after
+  `AS`, `LIMIT` or a number. A word matches at its start or at the start of a part of a name
+  (`log` → `query_log`, `hour` → `toStartOfHour`). After a value a keyword ranks first; after
+  `SELECT`, a comma or an operator a column does. The lists are the server's own —
+  `system.databases`, `system.tables`, `system.columns`, `system.functions`, read-only and
+  bounded — read when a session first runs on it and again after fifteen minutes; until then,
+  the system tables and common functions.
+- **A helper for the SQL** (`src/assist.rs`): `ctrl+g` asks Claude Code — `claude -p` with
+  `--tools ""`, `--strict-mcp-config`, `--no-session-persistence` and the rules appended to its
+  own system prompt, so it answers on the user's Pro or Max plan — or OpenCode — `opencode run`
+  with `OPENCODE_PERMISSION` denying every tool — to write what the text's `--` comments ask
+  for, or to put right what failed with what the server said. Both run in an empty folder of
+  their own (`~/.cache/cobserve/assist`), without `ANTHROPIC_API_KEY` or the monitor's
+  credentials, for two minutes at most; `ctrl+c` kills them. They are told the server, its
+  version, the text, the error, and the tables the text names or its words point at with their
+  columns (the others by name) — never a row or a login. The answer, out of its fences and its
+  long lines broken before their clauses, takes the text's place; `ctrl+z` puts the text back;
+  nothing runs until asked. OpenCode's conversations from here are left out of *past
+  conversations*. `ASSISTANT=opencode` chooses OpenCode first; `ctrl+t` or the chip switches.
+- **Every row a click**: on view 1 a row of the tree or an insight, on view 2 a job, on view 3 a
+  tile, on view 4 a line of the tape — a click puts the cursor there, a second does what `⏎`
+  does.
+- **The name**: the crate, the binary, the masthead and the terminal's title say *cobserve*, as
+  the repository does; the sessions kept under the name the screen had before are still read.
 - **The job's SQL on view 2**: the cursor on a job opens its SQL under the row, as on view 1 —
   what ClickHouse runs when the stitch found it, the query as saved in Redash otherwise (an
   ad-hoc query outside ClickHouse has none: Redash's API keeps no text for it). `J` `K` scroll.

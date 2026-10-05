@@ -1,0 +1,40 @@
+  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 sessions                     ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━━━━ Terbit 05:33 ━━━━━━ Dzuhur 11:45 ━━━━━━ Ashar 14:48 ━━●┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
+                                                                                                                                            
+  FLEET   9 nodes · 1 hot   mem ━━━━╸━━━━━━━ 36.4% 280/768 GiB   cpu ━━━╸━━━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕                     
+  REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                  [2] queue  
+                                                                                                                                            
+        ✖ clickhouse3           ▲ clickhouse7  lag 12s  ● clickhouse-bi         ● clickhouse2           ● clickhouse5           +4 more     
+   mem  ━━━━━━━━━━━━━━━━╺  93%  ━━━━━━━━━━╺━━━━━━  60%  ━━━━━━━━━━━╸━━━━━  67%  ━━━━━━━╺━━━━━━━━━  42%  ━━━━━━╸━━━━━━━━━━  38%  ≤ 21%       
+   cpu  ━━━━━━━━━━━━━━━━╺  93%  ━━━━━━━╸━━━━━━━━━  44%  ━━━━━━━━━━━━╺━━━━  72%  ━━━━━╺━━━━━━━━━━━  29%  ╸━━━━━━━━━━━━━━━━   4%  ≤ 16%       
+                                                                                                                                            
+                                                                                                                                            
+  SESSIONS  1                   ▦ Query  on   ● clickhouse3 ▾     ✻ Claude ⇄                       read-only · 30 s · 1000 rows · 9 tables  
+                                                                                                                                            
+  ▎ ▦  clickhouse3        5        1  -- the ten users using the most memory right now                                                      
+  ▎    ✔ 3 rows                    2  SELECT user, count() AS queries, formatReadableSize(sum(memory_usage)) AS memory                      
+                                   3  FROM system.processes                                                                                 
+    +  new session                 4  GROUP BY user                                                                                         
+    ↻  past conversations          5  ORDER BY sum(memory_usage) DESC                                                                       
+                                   6  LIMIT 10;                                                                                             
+                                      ⏎ after ; runs · ctrl+r runs · tab completes · ctrl+g asks Claude · ctrl+o another server             
+                                                                                                                                            
+                                ✔ 3 rows · 184 ms · read 112 rows, 12.5 KiB · on clickhouse3                                                
+                                                                                                                                            
+                                  user      queries  memory                                                                                 
+                                  ────────  ───────  ────────                                                                               
+                                  r_redash        2  24.5 GiB                                                                               
+                                  airflow         1  3.5 GiB                                                                                
+                                  haris           1  1.2 GiB                                                                                
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+   ctrl+r  run   tab  complete   ctrl+g  ask Claude   ctrl+t  OpenCode instead   ctrl+o  server   ⇧tab  the answer   ctrl+\  sessions       

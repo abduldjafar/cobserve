@@ -6,7 +6,7 @@
 //! ones jump out before anything is read.
 
 use super::widgets::{sparkline, thin_bar, Cells, PCT_SHAPE};
-use crate::app::{scroll_into_view, App};
+use crate::app::{scroll_into_view, App, Hit};
 use crate::fmt;
 use crate::model::NodeView;
 use crate::severity::{self, Severity};
@@ -77,6 +77,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             if rect.height < 3 {
                 continue;
             }
+            app.viewport.hits.borrow_mut().push((rect, Hit::Tile(i)));
             tile(frame, app, theme, rect, node, i == selected);
         }
     });

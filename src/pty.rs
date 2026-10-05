@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn a_branch_is_read_from_git_s_own_files() {
-        let root = std::env::temp_dir().join(format!("pay_monitoring-git-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("cobserve-git-{}", std::process::id()));
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         std::fs::create_dir_all(repo.join("src/deep")).unwrap();

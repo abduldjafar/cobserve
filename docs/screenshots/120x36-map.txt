@@ -1,4 +1,4 @@
-  ◆ fleetlens   ✖ critical          1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ◆ cobserve   ✖ critical           1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
                                                                                                                         
   FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4% 280/768 GiB   cpu ━━━╺━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕     
@@ -33,4 +33,4 @@
   MEM 59.6/64 GiB  93.1%  ▂▃▄▅▆▇▇▃ → steady    CPU 14.9/16 cores  93.4%  ▇▇▇▇▇▆▇▇ → steady                              
   memory: queries 45.7% + server 47.4% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.4 GiB = 0.2× a 24.0 GiB query   
   ⏎ opens it in view 1                                                                                                  
-   ←→↑↓  move   ⏎  open in view 1   s  sort   p  pause   ?  help   q  quit                                              
+   ←→↑↓  move   ⏎  open in view 1   c  SQL on it   s  sort   p  pause   ?  help   q  quit                               

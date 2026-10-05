@@ -1036,8 +1036,329 @@ async fn join_all<F: std::future::Future>(futures: impl IntoIterator<Item = F>) 
         .collect()
 }
 
+// -- query sessions ---------------------------------------------------------------------------
+
+/// What a query session's queries are sent with: read-only always; a time and a row limit, the
+/// answer whole before it is sent (so the summary says what the query read), and the query
+/// stopped on the server when the session lets go of it — where the login may set them. A
+/// read-only login's profile carries its own limits, and is sent `readonly=1` alone.
+const CONSOLE_SETTINGS: &str = "readonly=1&max_execution_time=30&max_result_rows=1000&result_overflow_mode=break\
+&wait_end_of_query=1&cancel_http_readonly_queries_on_client_close=1&log_comment=cobserve%20query%20session";
+/// The session waits a little longer than the server may take.
+const CONSOLE_TIMEOUT: Duration = Duration::from_secs(35);
+/// The most of an answer that is read; the rest is cut, and the request let go.
+const CONSOLE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Where a query session's queries go: a server's address and the login the monitor has for it.
+/// Never in `App`: the login stays with the code that sends it.
+#[derive(Clone)]
+pub struct ConsoleTarget {
+    pub url: String,
+    pub login: Option<Credentials>,
+}
+
+impl std::fmt::Debug for ConsoleTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsoleTarget").field("url", &self.url).field("login", &self.login).finish()
+    }
+}
+
+impl ClickHouseSource {
+    /// Every server of the fleet by name, with its address and login, for query sessions.
+    pub fn console_targets(&self) -> HashMap<String, ConsoleTarget> {
+        self.targets
+            .iter()
+            .map(|t| (t.name.clone(), ConsoleTarget { url: t.url.clone(), login: t.credentials.clone() }))
+            .collect()
+    }
+}
+
+/// A query session's query on one server, and the first rows of what it answered.
+pub async fn console_query(client: &reqwest::Client, target: &ConsoleTarget, node: &str, sql: &str) -> Result<crate::console::Answer, String> {
+    let login = target.login.as_ref().ok_or_else(|| "no login for this server — give it one in the credential file".to_string())?;
+    let started = std::time::Instant::now();
+    let mut response = console_send(client, &target.url, login, sql, CONSOLE_SETTINGS).await?;
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        if !(body.contains("Cannot modify") && body.contains("readonly mode")) {
+            return Err(console_error(&body, login));
+        }
+        // A read-only login may not set the limits; its profile has its own.
+        response = console_send(client, &target.url, login, sql, "readonly=1").await?;
+        if !response.status().is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(console_error(&body, login));
+        }
+    }
+    let summary = response
+        .headers()
+        .get("X-ClickHouse-Summary")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok());
+    let number = |key: &str| summary.as_ref().and_then(|s| s.get(key)).and_then(|v| v.as_str().and_then(|t| t.parse().ok()).or(v.as_u64()));
+    let mut body = Vec::new();
+    let mut cut = false;
+    while let Some(chunk) = response.chunk().await.map_err(describe_console)? {
+        body.extend_from_slice(&chunk);
+        if body.len() > CONSOLE_BYTES {
+            cut = true;
+            break;
+        }
+    }
+    drop(response);
+    let mut answer = parse_console(&String::from_utf8_lossy(&body), login)?;
+    answer.node = node.to_string();
+    answer.elapsed_ms = started.elapsed().as_millis() as u64;
+    answer.read_rows = number("read_rows");
+    answer.read_bytes = number("read_bytes");
+    answer.cut |= cut;
+    Ok(answer)
+}
+
+async fn console_send(client: &reqwest::Client, url: &str, login: &Credentials, sql: &str, settings: &str) -> Result<reqwest::Response, String> {
+    client
+        .post(format!("{url}/?{settings}&default_format=JSONCompactEachRowWithNamesAndTypes"))
+        .timeout(CONSOLE_TIMEOUT)
+        // §9: credentials go in headers, and are never logged.
+        .header("X-ClickHouse-User", &login.user)
+        .header("X-ClickHouse-Key", &login.password)
+        .body(sql.to_string())
+        .send()
+        .await
+        .map_err(describe_console)
+}
+
+/// A transport error, with the console's own time limit in the words for a timeout.
+fn describe_console(error: reqwest::Error) -> String {
+    if error.is_timeout() {
+        return format!("no answer within {} s", CONSOLE_TIMEOUT.as_secs());
+    }
+    describe(error)
+}
+
+/// ClickHouse's error as a line: `Code 60 · Unknown table … (UNKNOWN_TABLE)`, its version cut and
+/// the login's password never in it — taken out of the answer's own format when the server
+/// wrote it there (`[]`, `[]`, then `["Code: 164. …"]`).
+fn console_error(body: &str, login: &Credentials) -> String {
+    let body = body.lines().find_map(exception_in).unwrap_or_else(|| body.to_string());
+    let mut text = body.trim().replace('\n', " ");
+    if login.password.chars().count() >= 4 {
+        text = text.replace(&login.password, "…");
+    }
+    if let Some(at) = text.find(" (version ") {
+        text.truncate(at);
+    }
+    let text = match text.strip_prefix("Code: ").and_then(|rest| rest.split_once(". DB::Exception: ")) {
+        Some((code, message)) => format!("Code {code} · {message}"),
+        None => text,
+    };
+    text.chars().take(600).collect()
+}
+
+/// What a server's tables are read with, for suggestions: read-only, and short.
+const SCHEMA_SETTINGS: &str = "readonly=1&max_execution_time=20&max_result_rows=250000&result_overflow_mode=break\
+&log_comment=cobserve%20suggestions";
+/// The most of a server's list that is read.
+const SCHEMA_BYTES: usize = 32 * 1024 * 1024;
+
+const SCHEMA_DATABASES: &str = "SELECT name FROM system.databases ORDER BY name FORMAT TabSeparated";
+const SCHEMA_TABLES: &str = "SELECT database, name, engine FROM system.tables \
+WHERE database NOT IN ('INFORMATION_SCHEMA', 'information_schema') AND NOT is_temporary \
+ORDER BY database, name LIMIT 20000 FORMAT TabSeparated";
+const SCHEMA_COLUMNS: &str = "SELECT database, table, name, type FROM system.columns \
+WHERE database NOT IN ('INFORMATION_SCHEMA', 'information_schema') \
+ORDER BY database, table, position LIMIT 200000 FORMAT TabSeparated";
+const SCHEMA_FUNCTIONS: &str = "SELECT name, is_aggregate FROM system.functions WHERE NOT startsWith(name, '_') ORDER BY name FORMAT TabSeparated";
+
+/// A server's databases, tables, columns and functions, for a query session's suggestions and
+/// its helper. The tables are what is needed; a login that may not list the columns or the
+/// functions still gets the tables.
+pub async fn console_schema(client: &reqwest::Client, target: &ConsoleTarget) -> Result<crate::complete::Schema, String> {
+    use crate::complete::{Schema, Table};
+    let databases = schema_rows(client, target, SCHEMA_DATABASES).await?;
+    let tables = schema_rows(client, target, SCHEMA_TABLES).await?;
+    let columns = schema_rows(client, target, SCHEMA_COLUMNS).await.unwrap_or_default();
+    let functions = schema_rows(client, target, SCHEMA_FUNCTIONS).await.unwrap_or_default();
+    let mut schema = Schema {
+        databases: databases.into_iter().filter_map(|row| row.into_iter().next()).collect(),
+        tables: tables
+            .into_iter()
+            .filter(|row| row.len() >= 3)
+            .map(|row| Table { database: row[0].clone(), name: row[1].clone(), engine: row[2].clone(), columns: Vec::new() })
+            .collect(),
+        functions: functions.into_iter().filter(|row| row.len() >= 2).map(|row| (row[0].clone(), row[1] == "1")).collect(),
+    };
+    let at: HashMap<(String, String), usize> = schema.tables.iter().enumerate().map(|(i, t)| ((t.database.clone(), t.name.clone()), i)).collect();
+    for row in columns.into_iter().filter(|row| row.len() >= 4) {
+        if let Some(&i) = at.get(&(row[0].clone(), row[1].clone())) {
+            schema.tables[i].columns.push((row[2].clone(), row[3].clone()));
+        }
+    }
+    if schema.functions.is_empty() {
+        schema.functions = Schema::fallback().functions;
+    }
+    Ok(schema)
+}
+
+/// One of those lists, its rows' fields as text.
+async fn schema_rows(client: &reqwest::Client, target: &ConsoleTarget, sql: &str) -> Result<Vec<Vec<String>>, String> {
+    let login = target.login.as_ref().ok_or_else(|| "no login for this server".to_string())?;
+    let mut response = console_send(client, &target.url, login, sql, SCHEMA_SETTINGS).await?;
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        if !(body.contains("Cannot modify") && body.contains("readonly mode")) {
+            return Err(console_error(&body, login));
+        }
+        response = console_send(client, &target.url, login, sql, "readonly=1").await?;
+        if !response.status().is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(console_error(&body, login));
+        }
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(describe_console)? {
+        body.extend_from_slice(&chunk);
+        if body.len() > SCHEMA_BYTES {
+            break;
+        }
+    }
+    Ok(parse_tsv(&String::from_utf8_lossy(&body)))
+}
+
+/// `TabSeparated` rows, their fields unescaped. A last line cut short is left out.
+pub fn parse_tsv(body: &str) -> Vec<Vec<String>> {
+    let complete = if body.ends_with('\n') { body } else { body.rsplit_once('\n').map_or("", |(whole, _)| whole) };
+    complete.lines().filter(|line| !line.is_empty()).map(|line| line.split('\t').map(unescape_tsv).collect()).collect()
+}
+
+fn unescape_tsv(field: &str) -> String {
+    let mut out = String::with_capacity(field.len());
+    let mut chars = field.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some('b') => out.push('\u{8}'),
+            Some('f') => out.push('\u{c}'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// The server's exception in a line of an answer: as text, or written in the answer's format.
+fn exception_in(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.starts_with("Code: ") {
+        return Some(line.to_string());
+    }
+    if line.starts_with("[\"Code: ") {
+        return serde_json::from_str::<Vec<String>>(line).ok()?.into_iter().next();
+    }
+    if line.starts_with("{\"exception\"") {
+        return serde_json::from_str::<serde_json::Value>(line).ok()?.get("exception")?.as_str().map(str::to_string);
+    }
+    None
+}
+
+/// `JSONCompactEachRowWithNamesAndTypes` — names, types, then a row per line — into an answer,
+/// at most `ROW_LIMIT` rows of it; anything else (a query with a `FORMAT` of its own) as text.
+pub fn parse_console(body: &str, login: &Credentials) -> Result<crate::console::Answer, String> {
+    use crate::console::{Answer, ROW_LIMIT};
+    let mut lines = body.lines();
+    let strings = |line: Option<&str>| -> Option<Vec<String>> {
+        let values: Vec<serde_json::Value> = serde_json::from_str(line?).ok()?;
+        values.into_iter().map(|v| v.as_str().map(str::to_string)).collect()
+    };
+    let (Some(names), Some(types)) = (strings(lines.next()), strings(lines.next())) else {
+        if body.lines().any(|line| exception_in(line).is_some()) {
+            return Err(console_error(body, login));
+        }
+        let text: String = body.lines().take(ROW_LIMIT).collect::<Vec<_>>().join("\n");
+        return Ok(Answer { text: Some(text), ..Answer::default() });
+    };
+    let mut answer = Answer { columns: names.into_iter().zip(types).collect(), ..Answer::default() };
+    for line in lines {
+        if exception_in(line).is_some() {
+            // The server stopped it after the first rows: say why, with what came.
+            let error = console_error(line, login);
+            if answer.rows.is_empty() {
+                return Err(error);
+            }
+            answer.text = Some(error);
+            answer.cut = true;
+            break;
+        }
+        let Ok(values) = serde_json::from_str::<Vec<serde_json::Value>>(line) else {
+            continue;
+        };
+        if answer.rows.len() >= ROW_LIMIT {
+            answer.cut = true;
+            break;
+        }
+        answer.rows.push(
+            values
+                .into_iter()
+                .map(|v| match v {
+                    serde_json::Value::Null => None,
+                    serde_json::Value::String(text) => Some(text),
+                    other => Some(other.to_string()),
+                })
+                .collect(),
+        );
+    }
+    Ok(answer)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_query_session_s_answer_is_read_row_by_row_and_errors_say_what_clickhouse_said() {
+        let login = Credentials { user: "monitor".into(), password: "s3cret-pw".into() };
+        let body = "[\"user\",\"queries\",\"memory\"]\n[\"String\",\"UInt64\",\"Nullable(Float64)\"]\n[\"r_redash\",\"2\",1.5]\n[\"airflow\",\"1\",null]\n";
+        let answer = parse_console(body, &login).unwrap();
+        assert_eq!(answer.columns, [("user".to_string(), "String".to_string()), ("queries".into(), "UInt64".into()), ("memory".into(), "Nullable(Float64)".into())]);
+        assert_eq!(answer.rows, [vec![Some("r_redash".to_string()), Some("2".into()), Some("1.5".into())], vec![Some("airflow".into()), Some("1".into()), None]]);
+        assert!(!answer.cut && answer.text.is_none());
+        // A FORMAT of its own: the text as it came.
+        let pretty = parse_console("┏━━━┓\n┃ 1 ┃\n", &login).unwrap();
+        assert_eq!(pretty.text.as_deref(), Some("┏━━━┓\n┃ 1 ┃"));
+        // Refused, in ClickHouse's words — without its version, and without the password.
+        let refused = "Code: 164. DB::Exception: monitor: Cannot execute query in readonly mode. For queries over HTTP, method GET implies readonly s3cret-pw. (READONLY) (version 24.10.1.2812 (official build))";
+        let error = parse_console(refused, &login).unwrap_err();
+        assert!(error.starts_with("Code 164 · monitor: Cannot execute query in readonly mode."), "{error}");
+        assert!(error.ends_with("(READONLY)") && !error.contains("s3cret") && !error.contains("version"), "{error}");
+        // Stopped after the first rows: they stay, with why.
+        let timed_out = "[\"n\"]\n[\"UInt64\"]\n[\"1\"]\nCode: 159. DB::Exception: Timeout exceeded: elapsed 30.0 seconds. (TIMEOUT_EXCEEDED)\n";
+        let partial = parse_console(timed_out, &login).unwrap();
+        assert!(partial.cut && partial.rows.len() == 1 && partial.text.as_deref().unwrap().contains("TIMEOUT_EXCEEDED"));
+        // Written in the answer's own format, as a read-only login's refusal is.
+        let in_format = "[]\n[]\n[\"Code: 164. DB::Exception: monitor: Cannot execute query in readonly mode. (READONLY) (version 24.10.4.191 (official build))\"]\n";
+        assert_eq!(parse_console(in_format, &login).unwrap_err(), "Code 164 · monitor: Cannot execute query in readonly mode. (READONLY)");
+        let mid_stream = "[\"n\"]\n[\"UInt64\"]\n[\"1\"]\n[\"Code: 159. DB::Exception: Timeout exceeded. (TIMEOUT_EXCEEDED)\"]\n";
+        assert!(parse_console(mid_stream, &login).unwrap().text.unwrap().starts_with("Code 159 · Timeout exceeded."));
+        // More rows than are kept: cut, and said.
+        let many: String = std::iter::once("[\"n\"]\n[\"UInt64\"]\n".to_string()).chain((0..1500).map(|n| format!("[\"{n}\"]\n"))).collect();
+        let cut = parse_console(&many, &login).unwrap();
+        assert_eq!((cut.rows.len(), cut.cut), (crate::console::ROW_LIMIT, true));
+        assert!(!format!("{:?}", ConsoleTarget { url: "http://ch:8123".into(), login: Some(login) }).contains("s3cret"), "Debug never shows it");
+    }
+
+    #[test]
+    fn a_server_s_lists_are_read_as_tab_separated_rows() {
+        let rows = parse_tsv("system\tprocesses\tSystemProcesses\nwallet\tweird\\tname\tMergeTree\ncut");
+        assert_eq!(rows, [vec!["system", "processes", "SystemProcesses"], vec!["wallet", "weird\tname", "MergeTree"]]);
+        assert_eq!(parse_tsv("a\\\\b\n"), [vec!["a\\b"]]);
+        assert!(parse_tsv("").is_empty());
+    }
+
     use super::*;
 
     const CAPACITY_FIXTURE: &str = r#"{"server_memory_total_bytes":68719476736.0,"server_memory_used_bytes":59756847104.0,"server_cpu_percent":93.75,"server_cpu_cores":16,"server_cpu_time_us":500000000000,"active_queries":6,"replica_lag_s":0,"active_parts":1204,"max_memory_usage":9000000000,"version":"24.11.1.2557","uptime_s":4306429}

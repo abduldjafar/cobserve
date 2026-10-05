@@ -43,10 +43,12 @@ pub enum Kind {
     OpenCode,
     /// The user's own shell.
     Terminal,
+    /// SQL on a server of the fleet, read-only (`console.rs`): no program, the session itself.
+    Query,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 3] = [Kind::Claude, Kind::OpenCode, Kind::Terminal];
+    pub const ALL: [Kind; 4] = [Kind::Claude, Kind::OpenCode, Kind::Terminal, Kind::Query];
 
     /// Its mark in the list of sessions.
     pub fn glyph(self) -> &'static str {
@@ -54,6 +56,7 @@ impl Kind {
             Kind::Claude => "✻",
             Kind::OpenCode => "▣",
             Kind::Terminal => "❯",
+            Kind::Query => "▦",
         }
     }
 
@@ -62,6 +65,7 @@ impl Kind {
             Kind::Claude => "Claude",
             Kind::OpenCode => "OpenCode",
             Kind::Terminal => "Terminal",
+            Kind::Query => "Query",
         }
     }
 
@@ -71,6 +75,7 @@ impl Kind {
             Kind::Claude => "Claude",
             Kind::OpenCode => "OpenCode",
             Kind::Terminal => "the shell",
+            Kind::Query => "the query",
         }
     }
 
@@ -80,6 +85,7 @@ impl Kind {
             Kind::Claude => "CLAUDE_CMD",
             Kind::OpenCode => "OPENCODE_CMD",
             Kind::Terminal => "SHELL_CMD",
+            Kind::Query => "CH_SEED_URLS",
         }
     }
 
@@ -89,7 +95,7 @@ impl Kind {
     pub fn scrollback(self) -> usize {
         match self {
             Kind::Terminal => 1000,
-            Kind::Claude | Kind::OpenCode => 0,
+            Kind::Claude | Kind::OpenCode | Kind::Query => 0,
         }
     }
 
@@ -98,7 +104,8 @@ impl Kind {
         match self {
             Kind::Claude => Kind::OpenCode,
             Kind::OpenCode => Kind::Terminal,
-            Kind::Terminal => Kind::Claude,
+            Kind::Terminal => Kind::Query,
+            Kind::Query => Kind::Claude,
         }
     }
 
@@ -108,7 +115,7 @@ impl Kind {
         match self {
             Kind::Claude => title.eq_ignore_ascii_case("claude code") || title.eq_ignore_ascii_case("claude"),
             Kind::OpenCode => title.eq_ignore_ascii_case("opencode"),
-            Kind::Terminal => false,
+            Kind::Terminal | Kind::Query => false,
         }
     }
 }
@@ -133,6 +140,7 @@ impl Commands {
             Kind::Claude => &self.claude,
             Kind::OpenCode => &self.opencode,
             Kind::Terminal => &self.terminal,
+            Kind::Query => &[],
         }
     }
 }
@@ -342,6 +350,8 @@ pub struct Session {
     pub started: i64,
     /// Its program's process id while it runs, for Claude Code to say what it is in.
     pub pid: Option<u32>,
+    /// A query session's SQL, server and answer; `None` for the others.
+    pub console: Option<Box<crate::console::Console>>,
 }
 
 impl Session {
@@ -357,12 +367,14 @@ impl Session {
             start: Start::Fresh,
             started: 0,
             pid: None,
+            console: (kind == Kind::Query).then(|| Box::new(crate::console::Console::new(None))),
         }
     }
 
-    /// Kept from the last run, not started yet: it is, when it is first shown.
+    /// Kept from the last run, not started yet: it is, when it is first shown. A query session
+    /// has no program to start.
     pub fn waiting(&self) -> bool {
-        self.pane.state == PaneState::Idle
+        self.console.is_none() && self.pane.state == PaneState::Idle
     }
 
     /// The arguments its program starts with, after its command's own: a conversation to take
@@ -402,6 +414,9 @@ impl Session {
     pub fn label(&self) -> String {
         if let Some(name) = &self.name {
             return name.clone();
+        }
+        if let Some(console) = &self.console {
+            return console.node.clone().unwrap_or_else(|| "no server".to_string());
         }
         let title = self.pane.title.as_deref().map(|t| t.trim_start_matches(|c: char| !c.is_alphanumeric()).trim());
         match title {
@@ -443,6 +458,9 @@ pub struct Picker {
     /// What the conversations on screen are for, and what was last asked: a lookup per change.
     conversations_for: Option<(u64, Kind, bool)>,
     conversations_asked: Option<(u64, Kind, bool)>,
+    /// For a query session, the fleet's servers to choose from — kept fresh by `App` — and
+    /// whether each answers.
+    pub servers: Vec<(String, bool)>,
 }
 
 /// What `main.rs` should list for the picker: conversations of `kind`, in `dir` or everywhere.
@@ -467,6 +485,8 @@ pub enum PickRow {
     Conversation(usize),
     /// List every folder's conversations.
     Everywhere,
+    /// For a query session: one of `servers`.
+    Server(usize),
     /// The folder above.
     Up,
     /// One of `folders`.
@@ -499,12 +519,19 @@ impl Picker {
             everywhere: false,
             conversations_for: None,
             conversations_asked: None,
+            servers: Vec::new(),
         }
+    }
+
+    /// The servers a query session can be opened on, those the search names.
+    pub fn servers_shown(&self) -> Vec<usize> {
+        let wanted = self.query.trim().to_lowercase();
+        (0..self.servers.len()).filter(|&i| wanted.is_empty() || self.servers[i].0.to_lowercase().contains(&wanted)).collect()
     }
 
     /// Whether the kind on screen keeps conversations to take up: a shell does not.
     fn keeps_conversations(&self) -> bool {
-        self.kind != Kind::Terminal
+        matches!(self.kind, Kind::Claude | Kind::OpenCode)
     }
 
     /// The conversations to ask `main.rs` for, once per folder and kind.
@@ -555,6 +582,9 @@ impl Picker {
     /// What the list shows: in a folder, the way to open the session there and the way up
     /// before its folders; searching, what was found.
     pub fn rows(&self) -> Vec<PickRow> {
+        if self.kind == Kind::Query {
+            return self.servers_shown().into_iter().map(PickRow::Server).collect();
+        }
         let conversations = (0..self.conversations_shown().len()).map(PickRow::Conversation);
         if self.everywhere {
             return conversations.collect();
@@ -586,12 +616,17 @@ impl Picker {
             PickRow::Up => self.dir.parent().map(Path::to_path_buf),
             PickRow::Folder(index) => self.folders.get(index).map(|f| f.path.clone()),
             PickRow::Conversation(index) => self.conversations_shown().get(index).map(|c| c.dir.clone()),
-            PickRow::Everywhere => None,
+            PickRow::Everywhere | PickRow::Server(_) => None,
         }
     }
 
     /// What `main.rs` should look up for what is on screen now — once.
     pub fn lookup(&mut self) -> Option<Lookup> {
+        // A query session works on a server, not in a folder.
+        if self.kind == Kind::Query {
+            self.looking = false;
+            return None;
+        }
         (self.asked != self.generation).then(|| {
             self.asked = self.generation;
             Lookup { generation: self.generation, dir: self.dir.clone(), query: self.query.clone() }
@@ -692,6 +727,8 @@ impl Picker {
 }
 
 /// What keys on view 5 do besides going to Claude.
+// One of these is held, by `Sessions`: the picker's size costs nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     /// Every key but `ctrl+\` goes to the session on screen.
@@ -726,6 +763,8 @@ pub struct Sessions {
     /// and not three.
     wheel: i8,
     next_id: u64,
+    /// Who writes a new query session's SQL when asked: `ASSISTANT`, or the last one chosen.
+    pub assistant: crate::console::Assistant,
 }
 
 impl Default for Sessions {
@@ -742,6 +781,7 @@ impl Default for Sessions {
             pane_origin: Cell::new((0, 0)),
             wheel: 0,
             next_id: 1,
+            assistant: crate::console::Assistant::Claude,
         }
     }
 }
@@ -770,8 +810,23 @@ impl Sessions {
         if self.list.len() >= MAX_SESSIONS {
             return None;
         }
+        if kind == Kind::Query {
+            return self.open_query(None);
+        }
         let dir = if dir.trim().is_empty() { self.default_dir.clone() } else { dir.trim().to_string() };
         let session = Session::new(self.take_id(), kind, dir);
+        Some(self.add(session))
+    }
+
+    /// A new query session on `node`, on screen.
+    pub fn open_query(&mut self, node: Option<&str>) -> Option<u64> {
+        if self.list.len() >= MAX_SESSIONS {
+            return None;
+        }
+        let mut session = Session::new(self.take_id(), Kind::Query, self.default_dir.clone());
+        let mut console = crate::console::Console::new(node.map(str::to_string));
+        console.assistant = self.assistant;
+        session.console = Some(Box::new(console));
         Some(self.add(session))
     }
 
@@ -794,6 +849,12 @@ impl Sessions {
             let kind = Kind::from(kept.kind);
             let mut session = Session::new(self.take_id(), kind, kept.dir.clone());
             session.name = kept.name.clone();
+            if let Some(console) = session.console.as_mut() {
+                console.node = kept.node.clone();
+                console.history = kept.history.clone();
+                console.set_sql(kept.sql.as_deref().unwrap_or_default());
+                console.assistant = self.assistant;
+            }
             session.start = match (kind, &kept.conversation) {
                 (Kind::Claude | Kind::OpenCode, Some(id)) => Start::Resume { id: id.clone(), fork: false },
                 (Kind::OpenCode, None) => Start::Continue,
@@ -820,11 +881,14 @@ impl Sessions {
                     name: s.name.clone(),
                     dir: s.dir.clone(),
                     conversation: match s.kind {
-                        Kind::Terminal => None,
+                        Kind::Terminal | Kind::Query => None,
                         // Claude Code's conversation is known from the start; one never typed
                         // into is started under the same id next time.
                         _ => s.conversation.clone(),
                     },
+                    node: s.console.as_ref().and_then(|c| c.node.clone()),
+                    sql: s.console.as_ref().map(|c| c.sql()).filter(|sql| !sql.trim().is_empty()),
+                    history: s.console.as_ref().map(|c| c.history.clone()).unwrap_or_default(),
                 })
                 .collect(),
             active: self.active,
@@ -839,7 +903,9 @@ impl Sessions {
 
     /// `session` started and put on screen.
     fn add(&mut self, mut session: Session) -> u64 {
-        session.pane.start(self.want_size.get(), session.kind.scrollback());
+        if session.console.is_none() {
+            session.pane.start(self.want_size.get(), session.kind.scrollback());
+        }
         let id = session.id;
         self.list.push(session);
         self.select(self.list.len() - 1);
@@ -1300,8 +1366,8 @@ mod tests {
         sessions.open_new("", Kind::Terminal).unwrap();
         sessions.current_mut().unwrap().pane.feed(b"\x1b]0;vim notes.md\x07", true);
         assert_eq!(sessions.current().unwrap().label(), "vim notes.md");
-        assert_eq!(Kind::ALL.map(Kind::glyph), ["✻", "▣", "❯"]);
-        assert_eq!(Kind::ALL.map(Kind::next), [Kind::OpenCode, Kind::Terminal, Kind::Claude]);
+        assert_eq!(Kind::ALL.map(Kind::glyph), ["✻", "▣", "❯", "▦"]);
+        assert_eq!(Kind::ALL.map(Kind::next), [Kind::OpenCode, Kind::Terminal, Kind::Query, Kind::Claude]);
     }
 
     #[test]

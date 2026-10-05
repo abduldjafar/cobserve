@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local ClickHouse 24.10 rig for developing pay_monitoring without touching the fleet.
+# Local ClickHouse 24.10 rig for developing cobserve without touching the fleet.
 #
 #   ch-a   127.0.0.1:8123   native 9000   cluster ch_cluster, shard 1, replica paymon_ch1
 #   ch-b   127.0.0.1:8124   native 9002   cluster ch_cluster, shard 1, replica paymon_ch2
@@ -11,7 +11,7 @@
 #   ./dev/local-rig.sh env     print the env vars for running the app
 #   ./dev/local-rig.sh credentials
 #                              write dev/local/credentials.yaml — a login per node — for
-#                              `pay_monitoring --credential dev/local/credentials.yaml`
+#                              `cobserve --credential dev/local/credentials.yaml`
 #   ./dev/local-rig.sh status  what each node reports (version, cluster rows, lag)
 #
 # Passwords are generated per run and live in dev/local/.env (gitignored). The fleet is

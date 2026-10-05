@@ -67,7 +67,7 @@ fn the_screen_renders_at_the_target_size() {
     let lines: Vec<&str> = screen.lines().collect();
 
     // The masthead: the name, how the fleet is, the tabs, how fresh and the clock.
-    assert!(lines[0].starts_with("  ◆ fleetlens"), "{}", lines[0]);
+    assert!(lines[0].starts_with("  ◆ cobserve"), "{}", lines[0]);
     assert!(lines[0].contains("● live") || lines[0].contains("○ paused"));
     assert!(lines[0].contains("1 nodes") && lines[0].contains("5 sessions"), "the tabs: {}", lines[0]);
     assert!(lines[0].contains("✖ critical"), "the fake fleet is in trouble: {}", lines[0]);
@@ -277,7 +277,7 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     let lit = footer(&bar);
     let at = |line: &str, text: &str| line.find(text).unwrap_or_else(|| panic!("{text} in {line}"));
     assert_eq!(at(&lit, "1-4  views"), at(&typing, "1-4  views"), "{lit}");
-    assert!(lit.contains("x  close   ctrl+\\  monitor   esc  back to Claude"), "the way back: {lit}");
+    assert!(lit.contains("x  close   ctrl+\\  monitor   esc  back"), "the way back: {lit}");
     app.update(key(KeyCode::Char('x')));
     let closing = render(&app, 140, 40);
     assert!(closing.contains("x again closes it"), "{closing}");
@@ -551,11 +551,11 @@ fn ten_minutes_before_a_prayer_its_reminder_takes_the_line_until_waved_away() {
 fn the_terminal_s_title_says_how_the_fleet_is_and_the_next_prayer() {
     let mut app = app_after(3);
     at_moment(&mut app, MOMENT);
-    assert_eq!(super::title(&app), "fleetlens ✖ · Maghrib 17:50");
+    assert_eq!(super::title(&app), "cobserve ✖ · Maghrib 17:50");
     at_moment(&mut app, MOMENT + 6504);
-    assert_eq!(super::title(&app), "fleetlens ✖ · ◷ Maghrib in 10 min");
+    assert_eq!(super::title(&app), "cobserve ✖ · ◷ Maghrib in 10 min");
     at_moment(&mut app, MOMENT + 7090);
-    assert_eq!(super::title(&app), "fleetlens ✖ · Maghrib now");
+    assert_eq!(super::title(&app), "cobserve ✖ · Maghrib now");
 }
 
 #[test]
@@ -582,7 +582,7 @@ fn sessions_of_the_last_run_wait_marked_and_a_conversation_can_be_taken_up() {
     use crate::saved::{Saved, SavedKind, SavedSession};
     let mut app = app_after(3);
     app.claude.default_dir = "~/work/cobserve".into();
-    let kept = |kind, dir: &str, conversation: Option<&str>| SavedSession { kind, name: None, dir: dir.into(), conversation: conversation.map(str::to_string) };
+    let kept = |kind, dir: &str, conversation: Option<&str>| SavedSession { kind, name: None, dir: dir.into(), conversation: conversation.map(str::to_string), ..SavedSession::default() };
     app.claude.restore(&Saved {
         sessions: vec![kept(SavedKind::Claude, "~/work/billing", Some("aaa")), kept(SavedKind::OpenCode, "~/work/pipelines", None)],
         active: 0,
@@ -1315,6 +1315,156 @@ const CLAUDE_DEMO: &[u8] = b"\x1b]0;\xe2\x9c\xb3 Stream the invoice export\x07\
 \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n";
 
 /// 15:52:07 WIB on Sunday 4 October 2026.
+#[test]
+fn a_click_puts_the_cursor_on_a_row_and_a_second_opens_it() {
+    use crate::app::Hit;
+    let mut app = app_after(5);
+    render(&app, 120, 36);
+    // The third row of the tree: a click selects it, a second opens it.
+    let third = app.viewport.hits.borrow().iter().filter_map(|(_, h)| matches!(h, Hit::Row(_)).then_some(*h)).nth(2).unwrap();
+    click_on(&mut app, third);
+    let Hit::Row(index) = third else { unreachable!() };
+    let id = app.with_rows(|_, rows| rows[index].id.clone()).unwrap();
+    assert_eq!(app.selected(), Some(&id));
+    let before = app.with_rows(|_, rows| rows.len()).unwrap();
+    render(&app, 120, 36);
+    click_on(&mut app, Hit::Row(index));
+    let after = app.with_rows(|_, rows| rows.len()).unwrap();
+    assert_ne!(before, after, "opened (or closed) like ⏎");
+
+    // A tile of the map, a line of the tape, the same way.
+    app.update(key(KeyCode::Char('3')));
+    render(&app, 120, 36);
+    click_on(&mut app, Hit::Tile(2));
+    assert_eq!(app.map_selection(), 2);
+    render(&app, 120, 36);
+    click_on(&mut app, Hit::Tile(2));
+    assert_eq!(app.view, View::Nodes, "a second click opens the node in view 1");
+    app.update(key(KeyCode::Char('4')));
+    render(&app, 120, 36);
+    if app.tape.len() > 1 {
+        click_on(&mut app, Hit::TapeLine(1));
+        assert_eq!(app.tape_selection(), 1);
+    }
+    // An insight: the first click goes into the list, the second goes there.
+    app.update(key(KeyCode::Char('1')));
+    render(&app, 120, 36);
+    click_on(&mut app, Hit::Insight(0));
+    assert_eq!(app.focus, crate::app::Focus::Insights);
+}
+
+/// A query session on clickhouse3 of the fake fleet, on screen, its tables known.
+fn app_with_query() -> App {
+    let mut app = app_after(118);
+    app.claude.open_query(Some("clickhouse3"));
+    app.open_claude();
+    app.update(Event::Schema("clickhouse3".into(), Ok(crate::fake::schema())));
+    app
+}
+
+fn type_into(app: &mut App, text: &str) {
+    for c in text.chars() {
+        match c {
+            '\n' => app.update(Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL))),
+            c => app.update(key(KeyCode::Char(c))),
+        }
+    }
+}
+
+/// What the session asked of `main.rs`, done the way `main.rs` does it under `FAKE=1`.
+fn answer_console(app: &mut App) {
+    let snapshot = app.snapshot().cloned();
+    let session = app.claude.current().map(|s| s.id).expect("a session");
+    let console = app.claude.current_mut().and_then(|s| s.console.as_deref_mut()).expect("a query session");
+    if let Some(ask) = console.take_ask() {
+        let answer = crate::fake::assist(&ask);
+        app.update(Event::Assisted(session, ask.id, answer));
+        return;
+    }
+    let request = console.take_request().expect("a query");
+    let mut answer = crate::fake::console_answer(snapshot.as_ref(), &request.node, &request.sql);
+    if let Ok(answer) = answer.as_mut() {
+        answer.elapsed_ms = 184;
+    }
+    app.update(Event::ConsoleAnswer(session, request.id, answer));
+}
+
+#[test]
+fn a_query_session_suggests_as_it_is_typed_and_shows_its_answer_as_a_table() {
+    let mut app = app_with_query();
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("▦ Query  on   ● clickhouse3 ▾") && screen.contains("✻ Claude ⇄"), "{screen}");
+    assert!(screen.contains("read-only · 30 s · 1000 rows · 9 tables"), "{screen}");
+    assert!(screen.contains("-- say what it should show, then ctrl+g: Claude writes the SQL"), "{screen}");
+
+    type_into(&mut app, "SELECT user, count() AS queries\nFROM system.proc");
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("▌▦ processes"), "the table under the word: {screen}");
+    app.update(key(KeyCode::Tab));
+    type_into(&mut app, "\nGROUP BY user;");
+    let sql = app.claude.current().and_then(|s| s.console.as_ref()).unwrap().sql();
+    assert_eq!(sql, "SELECT user, count() AS queries\nFROM system.processes\nGROUP BY user;");
+    app.update(key(KeyCode::Enter));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("running on clickhouse3"), "{screen}");
+    answer_console(&mut app);
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("✔ ") && screen.contains(" rows · 184 ms") && screen.contains("on clickhouse3"), "{screen}");
+    assert!(screen.contains("user") && screen.contains("queries") && screen.contains("r_redash"), "{screen}");
+    // The list beside it says what it is on and how it went.
+    assert!(screen.contains("▦  clickhouse3"), "{screen}");
+
+    // A write is refused by the server, and the helper is offered to put it right.
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)));
+    type_into(&mut app, "DROP TABLE wallet.ledger;");
+    app.update(key(KeyCode::Enter));
+    answer_console(&mut app);
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("✖ clickhouse3 · Code 164 · monitor: Cannot execute query in readonly mode."), "{screen}");
+    assert!(screen.contains("✻ ctrl+g: Claude puts it right, told what the server said"), "{screen}");
+}
+
+#[test]
+fn ctrl_g_has_the_helper_write_the_query_the_comment_asks_for() {
+    let mut app = app_with_query();
+    type_into(&mut app, "-- the ten users using the most memory right now");
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("Claude is writing it") && screen.contains("ctrl+c stops"), "{screen}");
+    answer_console(&mut app);
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("✻ Claude wrote this — read it first"), "{screen}");
+    assert!(screen.contains("FROM system.processes"), "{screen}");
+    let console = app.claude.current().and_then(|s| s.console.as_ref()).unwrap();
+    assert!(console.take_request_peek().is_none(), "nothing runs until asked");
+    // ⏎ at the end runs what it wrote; the helper's chip switches to OpenCode with a click.
+    app.update(key(KeyCode::Enter));
+    answer_console(&mut app);
+    assert!(render(&app, 140, 40).contains("✔ "));
+    click_on(&mut app, crate::app::Hit::ConsoleAssistant);
+    assert!(render(&app, 140, 40).contains("▣ OpenCode ⇄"));
+    assert_eq!(app.claude.assistant, crate::console::Assistant::OpenCode, "and new sessions ask it too");
+}
+
+#[test]
+fn a_query_session_is_opened_on_a_server_chosen_from_the_fleet() {
+    let mut app = app_after(5);
+    app.update(key(KeyCode::Char('5')));
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('q')));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("New query session") && screen.contains("which server should it run on?"), "{screen}");
+    assert!(screen.contains("●  clickhouse3") && screen.contains("search the servers"), "{screen}");
+    assert!(screen.contains("choose its server →") && screen.contains("⏎  open it on that server"), "{screen}");
+    type_into(&mut app, "bi");
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("1 server") && screen.contains("clickhouse-bi"), "{screen}");
+    app.update(key(KeyCode::Enter));
+    let session = app.claude.current().unwrap();
+    assert_eq!(session.console.as_ref().and_then(|c| c.node.as_deref()), Some("clickhouse-bi"));
+    assert!(render(&app, 140, 40).contains("● clickhouse-bi ▾"));
+}
+
 const MOMENT: u64 = 1_791_103_927;
 
 /// The clock at `at` in Jakarta, with the prayer times for it.
@@ -1433,6 +1583,19 @@ fn export_screens() {
         claude.update(key(KeyCode::Down));
     }
     save("160x48-claude-new", &mut claude, 160, 48);
+
+    // A query session: what Claude wrote for a comment, run, its answer under it; and another
+    // one being typed, the tables of `system.` under the cursor.
+    let mut query = app_with_query();
+    type_into(&mut query, "-- the ten users using the most memory right now");
+    query.update(Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    answer_console(&mut query);
+    query.update(key(KeyCode::Enter));
+    answer_console(&mut query);
+    save("140x40-query-session", &mut query, 140, 40);
+    query.update(Event::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)));
+    type_into(&mut query, "SELECT database, table, sum(rows) AS rows\nFROM system.pa");
+    save("140x40-query-suggest", &mut query, 140, 40);
 
     // Long enough for clickhouse5 to join, ch6 to drop out and come back, and a kill.
     let mut tape = app_after(118);

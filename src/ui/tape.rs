@@ -1,7 +1,7 @@
 //! View 4: the tape — what changed, newest first (`crate::tape`).
 
 use super::widgets::{tone_spans, Cells};
-use crate::app::{scroll_into_view, App};
+use crate::app::{scroll_into_view, App, Hit};
 use crate::fmt;
 use crate::severity::Severity;
 use crate::theme::Theme;
@@ -66,6 +66,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let mut previous_minute: Option<u64> = None;
     for (i, event) in app.tape.newest_first().enumerate().skip(offset).take(height) {
         let is_selected = i == selected;
+        app.viewport.hits.borrow_mut().push((Rect::new(body.x, body.y + lines.len() as u16, body.width, 1), Hit::TapeLine(i)));
         let mut cells = Cells::new();
         cells.push(if is_selected { "▌" } else { " " }, theme.accent());
         cells.push(format!("{} ", event.level.glyph()), theme.sev(event.level).add_modifier(Modifier::BOLD));

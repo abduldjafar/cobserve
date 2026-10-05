@@ -278,7 +278,7 @@ mod tests {
 
     impl Tree {
         fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!("pay_monitoring-folders-{name}-{}", std::process::id()));
+            let root = std::env::temp_dir().join(format!("cobserve-folders-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             for dir in ["alpha/.git", "beta/deep/cobweb", "Cobalt", ".hidden/cobra", "node_modules/cobfoo"] {
                 std::fs::create_dir_all(root.join(dir)).unwrap();

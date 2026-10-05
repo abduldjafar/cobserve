@@ -2,9 +2,10 @@
 //! conversation it was in — so the next start shows them again, and each takes its conversation
 //! up where it was left when it is opened.
 //!
-//! Kept in `$XDG_STATE_HOME/fleetlens/sessions.json` (`~/.local/state/fleetlens/` without it),
+//! Kept in `$XDG_STATE_HOME/cobserve/sessions.json` (`~/.local/state/cobserve/` without it),
 //! readable by its owner alone. No credential is in it, and nothing of the conversations
-//! themselves: Claude Code and OpenCode keep those.
+//! themselves: Claude Code and OpenCode keep those. A file of the name the monitor had before
+//! (`fleetlens/`) is read when there is none yet.
 
 use crate::claude::Kind;
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ pub struct Saved {
     pub active: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SavedSession {
     pub kind: SavedKind,
     #[serde(default)]
@@ -27,14 +28,23 @@ pub struct SavedSession {
     /// The conversation to take up: Claude Code's session id, OpenCode's.
     #[serde(default)]
     pub conversation: Option<String>,
+    /// A query session's server, the SQL in it, and what ran there before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SavedKind {
+    #[default]
     Claude,
     OpenCode,
     Terminal,
+    Query,
 }
 
 impl From<Kind> for SavedKind {
@@ -43,6 +53,7 @@ impl From<Kind> for SavedKind {
             Kind::Claude => SavedKind::Claude,
             Kind::OpenCode => SavedKind::OpenCode,
             Kind::Terminal => SavedKind::Terminal,
+            Kind::Query => SavedKind::Query,
         }
     }
 }
@@ -53,22 +64,32 @@ impl From<SavedKind> for Kind {
             SavedKind::Claude => Kind::Claude,
             SavedKind::OpenCode => Kind::OpenCode,
             SavedKind::Terminal => Kind::Terminal,
+            SavedKind::Query => Kind::Query,
         }
     }
 }
 
 /// Where the sessions are kept.
 pub fn path() -> Option<PathBuf> {
-    let state = std::env::var_os("XDG_STATE_HOME")
+    Some(state_dir()?.join("cobserve").join("sessions.json"))
+}
+
+/// Where they were kept under the monitor's name before.
+fn old_path() -> Option<PathBuf> {
+    Some(state_dir()?.join("fleetlens").join("sessions.json"))
+}
+
+fn state_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state")))?;
-    Some(state.join("fleetlens").join("sessions.json"))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state")))
 }
 
 /// The sessions of the last run; none when there were none, or the file is not one this reads.
 pub fn load() -> Saved {
-    path().and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+    let read = |path: Option<PathBuf>| std::fs::read_to_string(path?).ok();
+    read(path()).or_else(|| read(old_path())).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
 }
 
 /// Keep `saved` for the next run: written beside the old file and moved over it, so a crash
@@ -99,8 +120,22 @@ mod tests {
     fn sessions_survive_a_round_trip_and_a_file_from_elsewhere_is_ignored() {
         let saved = Saved {
             sessions: vec![
-                SavedSession { kind: SavedKind::Claude, name: Some("billing export".into()), dir: "~/work/billing".into(), conversation: Some("aaa".into()) },
-                SavedSession { kind: SavedKind::Terminal, name: None, dir: "~/work/reports".into(), conversation: None },
+                SavedSession {
+                    kind: SavedKind::Claude,
+                    name: Some("billing export".into()),
+                    dir: "~/work/billing".into(),
+                    conversation: Some("aaa".into()),
+                    ..SavedSession::default()
+                },
+                SavedSession { kind: SavedKind::Terminal, dir: "~/work/reports".into(), ..SavedSession::default() },
+                SavedSession {
+                    kind: SavedKind::Query,
+                    dir: "~".into(),
+                    node: Some("clickhouse3".into()),
+                    sql: Some("SELECT 1".into()),
+                    history: vec!["SELECT 2".into()],
+                    ..SavedSession::default()
+                },
             ],
             active: 1,
         };

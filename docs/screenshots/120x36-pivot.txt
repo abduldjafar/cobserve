@@ -1,4 +1,4 @@
-  ◆ fleetlens   ✖ critical          1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
+  ◆ cobserve   ✖ critical           1 nodes   2 queue   3 map   4 tape   5 sessions           ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
                                                                                                                         
   FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4% 280/768 GiB   cpu ━━━╺━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕     
@@ -33,4 +33,4 @@
   Σ 51.4 GiB · Σ 2.20 cores · 1 query on 1 node · longest 8m56s ✕ · 6.7% of fleet memory                                
   clickhouse7 40.1% mem / 6.9% cpu                                                                                      
                                                                                                                         
-   ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help     
+   ↑↓  move   ⏎  open   c  SQL on it   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy           
