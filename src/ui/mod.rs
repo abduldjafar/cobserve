@@ -469,9 +469,14 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("?", "help"),
             ("q", "quit"),
         ],
+        View::Queue if app.cancel_asked().is_some() => {
+            tail = Some("any other key keeps it".into());
+            &[("y", "cancel it in Redash"), ("esc", "keep it")]
+        }
         View::Queue => &[
             ("↑↓", "move"),
             ("⏎", "jump to ClickHouse"),
+            ("x", "cancel job"),
             ("J K", "scroll SQL"),
             ("1", "nodes"),
             ("p", "pause"),
@@ -645,6 +650,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("ctrl+\\", "the sessions · then 1-4 a view, 5-9 or ↑↓ a session, / one by name, n new (c o t q:"),
     ("", "Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x close"),
     ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
+    ("x  then y", "on view 2: cancel the Redash job under the cursor, as Redash's Cancel does"),
     ("⇧⏎  ctrl+j", "a new line in Claude's or OpenCode's prompt — ctrl+j in any terminal"),
     ("z", "the clock: the local zone ↔ UTC · or click it · ctrl+\\ z in a session"),
     ("d", "wave a prayer's reminder away · ctrl+\\ d in a session · or click ✕"),
@@ -692,7 +698,7 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "read-only by design: nothing here can kill or change a query",
+        "ClickHouse is only read: nothing here can kill or change a query there",
         theme.muted(),
     )));
     frame.render_widget(Clear, popup);

@@ -35,6 +35,6 @@
    ▲ Redash #8585   running 2× · j.petrova                                                                                                  
   ─ c3e59c27 · j.petrova @ clickhouse-bi · Redash #8585 ──────────────────────────────────────────────────────────────────────────────────  
   ⏱ 6m40s ✕ runaway   MEM 21.2 GiB = 88% of its 24.0 GiB limit ━━━━━━━━━╺   CPU 1.90 cores                                                  
-  READ 62.3 GiB / 3.0B rows @ 159.5 MiB/s   PROGRESS ━━━━━━━━━━━╸ 95% of ~3.2B rows · ETA ~20s · started 10:19:48 WIB · Select              
+  READ 62.3 GiB / 3.0B rows @ 159.5 MiB/s   PROGRESS ━━━━━━━━━━━╸ 95% of ~3.2B rows · ETA ~20s · started 11:53:44 WIB · Select              
                                                                                                                                             
    ↑↓  move   ⏎  open   c  SQL on it   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help          

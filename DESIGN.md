@@ -675,7 +675,19 @@ or from a slope over the last minutes of it.
   (`/api/users/{id}`), its data source by name and **type** (one `/api/data_sources` call for
   all of them), its saved query by name and **SQL** (`/api/queries/{id}`, read again after ten
   minutes, since queries get edited). The version comes from `/api/config`, asked once. All of
-  it read-only: nothing here cancels a job.
+  it read-only — but for the one cancel below, asked for and confirmed on view 2.
+- **Cancelling a Redash job** (`src/sources/redash.rs`, `src/app.rs`, `src/ui/drawer.rs`): what
+  the admins' script does, one job at a time. `x` on a job of view 2 puts the question in the
+  drawer — about that job by its id, as the list moves under the cursor — with what a cancel
+  does to it; `y` sends `DELETE /api/jobs/{id}` with the admin key from the task that polls
+  Redash, which reads the queue again at once; any other key (or a click) keeps it, and does
+  nothing else. A waiting job leaves its queue, a running one is stopped on its worker (its row
+  marked `⊘` until the worker has let go, ten minutes at most), a leftover leaves RQ's started
+  list. The house rule is the script's: a job on ClickHouse is cancelled only when asked of it,
+  and the question and the notice say that its query runs on in ClickHouse — on which node, when
+  the stitch found it — until a `KILL QUERY` there, which nothing here sends: ClickHouse stays
+  read-only. Every cancel Redash took is a line on the tape (amber when its query runs on). A job id that is not RQ's (letters, digits, `-`, `_`) is not put into a path;
+  Redash's 500 for a job it no longer has reads *it may have just finished*.
 - **STALE**, on view 2: what RQ's started list holds although no worker runs it — a job whose
   worker died stays in that list, and without a time limit it stays for months (the screenshot
   this was built from had five such jobs, 163 to 177 days old, under RUNNING). Each says why:

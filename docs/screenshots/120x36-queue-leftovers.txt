@@ -33,4 +33,4 @@
   3/9 workers busy · 1 of them holds a runaway ClickHouse query (clickhouse7)                                           
   running 2m20s → clickhouse7 · c3e5f9d8 ✕ runaway · ⏎ jumps to the query on view 1                                     
   r.simonyte · scheduled refresh · on clickhouse7 (clickhouse) · #8091 July close pack · SQL as ClickHouse runs it · …  
-   ↑↓  move   ⏎  jump to ClickHouse   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit                         
+   ↑↓  move   ⏎  jump to ClickHouse   x  cancel job   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit         

@@ -194,7 +194,9 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         fake: config.fake,
         assist_dir: assist::dir(),
     };
-    spawn_sources(&config, tx.clone(), Arc::clone(&consoles.targets));
+    // A Redash job cancelled from view 2 goes to the task that talks to Redash.
+    let (cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
+    spawn_sources(&config, tx.clone(), Arc::clone(&consoles.targets), cancel_rx);
     // Anything a source could not even start with belongs on screen, not in a log file.
     for warning in &config.warnings {
         app.update(Event::Notice(warning.clone()));
@@ -278,6 +280,11 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         }
         for text in app.take_clipboard() {
             copy_to_clipboard(&text);
+        }
+        for id in app.take_cancels() {
+            if let Err(lost) = cancel_tx.send(id) {
+                app.update(Event::Cancelled(lost.0, Err("the Redash source has stopped".into())));
+            }
         }
 
         if app.quit {
@@ -812,9 +819,10 @@ fn spawn_sources(
     config: &Config,
     tx: mpsc::UnboundedSender<Event>,
     console_targets: Arc<std::sync::Mutex<HashMap<String, sources::clickhouse::ConsoleTarget>>>,
+    mut cancels: mpsc::UnboundedReceiver<String>,
 ) {
     if config.fake {
-        tokio::spawn(fake_loop(config.poll, tx));
+        tokio::spawn(fake_loop(config.poll, tx, cancels));
         return;
     }
 
@@ -872,7 +880,7 @@ fn spawn_sources(
     match sources::redash::RedashSource::new(&config.redash) {
         Some(redash) => {
             tokio::spawn(async move {
-                redash.run(queue_tx).await;
+                redash.run(queue_tx, cancels).await;
             });
         }
         // Redash is optional (§9): the strip says so instead of the app refusing to start.
@@ -880,13 +888,18 @@ fn spawn_sources(
             let _ = queue_tx.send(Event::Queue(Box::new(model::QueueStatus::unreachable(
                 model::QUEUE_NOT_CONFIGURED,
             ))));
+            tokio::spawn(async move {
+                while let Some(id) = cancels.recv().await {
+                    let _ = queue_tx.send(Event::Cancelled(id, Err("Redash is not configured".into())));
+                }
+            });
         }
     }
 }
 
 /// FAKE=1: generated data on the same timers the real sources use, so the UI cannot tell the
 /// difference (DESIGN.md §8, step 1 of the build order).
-async fn fake_loop(poll: Duration, tx: mpsc::UnboundedSender<Event>) {
+async fn fake_loop(poll: Duration, tx: mpsc::UnboundedSender<Event>, mut cancels: mpsc::UnboundedReceiver<String>) {
     let mut fake = fake::FakeSource::new();
     let mut polling = tokio::time::interval(poll);
     polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -903,6 +916,13 @@ async fn fake_loop(poll: Duration, tx: mpsc::UnboundedSender<Event>) {
             }
             _ = queue.tick() => {
                 if tx.send(Event::Queue(Box::new(fake.queue()))).is_err() {
+                    return;
+                }
+            }
+            Some(id) = cancels.recv() => {
+                let result = fake.cancel(&id);
+                let _ = tx.send(Event::Cancelled(id, result));
+                if tx.send(Event::Queue(Box::new(fake.queue_now()))).is_err() {
                     return;
                 }
             }

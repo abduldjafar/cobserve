@@ -45,4 +45,4 @@
   6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is full                                       
   running 5m38s → clickhouse-bi · c3e59c27 ✕ runaway · ⏎ jumps to the query on view 1                                                                           
   j.petrova@example.net · on clickhouse-bi (clickhouse) · #8585 AML dashboard · SQL as ClickHouse runs it · job run-2                                           
-   ↑↓  move   ⏎  jump to ClickHouse   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit                    9 nodes polled · slowest 955 ms · read-only  
+   ↑↓  move   ⏎  jump to ClickHouse   x  cancel job   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit    9 nodes polled · slowest 955 ms · read-only  

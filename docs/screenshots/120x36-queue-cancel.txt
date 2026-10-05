@@ -29,8 +29,8 @@
   ─ WAITING · 16 in the queues · 7 named ─────────────────────────────────────────────────────────────────────────────  
     WAIT              WHO             QUERY                                                           SOURCE            
       3m43s ✖ ━━━━━━  r.simonyte      #8093 July close pack · by country                              clickhouse-bi     
-  ─ job · queries · j.petrova ────────────────────────────────────────────────────────────────────────────────────────  
-  6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is …  
-  running 5m38s → clickhouse-bi · c3e59c27 ✕ runaway · ⏎ jumps to the query on view 1                                   
-  j.petrova@example.net · on clickhouse-bi (clickhouse) · #8585 AML dashboard · SQL as ClickHouse runs it · job run-2   
-   ↑↓  move   ⏎  jump to ClickHouse   x  cancel job   J K  scroll SQL   1  nodes   p  pause   ?  help   q  quit         
+  ─ cancel in Redash? · #8585 AML dashboard of j.petrova ─────────────────────────────────────────────────────────────  
+  ⊘ running 5m38s on a worker of queries · j.petrova · on clickhouse-bi                                                 
+  its worker is freed — but its query runs on in ClickHouse on clickhouse-bi until KILL QUERY stops it                  
+  y cancels it · any other key keeps it · DELETE /api/jobs/run-2, as Redash's Cancel does                               
+   y  cancel it in Redash   esc  keep it   any other key keeps it          9 nodes polled · slowest 955 ms · read-only  

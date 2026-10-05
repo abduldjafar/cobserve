@@ -459,7 +459,10 @@ fn waiting_section(app: &App, theme: &Theme, width: usize, columns: &Columns, ro
         let sev = severity::wait(job.age_s, saturated);
         let mut cells = row_start(selected, theme);
         cells.cell_right(&fmt::dur(job.age_s as f64), 7, theme.sev(sev).add_modifier(Modifier::BOLD));
-        cells.cell(sev.mark(), 3, theme.sev(sev));
+        match app.cancelling(&job.id) {
+            Some(_) => cells.cell(" ⊘", 3, theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
+            None => cells.cell(sev.mark(), 3, theme.sev(sev)),
+        };
         cells.spans(thin_bar(Some(job.age_s as f64 / 180.0 * 100.0), 6, theme.bar_fill(sev), theme));
         cells.gap(GAP);
         job_cells(&mut cells, job, columns, query_w, false, theme);
@@ -475,7 +478,14 @@ const AGE_LEAD: usize = 7 + 2 + GAP;
 fn running_section(app: &App, theme: &Theme, width: usize, columns: &Columns, rows: &[QueueRowRef<'_>], out: &mut Out) {
     let jobs: Vec<&Job> = rows.iter().map(|(_, j)| *j).collect();
     let columns = &columns.for_list(&jobs);
-    let tails: Vec<Cells> = jobs.iter().map(|job| clickhouse_cell(job, app, theme)).collect();
+    let tails: Vec<Cells> = jobs
+        .iter()
+        .map(|job| {
+            let mut tail = cancel_mark(job, app, theme);
+            tail.spans(clickhouse_cell(job, app, theme).into_spans());
+            tail
+        })
+        .collect();
     let tail_head = "IN CLICKHOUSE · mem · cores · done";
     let tail_w = tails.iter().map(Cells::width).max().unwrap_or(0).max(fmt::width(tail_head)).min(40);
     let query_w = columns.query(width, AGE_LEAD, tail_w);
@@ -508,6 +518,17 @@ fn running_section(app: &App, theme: &Theme, width: usize, columns: &Columns, ro
         cells.spans(tail.into_spans());
         out.push_job(cells.line(width, row_style(selected, theme)), job, app, theme, width);
     }
+}
+
+/// `⊘` on a job Redash has been asked to cancel: sent, or taken and not let go of yet.
+fn cancel_mark(job: &Job, app: &App, theme: &Theme) -> Cells {
+    let mut cells = Cells::new();
+    match app.cancelling(&job.id) {
+        Some(c) if c.accepted => cells.push("⊘ cancelled · ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
+        Some(_) => cells.push("⊘ cancelling… · ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
+        None => &mut cells,
+    };
+    cells
 }
 
 /// Where a running job is in ClickHouse, and what it costs there right now — or why it is
@@ -556,7 +577,13 @@ fn stale_section(app: &App, theme: &Theme, width: usize, columns: &Columns, rows
     }
     let jobs: Vec<&Job> = rows.iter().map(|(_, j)| *j).collect();
     let columns = &columns.for_list(&jobs);
-    let tails: Vec<Cells> = jobs.iter().map(|job| stale_cell(job, theme)).collect();
+    let tails: Vec<Cells> = jobs
+        .iter()
+        .map(|job| match app.cancelling(&job.id) {
+            Some(_) => cancel_mark(job, app, theme),
+            None => stale_cell(job, theme),
+        })
+        .collect();
     let tail_w = tails.iter().map(Cells::width).max().unwrap_or(0).clamp(9, 32);
     let query_w = columns.query(width, AGE_LEAD, tail_w);
     let mut detail = format!(" · {} in RQ's started list that no worker runs", jobs.len());
