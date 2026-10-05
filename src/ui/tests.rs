@@ -678,7 +678,7 @@ fn the_header_s_tabs_and_the_sessions_can_be_clicked() {
 
 #[test]
 fn claude_runs_in_view_five_under_the_monitor() {
-    let app = app_with_claude(b"\x1b]0;\xe2\x9c\xb3 Tidy the README\x07\x1b[1mWelcome to Claude Code\x1b[m\r\n\r\n> fix the failing test\r\n");
+    let mut app = app_with_claude(b"\x1b]0;\xe2\x9c\xb3 Tidy the README\x07\x1b[1mWelcome to Claude Code\x1b[m\r\n\r\n> fix the failing test\r\n");
     let screen = render(&app, 120, 36);
     assert!(screen.contains("Welcome to Claude Code"), "the program's screen: {screen}");
     assert!(screen.contains("> fix the failing test"), "{screen}");
@@ -689,8 +689,14 @@ fn claude_runs_in_view_five_under_the_monitor() {
     assert!(screen.contains("✻  Tidy the README"), "Claude's task, from its title, in the list: {screen}");
     let footer = lines[lines.len() - 1];
     assert!(footer.contains("ctrl+\\  then") && !footer.contains("Tidy the README"), "keys only: {footer}");
-    let wide = render(&app, 160, 40);
-    assert!(wide.lines().last().unwrap().contains("any tab   every other key goes to Claude"), "{wide}");
+    // The way to a new line in Claude's prompt: ctrl+j in any terminal, ⇧⏎ where it is told apart.
+    assert!(footer.contains("x  close   ctrl+j  new line"), "{footer}");
+    let wide = render(&app, 170, 40);
+    assert!(wide.lines().last().unwrap().contains("new line   F1-F9  any tab   every other key goes to Claude"), "{wide}");
+    app.modified_enter = true;
+    let told_apart = render(&app, 140, 40);
+    assert!(told_apart.lines().last().unwrap().contains("x  close   ⇧⏎  new line   F1-F9  any tab"), "{told_apart}");
+    app.modified_enter = false;
     assert!(!screen.contains("─ job ·") && !screen.contains("INSIGHTS"), "no drawer, no insights: {screen}");
 }
 
@@ -1354,6 +1360,23 @@ fn a_click_puts_the_cursor_on_a_row_and_a_second_opens_it() {
 }
 
 #[test]
+fn five_sessions_open_still_leave_room_for_a_new_one() {
+    use crate::claude::Kind;
+    let mut app = app_after(5);
+    app.update(key(KeyCode::Char('5')));
+    for i in 1..5 {
+        app.claude.open_new(&format!("~/work/project{i}"), Kind::Claude);
+    }
+    assert_eq!(app.claude.list.len(), 5);
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("+  new session") && screen.contains("past conversations"), "{screen}");
+    assert!(!screen.contains("of 5"), "not full at five: {screen}");
+    // A click on it, or ctrl+\ n, asks where the sixth should work.
+    click_on(&mut app, crate::app::Hit::NewSession);
+    assert!(matches!(app.claude.mode, crate::claude::Mode::Opening(_)), "{:?}", app.claude.mode);
+}
+
+#[test]
 fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_name() {
     use crate::claude::{Kind, MAX_SESSIONS};
     let mut app = app_after(5);
@@ -1452,7 +1475,7 @@ fn a_query_session_suggests_as_it_is_typed_and_shows_its_answer_as_a_table() {
     let screen = render(&app, 140, 40);
     assert!(screen.contains("▦ Query  on   ● clickhouse3 ▾") && screen.contains("✻ Claude ⇄"), "{screen}");
     assert!(screen.contains("read-only · 30 s · 1000 rows · 9 tables"), "{screen}");
-    assert!(screen.contains("-- say what it should show, then ctrl+k: Claude writes the SQL"), "{screen}");
+    assert!(screen.contains("ctrl+k: tell Claude what it should show — it writes the SQL"), "{screen}");
 
     type_into(&mut app, "SELECT user, count() AS queries\nFROM system.proc");
     let screen = render(&app, 140, 40);
@@ -1485,9 +1508,13 @@ fn a_query_session_suggests_as_it_is_typed_and_shows_its_answer_as_a_table() {
 fn ctrl_k_has_the_helper_write_the_query_the_comment_asks_for() {
     let mut app = app_with_query();
     type_into(&mut app, "-- the ten users using the most memory right now");
-    // A click on "ctrl+k asks Claude" asks, as the key does.
+    // A click on "ctrl+k asks Claude" opens the line to say what, as the key does; ⏎ with
+    // nothing typed asks for what the comment says.
     render(&app, 140, 40);
     click_on(&mut app, crate::app::Hit::ConsoleAsk);
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("ask Claude ▸ what it should do — or just ⏎: what its -- comments ask"), "{screen}");
+    app.update(key(KeyCode::Enter));
     let screen = render(&app, 140, 40);
     assert!(screen.contains("Claude is writing it") && screen.contains("ctrl+c stops"), "{screen}");
     answer_console(&mut app);
@@ -1503,6 +1530,79 @@ fn ctrl_k_has_the_helper_write_the_query_the_comment_asks_for() {
     click_on(&mut app, crate::app::Hit::ConsoleAssistant);
     assert!(render(&app, 140, 40).contains("▣ OpenCode ⇄"));
     assert_eq!(app.claude.assistant, crate::console::Assistant::OpenCode, "and new sessions ask it too");
+}
+
+#[test]
+fn a_drag_over_the_text_selects_it_and_ctrl_k_asks_about_that_part_alone() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut app = app_with_query();
+    app.update(Event::Paste("SELECT user\nFROM system.processes\nWHERE elapsed > 10;".into()));
+    render(&app, 140, 40);
+    let text = app.viewport.console_text.get().expect("the text on screen");
+    let mouse = |kind, column, row| Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+    // From the W of WHERE to just before its ;.
+    app.update(mouse(MouseEventKind::Down(MouseButton::Left), text.text_x, text.top + 2));
+    app.update(mouse(MouseEventKind::Drag(MouseButton::Left), text.text_x + 9, text.top + 2));
+    app.update(mouse(MouseEventKind::Drag(MouseButton::Left), text.text_x + 18, text.top + 2));
+    app.update(mouse(MouseEventKind::Up(MouseButton::Left), text.text_x + 18, text.top + 2));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("18 characters selected · ⌫ deletes it · ctrl+k asks Claude about it · ctrl+r runs it"), "{screen}");
+    assert!(screen.contains("⌫  delete it   ctrl+k  ask about it") && screen.contains("esc  unselect"), "the keys for it below: {screen}");
+
+    // ctrl+k: the line to say what, about the selection.
+    app.update(ctrl('k'));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("ask Claude about the selection ▸ make it faster, explain it, fix it…"), "{screen}");
+    type_into(&mut app, "over a minute");
+    app.update(key(KeyCode::Enter));
+    assert!(render(&app, 140, 40).contains("Claude is writing it"));
+    answer_console(&mut app);
+    // What came back took that part's place alone — marked, to be seen — and ctrl+z undoes it.
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("✻ Claude rewrote the part marked — read it first: ctrl+r runs all of it"), "{screen}");
+    let console = app.claude.current().and_then(|s| s.console.as_ref()).unwrap();
+    assert_eq!(console.sql(), "SELECT user\nFROM system.processes\n/* FAKE=1: as it was */ WHERE elapsed > 10;");
+    assert!(console.selection().is_none());
+    app.update(ctrl('z'));
+    let console = app.claude.current().and_then(|s| s.console.as_ref()).unwrap();
+    assert_eq!(console.sql(), "SELECT user\nFROM system.processes\nWHERE elapsed > 10;");
+
+    // ctrl+a, then ⌫: all of it gone at once.
+    app.update(ctrl('a'));
+    app.update(key(KeyCode::Backspace));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("ctrl+k: tell Claude what it should show"), "empty again: {screen}");
+}
+
+#[test]
+fn a_drag_past_the_bottom_of_a_long_text_scrolls_it_along() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut app = app_with_query();
+    let long: Vec<String> = (1..=30).map(|n| format!("-- line {n}")).collect();
+    app.update(Event::Paste(long.join("\n")));
+    // To the top: the text from its first line.
+    app.update(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL)));
+    for _ in 0..40 {
+        app.update(key(KeyCode::Up));
+    }
+    render(&app, 140, 40);
+    let text = app.viewport.console_text.get().expect("the text on screen");
+    assert_eq!(text.first, 0);
+    let mouse = |kind, row| Event::Mouse(MouseEvent { kind, column: text.text_x, row, modifiers: KeyModifiers::NONE });
+    // A click on the field's last line leaves the text where it is.
+    app.update(mouse(MouseEventKind::Down(MouseButton::Left), text.top + text.height - 1));
+    render(&app, 140, 40);
+    assert_eq!(app.viewport.console_text.get().unwrap().first, 0, "what was under the mouse stays put");
+    // Past the bottom, a line further each move.
+    for _ in 0..3 {
+        app.update(mouse(MouseEventKind::Drag(MouseButton::Left), text.top + text.height + 1));
+        render(&app, 140, 40);
+    }
+    app.update(mouse(MouseEventKind::Up(MouseButton::Left), text.top + text.height + 1));
+    assert_eq!(app.viewport.console_text.get().unwrap().first, 3);
+    let console = app.claude.current().and_then(|s| s.console.as_ref()).unwrap();
+    let last = text.height as usize - 1;
+    assert_eq!(console.selection(), Some(((last, 0), (last + 3, 0))), "from the line clicked to three further");
 }
 
 #[test]
@@ -1668,16 +1768,28 @@ fn export_screens() {
     }
     save("140x40-claude-find", &mut many, 140, 40);
 
-    // A query session: what Claude wrote for a comment, run, its answer under it; and another
-    // one being typed, the tables of `system.` under the cursor.
+    // A query session: what Claude wrote for a comment, run, its answer under it; a line of it
+    // selected and Claude about to be asked about that line alone; and another one being
+    // typed, the tables of `system.` under the cursor.
     let mut query = app_with_query();
     type_into(&mut query, "-- the ten users using the most memory right now");
-    query.update(Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)));
+    query.update(ctrl('k'));
+    query.update(key(KeyCode::Enter));
     answer_console(&mut query);
     query.update(key(KeyCode::Enter));
     answer_console(&mut query);
     save("140x40-query-session", &mut query, 140, 40);
-    query.update(Event::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)));
+    {
+        let console = query.claude.current_mut().and_then(|s| s.console.as_deref_mut()).expect("a query session");
+        let row = console.lines.iter().position(|l| l.starts_with("ORDER BY")).expect("an ORDER BY");
+        (console.anchor, console.row, console.col) = (Some((row, 0)), row, console.lines[row].chars().count());
+    }
+    query.update(ctrl('k'));
+    type_into(&mut query, "by how many queries instead");
+    save("140x40-query-ask", &mut query, 140, 40);
+    query.update(key(KeyCode::Esc));
+    query.update(key(KeyCode::Esc));
+    query.update(ctrl('u'));
     type_into(&mut query, "SELECT database, table, sum(rows) AS rows\nFROM system.pa");
     save("140x40-query-suggest", &mut query, 140, 40);
 

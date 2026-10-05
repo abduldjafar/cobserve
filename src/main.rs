@@ -37,7 +37,7 @@ use crossterm::event::{Event as TermEvent, KeyEventKind};
 use ratatui::DefaultTerminal;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -87,19 +87,40 @@ async fn main() -> color_eyre::Result<()> {
     if config.mouse {
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
     }
+    let modified_enter = tell_enter_apart();
 
     // The terminal's title is the monitor's while it runs, and the one it had after.
     {
         use std::io::Write;
         let _ = std::io::stdout().write_all(b"\x1b[22;0t");
     }
-    let result = run(&mut terminal, config, args.claude).await;
+    let result = run(&mut terminal, config, args.claude, modified_enter).await;
 
     restore_terminal();
     result
 }
 
+/// Asked of the terminal before anything reads keys: where it speaks the kitty keyboard
+/// protocol, Enter with shift or ⌘ comes through as itself rather than as Enter — as it does
+/// for Claude Code and OpenCode run on their own — and they get it as a new line. Only the
+/// escape codes are made unambiguous: keys are still pressed, never released.
+fn tell_enter_apart() -> bool {
+    if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+        return false;
+    }
+    let flags = crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
+    let pushed = crossterm::execute!(std::io::stdout(), crossterm::event::PushKeyboardEnhancementFlags(flags)).is_ok();
+    KEYS_PUSHED.store(pushed, Ordering::SeqCst);
+    pushed
+}
+
+/// The keyboard protocol was asked for, and has to be given back on the way out.
+static KEYS_PUSHED: AtomicBool = AtomicBool::new(false);
+
 fn restore_terminal() {
+    if KEYS_PUSHED.swap(false, Ordering::SeqCst) {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+    }
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::DisableMouseCapture,
@@ -123,10 +144,11 @@ fn install_panic_hook() {
     }));
 }
 
-async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) -> color_eyre::Result<()> {
+async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
     app.poll_interval = config.poll;
+    app.modified_enter = modified_enter;
     app.claude.commands = claude::Commands {
         claude: config.claude_command.clone(),
         opencode: config.opencode_command.clone(),
@@ -375,8 +397,9 @@ fn drive_consoles(app: &mut App, consoles: &mut Consoles, tx: &mpsc::UnboundedSe
                 console::Assistant::OpenCode => app.claude.commands.opencode.clone(),
             };
             let dir = consoles.assist_dir.clone();
+            let whole = ask.selected.is_none();
             tokio::spawn(async move {
-                let answer = run_assistant(ask.assistant, &program, prompt, &dir).await;
+                let answer = run_assistant(ask.assistant, &program, prompt, &dir, whole).await;
                 let _ = tx.send(Event::Assisted(id, asked, answer));
             })
         };
@@ -405,7 +428,7 @@ fn drive_consoles(app: &mut App, consoles: &mut Consoles, tx: &mpsc::UnboundedSe
 /// standard output — in a folder of its own, without the monitor's secrets (Claude Code then
 /// signs in with the Pro or Max plan, as in a terminal), for at most `assist::TIME_LIMIT_S`.
 /// Dropped — `ctrl+c` — the program is killed.
-async fn run_assistant(assistant: console::Assistant, program: &[String], prompt: String, dir: &std::path::Path) -> Result<String, String> {
+async fn run_assistant(assistant: console::Assistant, program: &[String], prompt: String, dir: &std::path::Path, whole: bool) -> Result<String, String> {
     use tokio::io::AsyncWriteExt;
     let name = assistant.name();
     let argv = assist::command(assistant, program, &dir.to_string_lossy());
@@ -448,7 +471,7 @@ async fn run_assistant(assistant: console::Assistant, program: &[String], prompt
         .map_err(|e| format!("{name}: {e}"))?;
     let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     if output.status.success() {
-        assist::clean(&stdout)
+        assist::clean(&stdout, whole)
     } else {
         Err(assist::failure(assistant, output.status.code(), &stderr, &stdout))
     }

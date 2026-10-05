@@ -2,6 +2,7 @@
 name = "cobserve"
 version = "0.1.0"
 edition = "2024"
+description = "Co-observe your data fleet from the terminal: every ClickHouse node and the Redash queue at a glance — who is using what, and what it means — with Claude Code, OpenCode, a shell and a SQL console beside it. Read-only by design."
 
 [dependencies]
 color-eyre = "0.6.5"

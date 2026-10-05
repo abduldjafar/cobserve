@@ -45,4 +45,4 @@
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
-   ctrl+\  then   1-4  views   5-9 ↑↓  sessions   /  find one   n  new   r  rename   x  close   F1-F9  any tab   every other key goes to Claude                 
+   ctrl+\  then   1-4  views   5-9 ↑↓  sessions   /  find one   n  new   r  rename   x  close   ctrl+j  new line   F1-F9  any tab                               

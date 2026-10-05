@@ -117,6 +117,9 @@ pub enum Notify {
 }
 
 pub const USAGE: &str = "\
+cobserve — co-observe a data fleet from the terminal: ClickHouse and Redash at a glance,
+read-only, with your AI sessions and a SQL console beside them.
+
 Usage: cobserve [--credential FILE] [--claude]
 
   --credential FILE   the ClickHouse servers with a login for each (and optionally the

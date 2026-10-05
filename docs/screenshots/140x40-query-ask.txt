@@ -11,11 +11,14 @@
                                                                                                                                             
   SESSIONS  1                   ▦ Query  on   ● clickhouse3 ▾     ✻ Claude ⇄                       read-only · 30 s · 1000 rows · 9 tables  
                                                                                                                                             
-  ▎ ▦  clickhouse3        5        1  SELECT database, table, sum(rows) AS rows                                                             
-  ▎    ✔ 3 rows                    2  FROM system.pa                                                                                        
-                                               ▌▦ parts  SystemParts                                                                        
-    +  new session                    ⏎ after ; runs · ctrl+k asks Claude · ctrl+a selects all · ctrl+u clears · tab completes              
-    ↻  past conversations                                                                                                                   
+  ▎ ▦  clickhouse3        5        1  -- the ten users using the most memory right now                                                      
+  ▎    ✔ 3 rows                    2  SELECT user, count() AS queries, formatReadableSize(sum(memory_usage)) AS memory                      
+                                   3  FROM system.processes                                                                                 
+    +  new session                 4  GROUP BY user                                                                                         
+    ↻  past conversations          5  ORDER BY sum(memory_usage) DESC                                                                       
+                                   6  LIMIT 10;                                                                                             
+                                      ✻ ask Claude about the selection ▸ by how many queries instead                         ⏎ asks · esc   
+                                                                                                                                            
                                 ✔ 3 rows · 184 ms · read 112 rows, 12.5 KiB · on clickhouse3                                                
                                                                                                                                             
                                   user      queries  memory                                                                                 
@@ -34,7 +37,4 @@
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-   tab  take it   ↑↓  choose   esc  close them   a click takes one too                         9 nodes polled · slowest 955 ms · read-only  
+   ⏎  ask   esc  cancel   type what it should do, in any language                              9 nodes polled · slowest 955 ms · read-only  

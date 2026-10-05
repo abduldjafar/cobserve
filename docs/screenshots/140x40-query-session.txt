@@ -17,7 +17,7 @@
     +  new session                 4  GROUP BY user                                                                                         
     ↻  past conversations          5  ORDER BY sum(memory_usage) DESC                                                                       
                                    6  LIMIT 10;                                                                                             
-                                      ⏎ after ; runs · ctrl+r runs · tab completes · ctrl+k asks Claude · ctrl+o another server             
+                                      ⏎ after ; runs · ctrl+k asks Claude · ctrl+a selects all · ctrl+u clears · tab completes              
                                                                                                                                             
                                 ✔ 3 rows · 184 ms · read 112 rows, 12.5 KiB · on clickhouse3                                                
                                                                                                                                             
