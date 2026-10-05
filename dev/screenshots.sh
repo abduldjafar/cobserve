@@ -44,7 +44,7 @@ if [[ -z "$chrome" ]]; then
 fi
 
 # PNGs for the screens the README shows; the rest stay text.
-PNGS="${SHOT_PNGS:-120x36-nodes 140x40-query 140x40-query-session 140x40-query-suggest 120x36-queue 120x36-queue-leftovers 160x48-claude 160x48-claude-new 120x36-reminder 120x36-map 120x36-tape 120x36-light}"
+PNGS="${SHOT_PNGS:-120x36-nodes 140x40-query 140x40-query-session 140x40-query-suggest 120x36-queue 120x36-queue-leftovers 160x48-claude 160x48-claude-new 140x40-claude-many 120x36-reminder 120x36-map 120x36-tape 120x36-light}"
 for html in "$OUT"/*.html; do
   name=$(basename "$html" .html)
   if [[ " $PNGS " != *" $name "* ]]; then

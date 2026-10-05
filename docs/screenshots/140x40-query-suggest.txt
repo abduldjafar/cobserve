@@ -14,7 +14,7 @@
   ▎ ▦  clickhouse3        5        1  SELECT database, table, sum(rows) AS rows                                                             
   ▎    ✔ 3 rows                    2  FROM system.pa                                                                                        
                                                ▌▦ parts  SystemParts                                                                        
-    +  new session                    ⏎ after ; runs · ctrl+r runs · tab completes · ctrl+g asks Claude · ctrl+o another server             
+    +  new session                    ⏎ after ; runs · ctrl+r runs · tab completes · ctrl+k asks Claude · ctrl+o another server             
     ↻  past conversations                                                                                                                   
                                 ✔ 3 rows · 184 ms · read 112 rows, 12.5 KiB · on clickhouse3                                                
                                                                                                                                             

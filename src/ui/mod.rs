@@ -483,6 +483,10 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("⏎", "keep the name"),
             ("esc", "cancel"),
         ],
+        View::Claude if matches!(app.claude.mode, crate::claude::Mode::Finding { .. }) => {
+            tail = Some("type a name, a folder, a kind, a server or a number".into());
+            &[("↑↓", "choose"), ("⏎", "go there"), ("esc", "back")]
+        }
         View::Claude if matches!(&app.claude.mode, crate::claude::Mode::Opening(p) if p.kind == crate::claude::Kind::Query) => {
             tail = Some("type to search · shift+tab: what it runs".into());
             &[("↑↓", "choose"), ("⏎", "open it on that server"), ("esc", "cancel")]
@@ -502,14 +506,15 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             cells.push(" then", theme.muted());
             &[
                 ("1-4", "views"),
-                ("5-9", "sessions"),
+                ("5-9 ↑↓", "sessions"),
+                ("/", "find one"),
                 ("n", "new"),
                 ("q", "SQL"),
-                ("p", "past"),
                 ("r", "rename"),
                 ("x", "close"),
-                ("ctrl+\\", "monitor"),
                 ("esc", "back"),
+                ("ctrl+\\", "monitor"),
+                ("p", "past"),
             ]
         }
         View::Claude if app.claude.current().is_some_and(|s| s.console.is_some()) => {
@@ -526,7 +531,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
                 Some(c) if c.assistant == Assistant::OpenCode => &[
                     ("ctrl+r", "run"),
                     ("tab", "complete"),
-                    ("ctrl+g", "ask OpenCode"),
+                    ("ctrl+k", "ask OpenCode"),
                     ("ctrl+t", "Claude instead"),
                     ("ctrl+o", "server"),
                     ("⇧tab", "the answer"),
@@ -535,7 +540,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
                 _ => &[
                     ("ctrl+r", "run"),
                     ("tab", "complete"),
-                    ("ctrl+g", "ask Claude"),
+                    ("ctrl+k", "ask Claude"),
                     ("ctrl+t", "OpenCode instead"),
                     ("ctrl+o", "server"),
                     ("⇧tab", "the answer"),
@@ -550,7 +555,8 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             tail = Some(format!("every other key goes to {}", kind.listener()));
             &[
                 ("1-4", "views"),
-                ("5-9", "sessions"),
+                ("5-9 ↑↓", "sessions"),
+                ("/", "find one"),
                 ("n", "new"),
                 ("r", "rename"),
                 ("x", "close"),
@@ -615,9 +621,9 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("c", "SQL on the node under the cursor, in a query session: read-only, it suggests"),
     ("s", "sort: pressure, memory, CPU, name"),
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
-    ("1 2 3 4 5", "views: nodes · queue · map · tape · sessions — 5 to 9 are the sessions"),
-    ("ctrl+\\", "the sessions · there, then 1-4 a view, 5-9 a session, n new (c o t q: Claude,"),
-    ("", "OpenCode, a terminal, SQL), p a past conversation, r rename, x close"),
+    ("1 2 3 4 5", "views: nodes · queue · map · tape · sessions — up to 50, the first five on 5-9"),
+    ("ctrl+\\", "the sessions · then 1-4 a view, 5-9 or ↑↓ a session, / one by name, n new (c o t q:"),
+    ("", "Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x close"),
     ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
     ("z", "the clock: the local zone ↔ UTC · or click it · ctrl+\\ z in a session"),
     ("d", "wave a prayer's reminder away · ctrl+\\ d in a session · or click ✕"),

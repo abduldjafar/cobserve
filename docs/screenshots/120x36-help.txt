@@ -12,9 +12,9 @@
    ├─ haris              c  SQL on the node under the cursor, in a query session: read-only, it sugges…   1       4s    
    └─ server ·           s  sort: pressure, memory, CPU, name                                                           
    ▸ clickhous           /  filter by node, user, person, SQL or query id · esc clears                    2    3m04s ✕  
-  ▎▸ clickhous   1 2 3 4 5  views: nodes · queue · map · tape · sessions — 5 to 9 are the sessions        1    5m20s ✕  
-   ▸ clickhous      ctrl+\  the sessions · there, then 1-4 a view, 5-9 a session, n new (c o t q: Clau…   0        —    
-   ▸ clickhous              OpenCode, a terminal, SQL), p a past conversation, r rename, x close          2      12s    
+  ▎▸ clickhous   1 2 3 4 5  views: nodes · queue · map · tape · sessions — up to 50, the first five on…   1    5m20s ✕  
+   ▸ clickhous      ctrl+\  the sessions · then 1-4 a view, 5-9 or ↑↓ a session, / one by name, n new …   0        —    
+   ▸ clickhous              Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x clo…   2      12s    
    ▸ 4 healthy     F1 … F9  the same tabs from anywhere, a session's screen too · or click them              ␣ unfold   
                          z  the clock: the local zone ↔ UTC · or click it · ctrl+\ z in a session                       
                          d  wave a prayer's reminder away · ctrl+\ d in a session · or click ✕                          
@@ -32,5 +32,5 @@
   ─ clickhouse                                                                                            ────────────  
   MEM 58.7/64  read-only by design: nothing here can kill or change a query                                             
   memory: quer                                                                                            0 GiB query   
-  shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 07:40:42 WIB                              
+  shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 36 ms · numbers from 08:05:54 WIB                              
    ?  close   any other key goes back                                                                                   

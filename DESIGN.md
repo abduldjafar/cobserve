@@ -686,13 +686,19 @@ or from a slope over the last minutes of it.
   in the well under the shelf, a card for every node on the shelf. Each signed in
   its own way, Claude with the user's own plan; no API is called from here, and
   `ANTHROPIC_API_KEY` and the monitor's credentials are taken out of every program's
-  environment. Up to five sessions, numbered 5 to 9 after the views' 1 to 4, each its own
+  environment. Up to fifty sessions, numbered on from 5 after the views' 1 to 4 — a digit picks
+  the first five, `ctrl+\` then the arrows walk through all of them, `ctrl+\ /` finds one by its
+  name, folder, kind, server or number — each its own
   program, conversation and working directory, listed beside the pane like a terminal's tabs,
   the one on screen raised and marked — what it runs, name (the user's, the title its program sets unless
   that is only the program's name, else the folder),
   directory and git branch (read from `.git/HEAD`, a worktree's `.git` file followed, every few
   seconds) — on a narrow terminal a bar of tabs over it; a session that rings while it is not
-  on screen is marked. On the shelf, a card for every node — those in trouble first, the
+  on screen is marked. The more there are the closer the list packs them — two lines and a gap
+  each, then two lines, then a line each with the one on screen keeping its folder — and it
+  follows the one on screen, saying how many more are above and below (the bar shows the tabs
+  round it and how many either side). A kept session's program starts only when it is first
+  shown, so fifty listed are not fifty running. On the shelf, a card for every node — those in trouble first, the
   rest in view 1's order: its mark (§7's colours), name and lag when it is behind, then its
   memory and its CPU each as a thin bar (`━`, half-cell steps) and its share, under a legend
   at the left. The cards are as wide as the widest needs and the width allows, all alike so
@@ -780,7 +786,8 @@ or from a slope over the last minutes of it.
   `system.databases`, `system.tables`, `system.columns`, `system.functions`, read-only and
   bounded — read when a session first runs on it and again after fifteen minutes; until then,
   the system tables and common functions.
-- **A helper for the SQL** (`src/assist.rs`): `ctrl+g` asks Claude Code — `claude -p` with
+- **A helper for the SQL** (`src/assist.rs`): `ctrl+k` (or a click on *asks Claude* under the
+  text; `ctrl+g` as well, where a global shortcut does not take it first) asks Claude Code — `claude -p` with
   `--tools ""`, `--strict-mcp-config`, `--no-session-persistence` and the rules appended to its
   own system prompt, so it answers on the user's Pro or Max plan — or OpenCode — `opencode run`
   with `OPENCODE_PERMISSION` denying every tool — to write what the text's `--` comments ask

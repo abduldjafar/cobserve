@@ -267,7 +267,7 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     // The keys are the footer's, said once, and pressing ctrl+\ moves none of them.
     let footer = |screen: &str| screen.lines().last().unwrap_or_default().to_string();
     let typing = footer(&screen);
-    assert!(typing.contains("ctrl+\\  then   1-4  views   5-9  sessions   n  new   r  rename   x  close"), "{typing}");
+    assert!(typing.contains("ctrl+\\  then   1-4  views   5-9 ↑↓  sessions   /  find one   n  new   r  rename   x  close"), "{typing}");
     assert!(typing.contains("F1-F9  any tab"), "for a terminal that keeps ctrl+\\: {typing}");
     assert_eq!(screen.matches("5-9").count(), 1, "not in the list too: {screen}");
 
@@ -277,7 +277,7 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     let lit = footer(&bar);
     let at = |line: &str, text: &str| line.find(text).unwrap_or_else(|| panic!("{text} in {line}"));
     assert_eq!(at(&lit, "1-4  views"), at(&typing, "1-4  views"), "{lit}");
-    assert!(lit.contains("x  close   ctrl+\\  monitor   esc  back"), "the way back: {lit}");
+    assert!(lit.contains("x  close   esc  back   ctrl+\\  monitor"), "the way back: {lit}");
     app.update(key(KeyCode::Char('x')));
     let closing = render(&app, 140, 40);
     assert!(closing.contains("x again closes it"), "{closing}");
@@ -1353,6 +1353,63 @@ fn a_click_puts_the_cursor_on_a_row_and_a_second_opens_it() {
     assert_eq!(app.focus, crate::app::Focus::Insights);
 }
 
+#[test]
+fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_name() {
+    use crate::claude::{Kind, MAX_SESSIONS};
+    let mut app = app_after(5);
+    app.update(key(KeyCode::Char('5')));
+    for i in 1..MAX_SESSIONS {
+        let kind = [Kind::Claude, Kind::OpenCode, Kind::Terminal][i % 3];
+        app.claude.open_new(&format!("~/work/project{i:02}"), kind);
+    }
+    assert_eq!(app.claude.list.len(), 50);
+    let screen = render(&app, 140, 40);
+    let row = |screen: &str, text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
+    assert!(screen.contains("SESSIONS  50"), "{screen}");
+    // A line each, the one on screen — the last — lit, and how many are above it.
+    assert!(row(&screen, "▣  project49").contains('▎'), "{screen}");
+    assert!(row(&screen, "↑ ").contains(" more"), "{screen}");
+    assert!(!screen.contains("project01"), "the first are above, out of sight: {screen}");
+    assert!(screen.contains("50 of 50 · x closes one"), "{screen}");
+
+    // ctrl+\ then ↑ walks back through them; the list follows.
+    app.update(ctrl('\\'));
+    for _ in 0..30 {
+        app.update(key(KeyCode::Up));
+    }
+    assert_eq!(app.claude.active, 19);
+    let screen = render(&app, 140, 40);
+    assert!(row(&screen, "▣  project19").contains('▎') && row(&screen, "↓ ").contains(" more"), "{screen}");
+
+    // ctrl+\ / finds one by what it is called; ⏎ puts it on screen.
+    app.update(key(KeyCode::Char('/')));
+    for c in "ject07".chars() {
+        app.update(key(KeyCode::Char(c)));
+    }
+    let screen = render(&app, 140, 40);
+    assert!(row(&screen, "SESSIONS").contains("/ject07▏") && row(&screen, "SESSIONS").contains("1 of 1"), "{screen}");
+    assert!(row(&screen, "  project07 ").contains('▎'), "{screen}");
+    app.update(key(KeyCode::Enter));
+    assert_eq!((app.claude.active, &app.claude.mode), (7, &crate::claude::Mode::Typing));
+    // By its number too.
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('/')));
+    app.update(key(KeyCode::Char('4')));
+    app.update(key(KeyCode::Char('0')));
+    app.update(key(KeyCode::Enter));
+    assert_eq!(crate::claude::Sessions::number_of(app.claude.active), 40);
+
+    // Fifty is as many as there can be.
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Char('n')));
+    assert!(app.notice().is_some_and(|n| n.contains("50 sessions is as many as there can be")), "{:?}", app.notice());
+
+    // On a narrow terminal, the tabs round the one on screen, and how many either side.
+    let narrow = render(&app, 90, 30);
+    let bar = row(&narrow, " 40 ");
+    assert!(bar.contains("‹ ") && bar.contains(" ›"), "{narrow}");
+}
+
 /// A query session on clickhouse3 of the fake fleet, on screen, its tables known.
 fn app_with_query() -> App {
     let mut app = app_after(118);
@@ -1395,7 +1452,7 @@ fn a_query_session_suggests_as_it_is_typed_and_shows_its_answer_as_a_table() {
     let screen = render(&app, 140, 40);
     assert!(screen.contains("▦ Query  on   ● clickhouse3 ▾") && screen.contains("✻ Claude ⇄"), "{screen}");
     assert!(screen.contains("read-only · 30 s · 1000 rows · 9 tables"), "{screen}");
-    assert!(screen.contains("-- say what it should show, then ctrl+g: Claude writes the SQL"), "{screen}");
+    assert!(screen.contains("-- say what it should show, then ctrl+k: Claude writes the SQL"), "{screen}");
 
     type_into(&mut app, "SELECT user, count() AS queries\nFROM system.proc");
     let screen = render(&app, 140, 40);
@@ -1421,14 +1478,16 @@ fn a_query_session_suggests_as_it_is_typed_and_shows_its_answer_as_a_table() {
     answer_console(&mut app);
     let screen = render(&app, 140, 40);
     assert!(screen.contains("✖ clickhouse3 · Code 164 · monitor: Cannot execute query in readonly mode."), "{screen}");
-    assert!(screen.contains("✻ ctrl+g: Claude puts it right, told what the server said"), "{screen}");
+    assert!(screen.contains("✻ ctrl+k: Claude puts it right, told what the server said"), "{screen}");
 }
 
 #[test]
-fn ctrl_g_has_the_helper_write_the_query_the_comment_asks_for() {
+fn ctrl_k_has_the_helper_write_the_query_the_comment_asks_for() {
     let mut app = app_with_query();
     type_into(&mut app, "-- the ten users using the most memory right now");
-    app.update(Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    // A click on "ctrl+k asks Claude" asks, as the key does.
+    render(&app, 140, 40);
+    click_on(&mut app, crate::app::Hit::ConsoleAsk);
     let screen = render(&app, 140, 40);
     assert!(screen.contains("Claude is writing it") && screen.contains("ctrl+c stops"), "{screen}");
     answer_console(&mut app);
@@ -1584,11 +1643,36 @@ fn export_screens() {
     }
     save("160x48-claude-new", &mut claude, 160, 48);
 
+    // Two dozen sessions: a line each, the list following the one on screen; then one found
+    // by name.
+    let mut many = app_after(118);
+    many.claude.default_dir = "~/work".into();
+    many.update(key(KeyCode::Char('5')));
+    let projects = ["billing", "pipelines", "reports", "website", "infra-notes", "dotfiles", "sandbox", "exports"];
+    for i in 1..24 {
+        let kind = [Kind::Claude, Kind::OpenCode, Kind::Terminal, Kind::Claude][i % 4];
+        many.claude.open_new(&format!("~/work/{}", projects[i % projects.len()]), kind);
+        let session = many.claude.current_mut().unwrap();
+        session.pane.state = crate::claude::PaneState::Running;
+        session.name = Some(format!("{} {}", ["fix", "check", "tidy", "look at", "rerun"][i % 5], ["late partitions", "the exports", "weekly totals", "slow merges", "a dashboard", "the README"][i % 6]));
+    }
+    many.claude.list[3].pane.attention = true;
+    many.claude.select(16);
+    run_session(&mut many, CLAUDE_DEMO);
+    many.claude.list[16].name = Some("stream the invoice export".into());
+    save("140x40-claude-many", &mut many, 140, 40);
+    many.update(ctrl('\\'));
+    many.update(key(KeyCode::Char('/')));
+    for c in "export".chars() {
+        many.update(key(KeyCode::Char(c)));
+    }
+    save("140x40-claude-find", &mut many, 140, 40);
+
     // A query session: what Claude wrote for a comment, run, its answer under it; and another
     // one being typed, the tables of `system.` under the cursor.
     let mut query = app_with_query();
     type_into(&mut query, "-- the ten users using the most memory right now");
-    query.update(Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    query.update(Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)));
     answer_console(&mut query);
     query.update(key(KeyCode::Enter));
     answer_console(&mut query);

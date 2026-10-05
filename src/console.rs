@@ -282,7 +282,7 @@ impl Console {
         }
         let sql = self.sql();
         if sql.trim().is_empty() {
-            self.assisting = Assisting::Failed("say what the query should do after --, then ctrl+g".into());
+            self.assisting = Assisting::Failed("say what the query should do after --, then ctrl+k".into());
             return;
         }
         let error = match &self.state {
@@ -511,9 +511,12 @@ impl Console {
             .map(|found| Suggest { row: self.row, from: found.from, items: found.items, at: 0, moved: false });
     }
 
-    /// `tab` with no suggestions open: the only one taken, several shown, or an indent.
+    /// `tab` with no suggestions open: the only one taken, several shown, or an indent. After
+    /// `FROM ` and the like, with nothing typed yet, it lists what can go there.
     fn tab(&mut self, schema: Option<&Schema>) {
-        let found = complete::complete(&self.lines, self.row, self.col, schema, false);
+        let names = |what: complete::What| matches!(what, complete::What::Table | complete::What::Database | complete::What::Format);
+        let found = complete::complete(&self.lines, self.row, self.col, schema, false)
+            .or_else(|| complete::complete(&self.lines, self.row, self.col, schema, true).filter(|found| found.items.iter().all(|i| names(i.what))));
         match found {
             Some(found) if found.items.len() == 1 => {
                 self.suggest = Some(Suggest { row: self.row, from: found.from, items: found.items, at: 0, moved: false });
@@ -535,7 +538,8 @@ impl Console {
                 self.choosing = Some(at);
             }
             (KeyCode::Char('r'), true) => self.run(now),
-            (KeyCode::Char('g'), true) => self.ask_for_sql(now),
+            // ctrl+k — ctrl+g too, where nothing outside the terminal takes it first.
+            (KeyCode::Char('k' | 'g'), true) => self.ask_for_sql(now),
             (KeyCode::Char('t'), true) => self.assistant = self.assistant.other(),
             (KeyCode::Char('z'), true) => self.undo(),
             (KeyCode::Char('c'), true) => {
@@ -930,21 +934,26 @@ mod tests {
         assert!(console.suggest.is_some());
         console.key(&KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL), &[], 0, None);
         assert!(console.suggest.is_some(), "ctrl+space asks for them");
-        // tab with nothing to take indents.
+        // tab with nothing to take indents — after FROM it lists the tables.
         let mut console = Console::new(None);
         console.key(&key(KeyCode::Tab), &[], 0, None);
         assert_eq!(console.sql(), "  ");
+        let mut console = Console::new(None);
+        typed(&mut console, "SELECT * FROM ");
+        console.key(&key(KeyCode::Esc), &[], 0, None);
+        console.key(&key(KeyCode::Tab), &[], 0, None);
+        assert!(console.suggest.as_ref().is_some_and(|s| s.items.iter().any(|i| i.text == "system.processes")), "{:?}", console.suggest);
     }
 
     #[test]
-    fn ctrl_g_asks_the_helper_and_what_it_writes_takes_the_text_s_place_until_ctrl_z() {
+    fn ctrl_k_asks_the_helper_and_what_it_writes_takes_the_text_s_place_until_ctrl_z() {
         let mut console = Console::new(Some("ch1".into()));
-        console.key(&ctrl('g'), &[], 10, None);
+        console.key(&ctrl('k'), &[], 10, None);
         assert!(matches!(&console.assisting, Assisting::Failed(why) if why.contains("--")), "nothing to ask");
         assert!(console.take_ask().is_none());
 
         typed(&mut console, "-- the ten users using the most memory");
-        console.key(&ctrl('g'), &[], 10, None);
+        console.key(&ctrl('k'), &[], 10, None);
         let ask = console.take_ask().expect("asked");
         assert_eq!((ask.assistant, ask.node.as_deref(), ask.error.as_deref()), (Assistant::Claude, Some("ch1"), None));
         assert!(ask.sql.starts_with("-- the ten users"));
@@ -966,6 +975,7 @@ mod tests {
             console.take_request().unwrap().id
         };
         console.answered(id, Err("Code 47 · Unknown identifier".into()));
+        // ctrl+g asks as ctrl+k does.
         console.key(&ctrl('g'), &[], 13, None);
         let ask = console.take_ask().unwrap();
         assert_eq!(ask.error.as_deref(), Some("Code 47 · Unknown identifier"));

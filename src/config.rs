@@ -134,7 +134,7 @@ MOUSE=0 to leave the mouse to the terminal, TIME=utc for a UTC clock (the machin
 zone otherwise), PRAYER_CITY (e.g. Bandung) or PRAYER_AT (lat,lon) for where the prayer
 times are for (the time zone's city otherwise), PRAYER_REMIND for how many minutes ahead
 the reminder comes (10; 0 for none), PRAYER=off, NOTIFY=bell or NOTIFY=off, and
-ASSISTANT=opencode for the helper a query session asks with ctrl+g (Claude by default).
+ASSISTANT=opencode for the helper a query session asks with ctrl+k (Claude by default).
 ";
 
 /// `variable` as a command and its arguments, quotes as a shell reads them; `default` when it

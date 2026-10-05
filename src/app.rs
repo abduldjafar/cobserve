@@ -151,6 +151,8 @@ pub enum Hit {
     ConsoleAnswer,
     /// The helper that writes a query session's SQL: a click changes it.
     ConsoleAssistant,
+    /// The way to ask it, under the text: a click asks.
+    ConsoleAsk,
     /// One of the suggestions open, by its place among them: a click takes it.
     Suggestion(usize),
     /// The way out of a prayer's reminder.
@@ -540,6 +542,10 @@ impl App {
                             name.extend(line.chars().take(room));
                         }
                         Mode::Opening(picker) => picker.type_text(line),
+                        Mode::Finding { query, at } => {
+                            query.push_str(line);
+                            *at = 0;
+                        }
                         Mode::Typing => match self.claude.current_mut() {
                             Some(session) if session.console.is_some() => {
                                 if let Some(console) = session.console.as_deref_mut() {
@@ -611,7 +617,7 @@ impl App {
     pub fn ask_new_session(&mut self, kind: Option<Kind>) {
         if self.claude.list.len() >= crate::claude::MAX_SESSIONS {
             self.notice = Some((
-                format!("sessions are 5 to 9: {} is as many as there are numbers for — close one with x", crate::claude::MAX_SESSIONS),
+                format!("{} sessions is as many as there can be — close one with ctrl+\\ x x", crate::claude::MAX_SESSIONS),
                 SystemTime::now(),
             ));
             self.claude.mode = Mode::Typing;
@@ -645,7 +651,7 @@ impl App {
         self.claude.mode = Mode::Typing;
         if self.claude.open_query(node.as_deref()).is_none() {
             self.notice = Some((
-                format!("sessions are 5 to 9: {} is as many as there are numbers for — close one with x", crate::claude::MAX_SESSIONS),
+                format!("{} sessions is as many as there can be — close one with ctrl+\\ x x", crate::claude::MAX_SESSIONS),
                 SystemTime::now(),
             ));
         }
@@ -853,6 +859,12 @@ impl App {
                         self.claude.assistant = console.assistant;
                     }
                 }
+                Some(Hit::ConsoleAsk) => {
+                    let now = self.now();
+                    if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
+                        console.ask_for_sql(now);
+                    }
+                }
                 Some(Hit::Suggestion(index)) => {
                     if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut())
                         && let Some(open) = console.suggest.as_mut()
@@ -966,8 +978,14 @@ impl App {
                 }
                 self.claude.mode = Mode::Typing;
             }
-            KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => self.claude.step(false),
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => self.claude.step(true),
+            // The arrows walk the list, one session at a time, round it.
+            KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') | KeyCode::BackTab => self.claude.step(false),
+            KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Tab => self.claude.step(true),
+            // One among many, by what it is called.
+            KeyCode::Char('/') if !self.claude.list.is_empty() => {
+                let at = self.claude.matching("").iter().position(|&i| i == self.claude.active).unwrap_or(0);
+                self.claude.mode = Mode::Finding { query: String::new(), at };
+            }
             // A new session: of the kind on screen, or Claude, OpenCode, a terminal.
             KeyCode::Char('n') => self.ask_new_session(None),
             KeyCode::Char('c') => self.ask_new_session(Some(Kind::Claude)),
@@ -1006,6 +1024,48 @@ impl App {
             KeyCode::Esc | KeyCode::Enter => self.claude.mode = Mode::Typing,
             _ => {}
         }
+    }
+
+    /// Looking for a session by what it is called: what is typed narrows the list, ↑ ↓ choose,
+    /// ⏎ puts the one chosen on screen.
+    fn on_finding_key(&mut self, key: KeyEvent) {
+        let Mode::Finding { query, at } = &self.claude.mode else {
+            return;
+        };
+        let (mut query, mut at) = (query.clone(), *at);
+        let found = self.claude.matching(&query);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Enter => {
+                self.claude.mode = Mode::Typing;
+                if let Some(&index) = found.get(at) {
+                    self.claude.select(index);
+                }
+                return;
+            }
+            KeyCode::Esc => {
+                self.claude.mode = Mode::Typing;
+                return;
+            }
+            KeyCode::Up => at = at.saturating_sub(1),
+            KeyCode::Down => at = (at + 1).min(found.len().saturating_sub(1)),
+            KeyCode::Char('p') if ctrl => at = at.saturating_sub(1),
+            KeyCode::Char('n') if ctrl => at = (at + 1).min(found.len().saturating_sub(1)),
+            KeyCode::Char('u') if ctrl => {
+                query.clear();
+                at = 0;
+            }
+            KeyCode::Backspace => {
+                query.pop();
+                at = 0;
+            }
+            KeyCode::Char(c) if !ctrl => {
+                query.push(c);
+                at = 0;
+            }
+            _ => {}
+        }
+        self.claude.mode = Mode::Finding { query, at };
     }
 
     /// Typing a session's new name.
@@ -1482,7 +1542,7 @@ impl App {
             return;
         }
 
-        let typing_text = matches!(self.claude.mode, Mode::Naming(_) | Mode::Opening(_)) && self.view == View::Claude;
+        let typing_text = matches!(self.claude.mode, Mode::Naming(_) | Mode::Opening(_) | Mode::Finding { .. }) && self.view == View::Claude;
         // F1–F4 the views, F5–F9 the sessions — from anywhere, Claude's screen too, and with no
         // key before them: a terminal that keeps ctrl+\ for itself still has these.
         if let (KeyCode::F(n @ 1..=9), false) = (key.code, typing_text) {
@@ -1518,6 +1578,7 @@ impl App {
             match self.claude.mode {
                 Mode::Naming(_) => return self.on_naming_key(key),
                 Mode::Opening(_) => return self.on_opening_key(key),
+                Mode::Finding { .. } => return self.on_finding_key(key),
                 Mode::Bar => {
                     self.on_bar_key(key);
                     self.sync_view_state();
