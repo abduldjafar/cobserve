@@ -1354,6 +1354,23 @@ fn a_click_puts_the_cursor_on_a_row_and_a_second_opens_it() {
 }
 
 #[test]
+fn five_sessions_open_still_leave_room_for_a_new_one() {
+    use crate::claude::Kind;
+    let mut app = app_after(5);
+    app.update(key(KeyCode::Char('5')));
+    for i in 1..5 {
+        app.claude.open_new(&format!("~/work/project{i}"), Kind::Claude);
+    }
+    assert_eq!(app.claude.list.len(), 5);
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("+  new session") && screen.contains("past conversations"), "{screen}");
+    assert!(!screen.contains("of 5"), "not full at five: {screen}");
+    // A click on it, or ctrl+\ n, asks where the sixth should work.
+    click_on(&mut app, crate::app::Hit::NewSession);
+    assert!(matches!(app.claude.mode, crate::claude::Mode::Opening(_)), "{:?}", app.claude.mode);
+}
+
+#[test]
 fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_name() {
     use crate::claude::{Kind, MAX_SESSIONS};
     let mut app = app_after(5);
