@@ -1,0 +1,40 @@
+  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 sessions                     ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━━━━ Terbit 05:33 ━━━━━━ Dzuhur 11:45 ━━━━━━ Ashar 14:48 ━━●┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
+                                                                                                                                            
+  FLEET   9 nodes · 1 hot   mem ━━━━╸━━━━━━━ 36.4% 280/768 GiB   cpu ━━━╸━━━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕                     
+  REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                  [2] queue  
+                                                                                                                                            
+        ✖ clickhouse3           ▲ clickhouse7  lag 12s  ● clickhouse-bi         ● clickhouse2           ● clickhouse5           +4 more     
+   mem  ━━━━━━━━━━━━━━━━╺  93%  ━━━━━━━━━━╺━━━━━━  60%  ━━━━━━━━━━━╸━━━━━  67%  ━━━━━━━╺━━━━━━━━━  42%  ━━━━━━╸━━━━━━━━━━  38%  ≤ 21%       
+   cpu  ━━━━━━━━━━━━━━━━╺  93%  ━━━━━━━╸━━━━━━━━━  44%  ━━━━━━━━━━━━╺━━━━  72%  ━━━━━╺━━━━━━━━━━━  29%  ╸━━━━━━━━━━━━━━━━   4%  ≤ 16%       
+                                                                                                                                            
+                                                                                                                                            
+  SESSIONS  /export▏   1 of 7   ✻ Claude Code  ~/work/billing                                                                               
+                                                                                                                                            
+  ▎ ▣  check the exports  6     > make the invoice export stream its rows instead of building one big Vec                                   
+  ▎    ~/work/pipelines                                                                                                                     
+                                ● I'll read the exporter first.                                                                             
+    ✻  tidy the exports  12                                                                                                                 
+       ~/work/exports           ● Read(src/export/invoice.rs)                                                                               
+                                  └  214 lines                                                                                              
+    ▣  look at the expo… 18                                                                                                                 
+       ~/work/dotfiles          ● Update(src/export/invoice.rs)                                                                             
+                                  └  18 lines added, 31 removed                                                                             
+    ✻  fix slow merges   20                                                                                                                 
+       ~/work/exports           ✻ Running the tests… (esc to interrupt)                                                                     
+                                                                                                                                            
+    ✻  stream the invoi… 21     ────────────────────────────────────────────────────────────────────────────────                            
+       ~/work/billing           ❯                                                                                                           
+                                ────────────────────────────────────────────────────────────────────────────────                            
+    ✻  rerun the exports 24                                                                                                                 
+       ~/work/website                                                                                                                       
+                                                                                                                                            
+    ✻  look at the READ… 28                                                                                                                 
+       ~/work/exports                                                                                                                       
+                                                                                                                                            
+     ⏎ goes there · esc back                                                                                                                
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+   ↑↓  choose   ⏎  go there   esc  back   type a name, a folder, a kind, a server or a number                                               

@@ -128,13 +128,16 @@ project, any question, its own permission prompts.
   from. What runs there can read files there, so keep the credential file somewhere else.
   `--claude` opens on view 5.
 
-Up to five sessions run side by side, each its own program with its own conversation, listed
+Up to fifty sessions run side by side, each its own program with its own conversation, listed
 beside it like a terminal's tabs, the one on screen raised: what it runs (`✻` Claude, `▣`
-OpenCode, `❯` a terminal), its name — the one you gave it, what the program says it is working
-on, or else its folder — and number, and under them the folder and its git branch. A session
-that rings while you are elsewhere is marked `●` there and on `5 sessions`; one that ended,
-`✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5`–`9` the
-sessions.
+OpenCode, `❯` a terminal, `▦` SQL), its name — the one you gave it, what the program says it is
+working on, or else its folder — and number, and under them the folder and its git branch. A
+session that rings while you are elsewhere is marked `●` there and on `5 sessions`; one that
+ended, `✕`. The sessions are numbered on from the views: `1`–`4` are the monitor, `5` on the
+sessions — a digit picks the first five, `ctrl+\` then `↑` `↓` walks through all of them, and
+`ctrl+\` then `/` finds one by its name, folder, kind, server or number. The more there are, the
+closer the list packs them — a line each for many, the one on screen keeping its folder — and it
+follows the one on screen, with how many more are above and below it.
 
 The fleet stays in sight above the sessions, a card for every node — the worst first, marked
 `✖` or `▲` (a quiet one `●`), with its lag when it is behind — and on every card its memory and
@@ -173,7 +176,9 @@ completed like a shell does. A repository shows its branch.
 |---|---|
 | any key | goes to the session — `q`, the digits and `ctrl+c` too |
 | `ctrl+\` then `1`…`4` | that view of the monitor |
-| `ctrl+\` then `5`…`9` | that session |
+| `ctrl+\` then `5`…`9` | that session — the first five |
+| `ctrl+\` then `↑` `↓` | the one before or after, through all of them |
+| `ctrl+\` then `/` | find one: type part of its name, folder, kind, server or number, `↑` `↓`, `⏎` |
 | `ctrl+\` then `n` | a new session, of the kind on screen: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `shift+tab` changes what it runs, `esc` clears the search or gives up |
 | `ctrl+\` then `c` · `o` · `t` · `q` | a new Claude, OpenCode, terminal or query session, the same way — a query session's picker lists the servers |
 | `ctrl+\` then `p` | past conversations, from any folder or terminal, to take up in a new session |
@@ -196,6 +201,8 @@ terminal altogether.
 
 ![A new session's folder, picked with clicks](docs/screenshots/160x48-claude-new.png)
 
+![Two dozen sessions, a line each](docs/screenshots/140x40-claude-many.png)
+
 ### SQL on any server: query sessions
 
 A query session is a SQL console on one server of the fleet, beside the other sessions on
@@ -212,12 +219,14 @@ switches it to any other server of the fleet, each with the login the monitor ha
   aliases too, wherever the cursor is in it), functions with their parentheses, keywords, and
   formats after `FORMAT`. `tab` takes one, `↑` `↓` choose (then `⏎` takes it too), `esc`
   closes them, `ctrl+space` asks for them anywhere.
-- **Claude or OpenCode writes it**: say what you want in a `--` comment and press `ctrl+g`.
+- **Claude or OpenCode writes it**: say what you want in a `--` comment and press `ctrl+k` (or
+  click *asks Claude* under the text; `ctrl+g` does the same where nothing outside the terminal
+  takes it first — Gemini in Chrome does on a Mac).
   Claude Code answers signed in with your Pro or Max plan (`claude -p`, no tools, no API key,
   nothing saved), OpenCode as you signed it in (`opencode run`, every permission denied); both
   run in an empty folder of their own, without the monitor's secrets. They get the server's name
   and version, your text, the tables its words point at with their columns and the names of
-  the others — no rows, no logins. On a query that failed, `ctrl+g` sends what the server said,
+  the others — no rows, no logins. On a query that failed, `ctrl+k` sends what the server said,
   to put it right. What comes back takes the text's place — read it, then `⏎` runs it;
   `ctrl+z` puts back what was there. `ctrl+t` or a click on the chip switches between Claude
   and OpenCode; `ASSISTANT=opencode` starts with OpenCode.
@@ -236,8 +245,8 @@ switches it to any other server of the fleet, each with the login the monitor ha
 |---|---|
 | `⏎` | a new line — or runs the statement once it ends with `;` |
 | `ctrl+r` | run what is there |
-| `tab` · `↑` `↓` · `esc` | take a suggestion · choose one · close them (`ctrl+space` asks) |
-| `ctrl+g` · `ctrl+t` | Claude (or OpenCode) writes it, or puts it right · the other one |
+| `tab` · `↑` `↓` · `esc` | take a suggestion · choose one · close them — `tab` after `FROM ` lists the tables |
+| `ctrl+k` · `ctrl+t` | Claude (or OpenCode) writes it, or puts it right · the other one |
 | `ctrl+z` | put back what was there before Claude wrote, or before a clear |
 | `ctrl+c` | stop the query or the writing · clear the text |
 | `ctrl+o` | run on another server |

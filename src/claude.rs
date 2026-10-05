@@ -26,10 +26,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The number of the first session: the views are 1 to 4, so the sessions go on from 5, and
-/// one number picks any tab, view or session.
+/// one number picks any tab, view or session — a digit the first five.
 pub const FIRST_NUMBER: usize = 5;
-/// Sessions 5 to 9: as many as a digit can pick.
-pub const MAX_SESSIONS: usize = 10 - FIRST_NUMBER;
+/// The sessions a digit picks, 5 to 9.
+pub const KEYED: usize = 10 - FIRST_NUMBER;
+/// The most sessions there can be. Those after the first five are reached from the list beside
+/// them, with the arrows after `ctrl+\`, or by what they are called (`ctrl+\ /`).
+pub const MAX_SESSIONS: usize = 50;
 /// A name longer than this would push the other tabs off the bar.
 pub const NAME_MAX: usize = 24;
 
@@ -739,6 +742,9 @@ pub enum Mode {
     Naming(String),
     /// Opening a session: choosing the folder it will work in.
     Opening(Picker),
+    /// Looking for a session by what it is called (`ctrl+\ /`): what is typed so far, and the
+    /// one the cursor is on among those it names.
+    Finding { query: String, at: usize },
 }
 
 /// Every session of view 5, and which one is on screen.
@@ -765,6 +771,9 @@ pub struct Sessions {
     next_id: u64,
     /// Who writes a new query session's SQL when asked: `ASSISTANT`, or the last one chosen.
     pub assistant: crate::console::Assistant,
+    /// The first session the list beside them shows, kept by the drawing so the one on screen
+    /// stays in sight when there are more than fit.
+    pub list_scroll: Cell<usize>,
 }
 
 impl Default for Sessions {
@@ -782,6 +791,7 @@ impl Default for Sessions {
             wheel: 0,
             next_id: 1,
             assistant: crate::console::Assistant::Claude,
+            list_scroll: Cell::new(0),
         }
     }
 }
@@ -1017,6 +1027,26 @@ impl Sessions {
     /// The tab number of session `index`.
     pub fn number_of(index: usize) -> usize {
         FIRST_NUMBER + index
+    }
+
+    /// The sessions `query` names — in what they are called, what they run, their folder or
+    /// server, or by their number — in the list's order; every one when nothing is typed.
+    pub fn matching(&self, query: &str) -> Vec<usize> {
+        let wanted = query.trim().to_lowercase();
+        let has = |text: &str| text.to_lowercase().contains(&wanted);
+        self.list
+            .iter()
+            .enumerate()
+            .filter(|(index, session)| {
+                wanted.is_empty()
+                    || Sessions::number_of(*index).to_string() == wanted
+                    || has(&session.label())
+                    || has(&session.dir)
+                    || has(session.kind.title())
+                    || session.console.as_ref().and_then(|c| c.node.as_deref()).is_some_and(has)
+            })
+            .map(|(index, _)| index)
+            .collect()
     }
 
     /// The session a tab number picks, if there is one.
@@ -1445,7 +1475,24 @@ mod tests {
         for _ in 0..MAX_SESSIONS {
             sessions.open_new("", Kind::Claude).unwrap();
         }
-        assert!(sessions.open_new("", Kind::Claude).is_none(), "5 to 9: five sessions, as many as a digit can pick");
-        assert_eq!(sessions.list.len(), 5);
+        assert!(sessions.open_new("", Kind::Claude).is_none(), "fifty at most");
+        assert_eq!(sessions.list.len(), 50);
+        assert_eq!((sessions.index_of(54), sessions.index_of(55)), (Some(49), None), "numbered on to 54");
+    }
+
+    #[test]
+    fn a_session_is_found_by_its_name_folder_kind_server_or_number() {
+        let mut sessions = Sessions::default();
+        sessions.open_new("~/work/billing", Kind::Claude);
+        sessions.open_new("~/work/reports", Kind::Terminal);
+        sessions.open_query(Some("clickhouse3"));
+        sessions.list[0].name = Some("invoice export".into());
+        assert_eq!(sessions.matching(""), [0, 1, 2]);
+        assert_eq!(sessions.matching("INVOICE"), [0]);
+        assert_eq!(sessions.matching("reports"), [1]);
+        assert_eq!(sessions.matching("terminal"), [1]);
+        assert_eq!(sessions.matching("house3"), [2]);
+        assert_eq!(sessions.matching("6"), [1], "by its number");
+        assert!(sessions.matching("nothing like it").is_empty());
     }
 }

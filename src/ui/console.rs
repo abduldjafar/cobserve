@@ -116,7 +116,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, console: &C
     if console.lines.len() == 1 && console.lines[0].is_empty() {
         // What to do, where there is nothing yet.
         let hints = [
-            format!("-- say what it should show, then ctrl+g: {} writes the SQL", console.assistant.name()),
+            format!("-- say what it should show, then ctrl+k: {} writes the SQL", console.assistant.name()),
             "SELECT … FROM system.processes;    ⏎ after its ; runs it".to_string(),
         ];
         lines.clear();
@@ -140,7 +140,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, console: &C
 
     // Under the field: the helper's turn, or how to go on.
     if y < bottom {
-        frame.render_widget(Paragraph::new(helper_line(app, theme, console, width)), Rect::new(area.x, y, area.width, 1));
+        let (line, asks) = helper_line(app, theme, console, width);
+        if let Some((at, cells)) = asks {
+            hit(Rect::new(area.x + at as u16, y, cells as u16, 1), Hit::ConsoleAsk);
+        }
+        frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
         y += 2;
     }
 
@@ -222,9 +226,11 @@ fn split_comment(line: &str) -> (&str, &str) {
 }
 
 /// The line under the field: the helper writing, what it wrote, why it could not — else the keys
-/// that matter most here.
-fn helper_line(app: &App, theme: &Theme, console: &Console, width: usize) -> Line<'static> {
+/// that matter most here. Returns where on it the way to ask the helper is, for a click.
+fn helper_line(app: &App, theme: &Theme, console: &Console, width: usize) -> (Line<'static>, Option<(usize, usize)>) {
     let mut cells = Cells::new();
+    // Where the way to ask the helper is on the line, for a click: its column and width.
+    let mut asks = None;
     cells.push("      ", Style::default());
     let who = console.assistant.name();
     let mark = format!("{} ", console.assistant.glyph());
@@ -248,29 +254,35 @@ fn helper_line(app: &App, theme: &Theme, console: &Console, width: usize) -> Lin
         }
         // What failed, with what the server said, is the helper's to put right.
         Assisting::Idle if matches!(&console.state, RunState::Failed { node, .. } if !node.is_empty()) => {
+            let at = cells.width();
             cells.push(mark, theme.claude());
-            cells.push("ctrl+g", theme.strong());
+            cells.push("ctrl+k", theme.strong());
             cells.push(format!(": {who} puts it right, told what the server said"), theme.muted());
+            asks = Some((at, cells.width() - at));
             cells.push(" · ctrl+r runs it again", theme.faint());
         }
         Assisting::Idle => {
             let ask = format!("asks {who}");
-            let words: [(&str, &str); 5] = [("⏎", "after ; runs"), ("ctrl+r", "runs"), ("tab", "completes"), ("ctrl+g", &ask), ("ctrl+o", "another server")];
+            let words: [(&str, &str); 5] = [("⏎", "after ; runs"), ("ctrl+r", "runs"), ("tab", "completes"), ("ctrl+k", &ask), ("ctrl+o", "another server")];
             for (i, (key, what)) in words.iter().enumerate() {
                 let mut piece = Cells::new();
                 if i > 0 {
                     piece.push(" · ", theme.faint());
                 }
+                let at = cells.width() + piece.width();
                 piece.push(*key, theme.muted().add_modifier(Modifier::BOLD));
                 piece.push(format!(" {what}"), theme.faint());
                 if cells.width() + piece.width() > width {
                     break;
                 }
+                if *key == "ctrl+k" {
+                    asks = Some((at, cells.width() + piece.width() - at));
+                }
                 cells.spans(piece.into_spans());
             }
         }
     }
-    cells.line(width, Style::default())
+    (cells.line(width, Style::default()), asks)
 }
 
 /// The line about the last run: under way, stopped, refused, or what it answered. Returns the

@@ -8,7 +8,7 @@
 
 use super::widgets::{fit, rule, thin_bar, Cells};
 use crate::app::{App, Hit};
-use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, MAX_SESSIONS};
+use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, KEYED, MAX_SESSIONS};
 use crate::fmt;
 use crate::folders::Folder;
 use crate::severity::{self, Severity};
@@ -170,39 +170,109 @@ fn mark(session: &Session) -> &'static str {
     }
 }
 
+/// How much of each card the list has room for: two lines and a gap, two lines, or one — the lit
+/// card keeping its second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Density {
+    Full,
+    Close,
+    Line,
+}
+
 /// The sessions as cards, like a terminal's tab list: the mark of what it runs (Claude, OpenCode,
-/// a shell), the name — the user's, what the program says it is on, or the folder — and the
-/// number that picks it; under it the folder and its branch. The card on screen is framed,
-/// and so is a new one while its folder is chosen.
+/// a shell, SQL), the name — the user's, what the program says it is on, or the folder — and the
+/// number; under it the folder and its branch, or a query session's last run. The card on
+/// screen is lit, and so is a new one while its folder is chosen, or the one a search is on.
+/// The more there are the closer they sit — fifty make a line each — and the list follows the
+/// lit card, saying how many are above and below it.
 fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let sessions = &app.claude;
     let width = area.width as usize;
     // The bar at the left of a card, and the card's own margin either side.
     let inner = width.saturating_sub(4);
-    let mut hits = app.viewport.hits.borrow_mut();
-    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
     let picking = matches!(sessions.mode, Mode::Opening(_));
     let lit = sessions.mode == Mode::Bar;
+    let finding = match &sessions.mode {
+        Mode::Finding { query, at } => Some((query.clone(), *at)),
+        _ => None,
+    };
+    // Those listed: every one, or those the search names.
+    let listed: Vec<usize> = match &finding {
+        Some((query, _)) => sessions.matching(query),
+        None => (0..sessions.list.len()).collect(),
+    };
+    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
+    let mut clickable: Vec<(Rect, Hit)> = Vec::new();
 
     let mut title = Cells::new();
     title.push("SESSIONS", theme.section());
-    if lit {
-        title.push("  which one?", theme.strong());
-    } else if !sessions.list.is_empty() {
-        title.push(format!("  {}", sessions.list.len()), theme.faint());
+    match &finding {
+        Some((query, at)) => {
+            title.push("  /", theme.accent());
+            title.push(query.clone(), theme.strong());
+            title.push("▏", theme.accent());
+            let count = if listed.is_empty() { "none".to_string() } else { format!("{} of {}", (at + 1).min(listed.len()), listed.len()) };
+            title.pad_to(width.saturating_sub(fmt::width(&count)));
+            title.push(count, theme.faint());
+        }
+        None if lit => {
+            title.push("  which one?", theme.strong());
+        }
+        None if !sessions.list.is_empty() => {
+            title.push(format!("  {}", sessions.list.len()), theme.faint());
+        }
+        None => {}
     }
     lines.push(title.line(width, Style::default()));
     lines.push(Line::from(""));
 
-    // The card that is lit: the session on screen, or the new one being opened.
-    let lit_card = if picking { Some(sessions.list.len()) } else { (!sessions.list.is_empty()).then_some(sessions.active) };
-    for (index, session) in sessions.list.iter().enumerate() {
+    // The card that is lit: the one a search is on, the new one being opened, the one on screen.
+    let lit_card = match &finding {
+        Some((_, at)) => listed.get(*at).copied(),
+        None if picking => None,
+        None => (!sessions.list.is_empty()).then_some(sessions.active),
+    };
+    // What is under the cards: the way to a new session and to past conversations.
+    let foot = match () {
+        _ if finding.is_some() => 1,
+        _ if picking || sessions.list.len() < MAX_SESSIONS => 2,
+        _ => 1,
+    };
+    let room = (area.height as usize).saturating_sub(lines.len() + foot + 1);
+    let count = listed.len();
+    let density = if 3 * count <= room {
+        Density::Full
+    } else if 2 * count <= room {
+        Density::Close
+    } else {
+        Density::Line
+    };
+    // A line each, and still more than fit: a window that follows the lit card, a line at each
+    // end for what is past it.
+    let lit_at = lit_card.and_then(|card| listed.iter().position(|&i| i == card));
+    let extra = usize::from(lit_at.is_some());
+    let (first, shown) = if density == Density::Line && count + extra > room {
+        let window = room.saturating_sub(extra + 2).max(1);
+        let first = crate::app::scroll_into_view(sessions.list_scroll.get(), lit_at, window, count);
+        (first, window)
+    } else {
+        (0, count)
+    };
+    sessions.list_scroll.set(first);
+
+    if first > 0 {
+        let y = area.y + lines.len() as u16;
+        lines.push(Line::from(Span::styled(format!("   ↑ {} more", first), theme.faint())));
+        clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Session(listed[first - 1])));
+    }
+    for &index in listed.iter().skip(first).take(shown) {
+        let session = &sessions.list[index];
         let y = area.y + lines.len() as u16;
         let on_screen = lit_card == Some(index);
         let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
 
         // Its mark and name; at the right, what it rang for and its number — a key to press
-        // once ctrl+\ asks which.
+        // once ctrl+\ asks which, for the five a digit picks.
         let mut right = Cells::new();
         match mark(session) {
             "●" => right.push("● ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
@@ -210,73 +280,93 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             "↻" => right.push("↻ ", theme.accent()),
             _ => &mut right,
         };
-        let number = Sessions::number_of(index).to_string();
-        if lit {
+        let number = Sessions::number_of(index);
+        if lit && index < KEYED {
             right.push(format!(" {number} "), theme.keycap());
         } else {
-            right.push(number, theme.faint());
+            right.push(number.to_string(), theme.faint());
         }
-        let mut first = Cells::new();
-        first.push(format!("{}  ", session.kind.glyph()), if ended { theme.faint() } else { kind_style(session.kind, theme) });
-        let room = inner.saturating_sub(first.width() + right.width() + 1);
+        let mut first_line = Cells::new();
+        first_line.push(format!("{}  ", session.kind.glyph()), if ended { theme.faint() } else { kind_style(session.kind, theme) });
+        let name_room = inner.saturating_sub(first_line.width() + right.width() + 1);
         match &sessions.mode {
             Mode::Naming(name) if index == sessions.active => {
-                first.push(format!("{}▏", fmt::truncate(name, room)), theme.keycap());
+                first_line.push(format!("{}▏", fmt::truncate(name, name_room)), theme.keycap());
             }
             _ => {
                 let style = if on_screen { theme.strong() } else if ended || session.waiting() { theme.muted() } else { theme.text() };
-                first.push(fmt::truncate(&session.label(), room), style);
+                first_line.push(fmt::truncate(&session.label(), name_room), style);
             }
         }
-        first.pad_to(inner.saturating_sub(right.width()));
-        first.spans(right.into_spans());
-        lines.push(card_row(first, width, on_screen, theme));
+        first_line.pad_to(inner.saturating_sub(right.width()));
+        first_line.spans(right.into_spans());
+        lines.push(card_row(first_line, width, on_screen, theme));
 
         // Where it works — or, after one x, what a second does.
-        let mut second = Cells::new();
-        second.push("   ", Style::default());
-        if index == sessions.active && sessions.closing {
-            second.push("x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
-        } else if let Some(console) = &session.console {
-            console_line(&mut second, console, theme);
-        } else {
-            place(&mut second, &session.dir, session.branch.as_deref(), inner, theme);
+        let two_lines = density != Density::Line || on_screen;
+        if two_lines {
+            let mut second = Cells::new();
+            second.push("   ", Style::default());
+            if index == sessions.active && sessions.closing {
+                second.push("x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+            } else if let Some(console) = &session.console {
+                console_line(&mut second, console, theme);
+            } else {
+                place(&mut second, &session.dir, session.branch.as_deref(), inner, theme);
+            }
+            lines.push(card_row(second, width, on_screen, theme));
         }
-        lines.push(card_row(second, width, on_screen, theme));
+        if density == Density::Full {
+            lines.push(Line::from(""));
+        }
+        clickable.push((Rect::new(area.x, y, area.width, 1 + u16::from(two_lines)), Hit::Session(index)));
+    }
+    if first + shown < count {
+        let y = area.y + lines.len() as u16;
+        lines.push(Line::from(Span::styled(format!("   ↓ {} more", count - first - shown), theme.faint())));
+        clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Session(listed[first + shown])));
+    }
+    if density != Density::Full && count > 0 {
         lines.push(Line::from(""));
-        hits.push((Rect::new(area.x, y, area.width, 2), Hit::Session(index)));
     }
 
-    // A new session, and one that takes a conversation up again, at the end of the list.
-    let next = sessions.list.len();
-    if picking || next < MAX_SESSIONS {
+    if finding.is_some() {
+        let mut note = Cells::new();
+        note.push(
+            if listed.is_empty() { "   no session is called that" } else { "   ⏎ goes there · esc back" },
+            theme.faint(),
+        );
+        lines.push(note.line(width, Style::default()));
+    } else if picking || sessions.list.len() < MAX_SESSIONS {
+        // A new session, and one that takes a conversation up again, at the end of the list.
         let y = area.y + lines.len() as u16;
-        let mut first = Cells::new();
-        first.push("+  ", theme.accent().add_modifier(Modifier::BOLD));
-        first.push("new session", if picking { theme.strong() } else { theme.text2() });
-        lines.push(card_row(first, width, picking, theme));
+        let mut first_line = Cells::new();
+        first_line.push("+  ", theme.accent().add_modifier(Modifier::BOLD));
+        first_line.push("new session", if picking { theme.strong() } else { theme.text2() });
+        lines.push(card_row(first_line, width, picking, theme));
         if picking {
             let mut second = Cells::new();
             let query = matches!(&sessions.mode, Mode::Opening(p) if p.kind == Kind::Query);
             second.push(if query { "   choose its server →" } else { "   choose its folder →" }, theme.faint());
             lines.push(card_row(second, width, true, theme));
         }
-        hits.push((Rect::new(area.x, y, area.width, if picking { 2 } else { 1 }), Hit::NewSession));
+        clickable.push((Rect::new(area.x, y, area.width, if picking { 2 } else { 1 }), Hit::NewSession));
         if !picking {
             let y = area.y + lines.len() as u16;
             let mut resume = Cells::new();
             resume.push("↻  ", theme.accent());
             resume.push("past conversations", theme.muted());
             lines.push(card_row(resume, width, false, theme));
-            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Resume));
+            clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Resume));
         }
     } else {
         let mut full = Cells::new();
-        full.push(format!("   {MAX_SESSIONS} of {MAX_SESSIONS} open · x closes one"), theme.faint());
+        full.push(format!("   {MAX_SESSIONS} of {MAX_SESSIONS} · x closes one"), theme.faint());
         lines.push(full.line(width, Style::default()));
     }
 
-    drop(hits);
+    let bottom = area.y + area.height;
+    app.viewport.hits.borrow_mut().extend(clickable.into_iter().filter(|(rect, _)| rect.y < bottom));
     frame.render_widget(Paragraph::new(lines), area);
 }
 
@@ -360,53 +450,129 @@ fn shorten_left(path: &str, max: usize) -> String {
     fmt::truncate(path.rsplit('/').next().unwrap_or(path), max)
 }
 
-/// On a narrow terminal: the sessions as tabs over the pane, like the header's.
+/// On a narrow terminal: the sessions as tabs over the pane, like the header's — as many as fit
+/// round the lit one, with how many more there are either side.
 fn session_bar(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
     let sessions = &app.claude;
     let width = area.width as usize;
-    let mut hits = app.viewport.hits.borrow_mut();
-    let mut cells = Cells::new();
-    for (index, session) in sessions.list.iter().enumerate() {
-        let number = Sessions::number_of(index);
-        let on_screen = index == sessions.active && !matches!(sessions.mode, Mode::Opening(_));
-        let x = area.x + cells.width() as u16;
-        if let (true, Mode::Naming(name)) = (on_screen, &sessions.mode) {
-            cells.push(format!(" {number} "), theme.tab_active());
-            cells.push(format!("{name}▏"), theme.keycap());
-            cells.push(" ", theme.tab_active());
-        } else {
-            let mark = mark(session);
-            let glyph = session.kind.glyph();
-            let label = format!(" {number} {glyph} {}{}{mark} ", fmt::truncate(&session.label(), 18), if mark.is_empty() { "" } else { " " });
-            let style = if on_screen {
-                theme.tab_active()
-            } else if session.pane.attention {
-                theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)
+    let finding = match &sessions.mode {
+        Mode::Finding { query, at } => Some((query.clone(), *at)),
+        _ => None,
+    };
+    let listed: Vec<usize> = match &finding {
+        Some((query, _)) => sessions.matching(query),
+        None => (0..sessions.list.len()).collect(),
+    };
+    let lit_card = match &finding {
+        Some((_, at)) => listed.get(*at).copied(),
+        None if matches!(sessions.mode, Mode::Opening(_)) => None,
+        None => Some(sessions.active),
+    };
+
+    // Each tab, drawn on its own.
+    let tabs: Vec<(usize, Cells)> = listed
+        .iter()
+        .map(|&index| {
+            let session = &sessions.list[index];
+            let number = Sessions::number_of(index);
+            let on_screen = lit_card == Some(index);
+            let mut cells = Cells::new();
+            if let (true, Mode::Naming(name)) = (on_screen, &sessions.mode) {
+                cells.push(format!(" {number} "), theme.tab_active());
+                cells.push(format!("{name}▏"), theme.keycap());
+                cells.push(" ", theme.tab_active());
             } else {
-                theme.muted()
-            };
-            cells.push(label, style);
+                let mark = mark(session);
+                let glyph = session.kind.glyph();
+                let label = format!(" {number} {glyph} {}{}{mark} ", fmt::truncate(&session.label(), 18), if mark.is_empty() { "" } else { " " });
+                let style = if on_screen {
+                    theme.tab_active()
+                } else if session.pane.attention {
+                    theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)
+                } else {
+                    theme.muted()
+                };
+                cells.push(label, style);
+            }
+            (index, cells)
+        })
+        .collect();
+
+    // What the bar ends with: what it is doing, or the way to a new session.
+    let mut tail = Cells::new();
+    let mut tail_hit = false;
+    match (&sessions.mode, &finding) {
+        (_, Some((query, _))) => {
+            tail.push(format!(" /{query}▏ "), theme.keycap());
+            if listed.is_empty() {
+                tail.push("  no session is called that", theme.faint());
+            }
         }
-        hits.push((Rect::new(x, area.y, (area.x + cells.width() as u16).saturating_sub(x), 1), Hit::Session(index)));
-        cells.push(" ", Style::default());
-    }
-    let x = area.x + cells.width() as u16;
-    match &sessions.mode {
-        Mode::Opening(picker) => {
-            cells.push(" + new session ", theme.tab_active());
-            cells.push(if picker.kind == Kind::Query { "  choose its server below" } else { "  choose its folder below" }, theme.faint());
+        (Mode::Opening(picker), _) => {
+            tail.push(" + new session ", theme.tab_active());
+            tail.push(if picker.kind == Kind::Query { "  choose its server below" } else { "  choose its folder below" }, theme.faint());
         }
-        Mode::Bar if sessions.closing => {
-            cells.push(" x again closes it ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        (Mode::Bar, _) if sessions.closing => {
+            tail.push(" x again closes it ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
         }
-        Mode::Bar => {
-            cells.push(" which one? ", theme.strong());
+        (Mode::Bar, _) => {
+            tail.push(" which one? ", theme.strong());
         }
         _ => {
-            cells.push(" + ", theme.keycap());
-            hits.push((Rect::new(x, area.y, 3, 1), Hit::NewSession));
+            tail.push(" + ", theme.keycap());
+            tail_hit = true;
         }
     }
+
+    // The tabs that fit round the lit one, leaving room for the tail and what is either side.
+    let gap = |n: usize| if n == 0 { 0 } else { 6 };
+    let room = width.saturating_sub(tail.width() + 1);
+    let centre = lit_card.and_then(|card| tabs.iter().position(|(i, _)| *i == card)).unwrap_or(tabs.len().saturating_sub(1));
+    let (mut start, mut end) = (centre.min(tabs.len()), (centre + 1).min(tabs.len()));
+    let used = |start: usize, end: usize| -> usize {
+        tabs[start..end].iter().map(|(_, c)| c.width() + 1).sum::<usize>() + gap(start) + gap(tabs.len() - end)
+    };
+    loop {
+        let mut grew = false;
+        if end < tabs.len() && used(start, end + 1) <= room {
+            end += 1;
+            grew = true;
+        }
+        if start > 0 && used(start - 1, end) <= room {
+            start -= 1;
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    let mut hits = app.viewport.hits.borrow_mut();
+    let mut cells = Cells::new();
+    if start > 0 {
+        let x = area.x + cells.width() as u16;
+        cells.push(format!("‹ {start}"), theme.faint());
+        cells.pad_to(6);
+        hits.push((Rect::new(x, area.y, 5, 1), Hit::Session(tabs[start - 1].0)));
+    }
+    for (index, tab) in tabs.into_iter().skip(start).take(end - start) {
+        let x = area.x + cells.width() as u16;
+        let tab_width = tab.width() as u16;
+        cells.spans(tab.into_spans());
+        hits.push((Rect::new(x, area.y, tab_width, 1), Hit::Session(index)));
+        cells.push(" ", Style::default());
+    }
+    if end < listed.len() {
+        let x = area.x + cells.width() as u16;
+        cells.push(format!("{} ›", listed.len() - end), theme.faint());
+        cells.push(" ", Style::default());
+        hits.push((Rect::new(x, area.y, 5, 1), Hit::Session(listed[end])));
+    }
+    let x = area.x + cells.width() as u16;
+    if tail_hit {
+        hits.push((Rect::new(x, area.y, 3, 1), Hit::NewSession));
+    }
+    cells.spans(tail.into_spans());
     let lit = sessions.mode == Mode::Bar;
     cells.line(width, if lit { theme.selected() } else { Style::default() })
 }
