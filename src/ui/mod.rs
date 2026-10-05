@@ -26,6 +26,7 @@
 
 mod band;
 mod claude;
+mod console;
 mod day;
 mod drawer;
 mod map;
@@ -441,6 +442,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         View::Nodes => &[
             ("↑↓", "move"),
             ("⏎", "open"),
+            ("c", "SQL on it"),
             ("←→", "fold"),
             ("tab", "insights"),
             ("u", "pivot"),
@@ -463,6 +465,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         View::Map => &[
             ("←→↑↓", "move"),
             ("⏎", "open in view 1"),
+            ("c", "SQL on it"),
             ("s", "sort"),
             ("p", "pause"),
             ("?", "help"),
@@ -480,6 +483,10 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("⏎", "keep the name"),
             ("esc", "cancel"),
         ],
+        View::Claude if matches!(&app.claude.mode, crate::claude::Mode::Opening(p) if p.kind == crate::claude::Kind::Query) => {
+            tail = Some("type to search · shift+tab: what it runs".into());
+            &[("↑↓", "choose"), ("⏎", "open it on that server"), ("esc", "cancel")]
+        }
         View::Claude if matches!(&app.claude.mode, crate::claude::Mode::Opening(p) if p.searching()) => {
             tail = Some("a click on a folder goes into it".into());
             &[("↑↓", "choose"), ("⏎", "open the session there"), ("→", "go in"), ("esc", "clear the search")]
@@ -497,12 +504,44 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
                 ("1-4", "views"),
                 ("5-9", "sessions"),
                 ("n", "new"),
+                ("q", "SQL"),
                 ("p", "past"),
                 ("r", "rename"),
                 ("x", "close"),
                 ("ctrl+\\", "monitor"),
-                ("esc", "back to Claude"),
+                ("esc", "back"),
             ]
+        }
+        View::Claude if app.claude.current().is_some_and(|s| s.console.is_some()) => {
+            use crate::console::{Assistant, Focus as Keys};
+            match app.claude.current().and_then(|s| s.console.as_deref()) {
+                Some(c) if c.choosing.is_some() => &[("↑↓", "choose"), ("⏎", "run on it"), ("esc", "keep this one")],
+                Some(c) if c.focus == Keys::Answer => {
+                    &[("↑↓←→", "move"), ("y", "copy the row"), ("Y", "copy it all"), ("PgUp PgDn", "a page"), ("tab", "back to the SQL")]
+                }
+                Some(c) if c.suggest.is_some() => {
+                    tail = Some("a click takes one too".into());
+                    &[("tab", "take it"), ("↑↓", "choose"), ("esc", "close them")]
+                }
+                Some(c) if c.assistant == Assistant::OpenCode => &[
+                    ("ctrl+r", "run"),
+                    ("tab", "complete"),
+                    ("ctrl+g", "ask OpenCode"),
+                    ("ctrl+t", "Claude instead"),
+                    ("ctrl+o", "server"),
+                    ("⇧tab", "the answer"),
+                    ("ctrl+\\", "sessions"),
+                ],
+                _ => &[
+                    ("ctrl+r", "run"),
+                    ("tab", "complete"),
+                    ("ctrl+g", "ask Claude"),
+                    ("ctrl+t", "OpenCode instead"),
+                    ("ctrl+o", "server"),
+                    ("⇧tab", "the answer"),
+                    ("ctrl+\\", "sessions"),
+                ],
+            }
         }
         View::Claude if app.claude.is_running() => {
             // Every other key is Claude's; the one that is not leads the bar.
@@ -522,6 +561,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             crate::claude::Kind::Claude => &[("⏎", "start Claude"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
             crate::claude::Kind::OpenCode => &[("⏎", "start OpenCode"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
             crate::claude::Kind::Terminal => &[("⏎", "start the shell"), ("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+            crate::claude::Kind::Query => &[("ctrl+\\", "sessions"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
         },
     };
     // A notice comes before the keys' last ones; nothing else does.
@@ -572,11 +612,12 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("tab", "move between the tree and the insights"),
     ("space", "fold / unfold the healthy nodes"),
     ("u", "pivot node ↔ user: who is burning the fleet"),
+    ("c", "SQL on the node under the cursor, in a query session: read-only, it suggests"),
     ("s", "sort: pressure, memory, CPU, name"),
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
     ("1 2 3 4 5", "views: nodes · queue · map · tape · sessions — 5 to 9 are the sessions"),
-    ("ctrl+\\", "the sessions · there, then 1-4 a view, 5-9 a session, n new (c o t: Claude,"),
-    ("", "OpenCode, a terminal), p a past conversation, r rename, x close"),
+    ("ctrl+\\", "the sessions · there, then 1-4 a view, 5-9 a session, n new (c o t q: Claude,"),
+    ("", "OpenCode, a terminal, SQL), p a past conversation, r rename, x close"),
     ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
     ("z", "the clock: the local zone ↔ UTC · or click it · ctrl+\\ z in a session"),
     ("d", "wave a prayer's reminder away · ctrl+\\ d in a session · or click ✕"),

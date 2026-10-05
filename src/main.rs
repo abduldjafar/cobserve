@@ -6,10 +6,13 @@
 //! ClickHouse that never answers all show up as numbers that do not move.
 
 mod app;
+mod assist;
 mod attrib;
 mod claude;
 mod clock;
+mod complete;
 mod config;
+mod console;
 mod conversations;
 mod fake;
 mod fmt;
@@ -129,6 +132,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
         opencode: config.opencode_command.clone(),
         terminal: config.shell_command.clone(),
     };
+    app.claude.assistant = config.assistant;
     if let Ok(dir) = std::env::current_dir() {
         app.claude.default_dir = pty::tilde(&dir);
     }
@@ -160,7 +164,15 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
     let mut rounds = 0u32;
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
 
-    spawn_sources(&config, tx.clone());
+    // Query sessions' work, and where the fleet's servers are for it.
+    let mut consoles = Consoles {
+        targets: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        client: reqwest::Client::builder().build().unwrap_or_default(),
+        tasks: HashMap::new(),
+        fake: config.fake,
+        assist_dir: assist::dir(),
+    };
+    spawn_sources(&config, tx.clone(), Arc::clone(&consoles.targets));
     // Anything a source could not even start with belongs on screen, not in a log file.
     for warning in &config.warnings {
         app.update(Event::Notice(warning.clone()));
@@ -187,6 +199,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
         }
         // After the frame: the panes now know the size they are drawn at.
         drive_panes(&mut app, &mut panes, &tx);
+        drive_consoles(&mut app, &mut consoles, &tx);
         drive_picker(&mut app, &latest_lookup, &tx);
         drive_conversations(&mut app, home.as_deref(), &tx);
         if conversations_read.elapsed() >= Duration::from_secs(15) {
@@ -241,6 +254,9 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
         for text in app.take_notifications() {
             notify(config.notify, &text);
         }
+        for text in app.take_clipboard() {
+            copy_to_clipboard(&text);
+        }
 
         if app.quit {
             break;
@@ -256,6 +272,186 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool) 
     }
     let _ = saved::store(&app.claude.to_saved());
     Ok(())
+}
+
+/// Query sessions' work: each query, each server's tables and each helper's answer a task of its
+/// own, that `ctrl+c` — or its session closing — aborts: a query's request let go, so the server
+/// stops it; a helper's program killed.
+struct Consoles {
+    /// Every server's address and login, as the ClickHouse source last found the fleet. Logins
+    /// stay here, with the code that sends them — never in `App`.
+    targets: Arc<std::sync::Mutex<HashMap<String, sources::clickhouse::ConsoleTarget>>>,
+    client: reqwest::Client,
+    tasks: HashMap<(u64, Work, u64), tokio::task::JoinHandle<()>>,
+    fake: bool,
+    /// Where helpers run: an empty folder of their own.
+    assist_dir: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Work {
+    Query,
+    Ask,
+}
+
+/// What query sessions ask for, started; what they stop, stopped; the tables of the servers they
+/// are on, read when they are not yet.
+fn drive_consoles(app: &mut App, consoles: &mut Consoles, tx: &mpsc::UnboundedSender<Event>) {
+    let (mut stops, mut queries, mut asks) = (Vec::new(), Vec::new(), Vec::new());
+    for session in &mut app.claude.list {
+        let Some(console) = session.console.as_deref_mut() else {
+            continue;
+        };
+        if let Some(run) = console.take_cancel() {
+            stops.push((session.id, Work::Query, run));
+        }
+        if let Some(ask) = console.take_ask_cancel() {
+            stops.push((session.id, Work::Ask, ask));
+        }
+        if let Some(request) = console.take_request() {
+            queries.push((session.id, request));
+        }
+        if let Some(ask) = console.take_ask() {
+            asks.push((session.id, ask));
+        }
+    }
+    for key in stops {
+        if let Some(task) = consoles.tasks.remove(&key) {
+            task.abort();
+        }
+    }
+    // A closed session's work ends with it; finished work is let go of.
+    consoles.tasks.retain(|(id, ..), task| {
+        let open = app.claude.list.iter().any(|s| s.id == *id);
+        if !open {
+            task.abort();
+        }
+        open && !task.is_finished()
+    });
+
+    for (id, request) in queries {
+        let tx = tx.clone();
+        let run = request.id;
+        let task = if consoles.fake {
+            // The made-up fleet answers at once; a moment's wait makes it look like a server.
+            let answer = fake::console_answer(app.snapshot(), &request.node, &request.sql);
+            let wait = 120 + (request.sql.len() as u64 * 37) % 500;
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(wait)).await;
+                let answer = answer.map(|mut answer| {
+                    answer.elapsed_ms = wait;
+                    answer
+                });
+                let _ = tx.send(Event::ConsoleAnswer(id, run, answer));
+            })
+        } else {
+            let target = consoles.targets.lock().ok().and_then(|targets| targets.get(&request.node).cloned());
+            let client = consoles.client.clone();
+            tokio::spawn(async move {
+                let answer = match target {
+                    Some(target) => sources::clickhouse::console_query(&client, &target, &request.node, &request.sql).await,
+                    None => Err(format!("{} is not among the servers found — the next discovery may find it", request.node)),
+                };
+                let _ = tx.send(Event::ConsoleAnswer(id, run, answer));
+            })
+        };
+        consoles.tasks.insert((id, Work::Query, run), task);
+    }
+
+    for (id, ask) in asks {
+        let tx = tx.clone();
+        let asked = ask.id;
+        let task = if consoles.fake {
+            let answer = fake::assist(&ask);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(1400)).await;
+                let _ = tx.send(Event::Assisted(id, asked, answer));
+            })
+        } else {
+            let version = ask.node.as_deref().and_then(|node| app.snapshot()?.nodes.iter().find(|n| n.name == node)).map(|n| n.version.clone());
+            let prompt = assist::prompt(&ask, app.schema_of(ask.node.as_deref()), version.as_deref());
+            let program = match ask.assistant {
+                console::Assistant::Claude => app.claude.commands.claude.clone(),
+                console::Assistant::OpenCode => app.claude.commands.opencode.clone(),
+            };
+            let dir = consoles.assist_dir.clone();
+            tokio::spawn(async move {
+                let answer = run_assistant(ask.assistant, &program, prompt, &dir).await;
+                let _ = tx.send(Event::Assisted(id, asked, answer));
+            })
+        };
+        consoles.tasks.insert((id, Work::Ask, asked), task);
+    }
+
+    for node in app.schemas_wanted() {
+        let tx = tx.clone();
+        if consoles.fake {
+            let _ = tx.send(Event::Schema(node, Ok(fake::schema())));
+            continue;
+        }
+        let target = consoles.targets.lock().ok().and_then(|targets| targets.get(&node).cloned());
+        let client = consoles.client.clone();
+        tokio::spawn(async move {
+            let schema = match target {
+                Some(target) => sources::clickhouse::console_schema(&client, &target).await,
+                None => Err("not among the servers found yet".to_string()),
+            };
+            let _ = tx.send(Event::Schema(node, schema));
+        });
+    }
+}
+
+/// A helper's program, asked once: the question on its standard input, the answer on its
+/// standard output — in a folder of its own, without the monitor's secrets (Claude Code then
+/// signs in with the Pro or Max plan, as in a terminal), for at most `assist::TIME_LIMIT_S`.
+/// Dropped — `ctrl+c` — the program is killed.
+async fn run_assistant(assistant: console::Assistant, program: &[String], prompt: String, dir: &std::path::Path) -> Result<String, String> {
+    use tokio::io::AsyncWriteExt;
+    let name = assistant.name();
+    let argv = assist::command(assistant, program, &dir.to_string_lossy());
+    let Some(executable) = argv.first() else {
+        return Err(format!("no command for {name}"));
+    };
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut command = tokio::process::Command::new(executable);
+    command
+        .args(&argv[1..])
+        .current_dir(dir)
+        .env("PWD", dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    for variable in pty::NOT_PASSED_ON {
+        command.env_remove(variable);
+    }
+    if assistant == console::Assistant::OpenCode {
+        command.env("OPENCODE_PERMISSION", assist::OPENCODE_PERMISSION).env("OPENCODE_DISABLE_AUTOUPDATE", "1");
+    }
+    let mut child = command.spawn().map_err(|e| match (e.kind(), assistant) {
+        (std::io::ErrorKind::NotFound, console::Assistant::Claude) => {
+            "Claude Code is not installed here — npm install -g @anthropic-ai/claude-code, then `claude` once to sign in".to_string()
+        }
+        (std::io::ErrorKind::NotFound, console::Assistant::OpenCode) => {
+            "OpenCode is not installed here — curl -fsSL https://opencode.ai/install | bash".to_string()
+        }
+        _ => format!("{name} would not start: {e}"),
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        tokio::spawn(async move {
+            let _ = stdin.write_all(prompt.as_bytes()).await;
+        });
+    }
+    let output = tokio::time::timeout(Duration::from_secs(assist::TIME_LIMIT_S), child.wait_with_output())
+        .await
+        .map_err(|_| format!("{name} did not answer within {} s", assist::TIME_LIMIT_S))?
+        .map_err(|e| format!("{name}: {e}"))?;
+    let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    if output.status.success() {
+        assist::clean(&stdout)
+    } else {
+        Err(assist::failure(assistant, output.status.code(), &stderr, &stdout))
+    }
 }
 
 /// The conversation each running program is in: Claude Code says so for its process id
@@ -448,6 +644,54 @@ fn notify(how: config::Notify, text: &str) {
     let _ = out.flush();
 }
 
+/// Text on the clipboard: through the terminal (OSC 52 — iTerm2, kitty, WezTerm, Ghostty, tmux
+/// with set-clipboard) and through the system's own tool where there is one, which works in a
+/// terminal that does not take OSC 52.
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()));
+    let _ = out.flush();
+    let tools: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else {
+        &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"])]
+    };
+    for (program, args) in tools {
+        let child = std::process::Command::new(program)
+            .args(*args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut child) = child {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return;
+        }
+    }
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16) | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8) | u32::from(*chunk.get(2).unwrap_or(&0));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// The system's notification, from a program of its own that is not waited for.
 fn system_notification(text: &str) {
     let command: Option<(&str, Vec<String>)> = if cfg!(target_os = "macos") {
@@ -541,7 +785,11 @@ fn spawn_key_reader(tx: mpsc::UnboundedSender<Event>) {
     });
 }
 
-fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
+fn spawn_sources(
+    config: &Config,
+    tx: mpsc::UnboundedSender<Event>,
+    console_targets: Arc<std::sync::Mutex<HashMap<String, sources::clickhouse::ConsoleTarget>>>,
+) {
     if config.fake {
         tokio::spawn(fake_loop(config.poll, tx));
         return;
@@ -559,6 +807,13 @@ fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
                 return;
             }
         };
+        // Query sessions go where the fleet is: the seeds now, every server discovery finds.
+        let publish = |source: &sources::clickhouse::ClickHouseSource| {
+            if let Ok(mut targets) = console_targets.lock() {
+                *targets = source.console_targets();
+            }
+        };
+        publish(&source);
         // Nothing is printed here: stderr is the terminal ratatui draws on, and a line written
         // there stays on screen in whatever cells the next frame does not change. The bottom
         // border already says how many nodes are polled.
@@ -579,6 +834,7 @@ fn spawn_sources(config: &Config, tx: mpsc::UnboundedSender<Event>) {
                     for error in source.discover().await {
                         let _ = tx.send(Event::Notice(format!("discovery via {error}")));
                     }
+                    publish(&source);
                 }
                 _ = polling.tick() => {
                     let snapshot = source.poll().await;
@@ -627,6 +883,16 @@ async fn fake_loop(poll: Duration, tx: mpsc::UnboundedSender<Event>) {
                     return;
                 }
             }
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn base64_is_the_standard_alphabet_with_padding() {
+        let cases: [(&[u8], &str); 5] = [(b"", ""), (b"f", "Zg=="), (b"fo", "Zm8="), (b"foo", "Zm9v"), (b"foobar", "Zm9vYmFy")];
+        for (bytes, encoded) in cases {
+            assert_eq!(super::base64(bytes), encoded);
         }
     }
 }

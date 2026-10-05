@@ -411,7 +411,7 @@ fn readable(sql: &str) -> String {
 /// `GROUP BY`, `ORDER BY`, `HAVING`, `LIMIT`, `UNION`, the joins, `SETTINGS`, `FORMAT` and a
 /// `CREATE`'s `ENGINE` and `PARTITION BY`. Inside brackets and strings nothing moves, and a
 /// function that shares a keyword's name (`left(…)`, `format(…)`) is left alone.
-fn break_clauses(sql: &str) -> String {
+pub fn break_clauses(sql: &str) -> String {
     // (text, is a word, bracket depth)
     let mut pieces: Vec<(String, bool, i32)> = Vec::new();
     let chars: Vec<char> = sql.chars().collect();

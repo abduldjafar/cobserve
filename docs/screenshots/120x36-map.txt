@@ -33,4 +33,4 @@
   MEM 59.6/64 GiB  93.1%  ▂▃▄▅▆▇▇▃ → steady    CPU 14.9/16 cores  93.4%  ▇▇▇▇▇▆▇▇ → steady                              
   memory: queries 45.7% + server 47.4% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.4 GiB = 0.2× a 24.0 GiB query   
   ⏎ opens it in view 1                                                                                                  
-   ←→↑↓  move   ⏎  open in view 1   s  sort   p  pause   ?  help   q  quit                                              
+   ←→↑↓  move   ⏎  open in view 1   c  SQL on it   s  sort   p  pause   ?  help   q  quit                               

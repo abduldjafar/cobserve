@@ -2,9 +2,10 @@
 
 A terminal monitor for on call: the ClickHouse fleet and the Redash queue on one screen,
 **who** is using each node, and **what it means**: ranked insights, trends and forecasts, a
-fleet map, a tape of everything that changed — and Claude Code, OpenCode or a shell in the
-same window. Around it all, the **day**: your local time, the prayer times where you are, and a
-reminder ten minutes before each.
+fleet map, a tape of everything that changed — and in the same window Claude Code, OpenCode or
+a shell, and a **SQL console on any server** of the fleet, read-only, that suggests as you type
+and has Claude or OpenCode write the query for you. Around it all, the **day**: your local
+time, the prayer times where you are, and a reminder ten minutes before each.
 
 ![NODES view](docs/screenshots/120x36-nodes.png)
 
@@ -20,7 +21,7 @@ on top of it and are listed in `DESIGN.md` §13.
 | **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL. |
 | **MAP** | `3` | The whole fleet as cards, marked by their severity, with bars and history. A forty-node fleet on one screen. |
 | **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
-| **SESSIONS** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, or your own shell, in as many named sessions as you need, for any work at all, while the fleet and the Redash queue stay in sight above them. |
+| **SESSIONS** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need, while the fleet and the Redash queue stay in sight above them. |
 
 ![Query detail](docs/screenshots/140x40-query.png)
 
@@ -174,7 +175,7 @@ completed like a shell does. A repository shows its branch.
 | `ctrl+\` then `1`…`4` | that view of the monitor |
 | `ctrl+\` then `5`…`9` | that session |
 | `ctrl+\` then `n` | a new session, of the kind on screen: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `shift+tab` changes what it runs, `esc` clears the search or gives up |
-| `ctrl+\` then `c` · `o` · `t` | a new Claude, OpenCode or terminal session, the same way |
+| `ctrl+\` then `c` · `o` · `t` · `q` | a new Claude, OpenCode, terminal or query session, the same way — a query session's picker lists the servers |
 | `ctrl+\` then `p` | past conversations, from any folder or terminal, to take up in a new session |
 | `ctrl+\` then `r` | rename the one on screen (an empty name gives the default back) |
 | `ctrl+\` then `x` `x` | close it — its conversation is still in **past conversations** |
@@ -194,6 +195,55 @@ terminal altogether.
 ![Claude, OpenCode and a terminal in view 5](docs/screenshots/160x48-claude.png)
 
 ![A new session's folder, picked with clicks](docs/screenshots/160x48-claude-new.png)
+
+### SQL on any server: query sessions
+
+A query session is a SQL console on one server of the fleet, beside the other sessions on
+view 5: `c` on a node in view 1 (or a tile in view 3) opens one there, `ctrl+\ q` asks which
+server, and so does **▦ Query** in a new session's picker. Everything it runs is read-only —
+`readonly=1`, 30 seconds at most, the first 1000 rows — and stopped on the server when you stop
+it (`ctrl+c`) or close the session. The server is a chip at its top: a click, or `ctrl+o`,
+switches it to any other server of the fleet, each with the login the monitor has for it.
+
+- **Suggestions as you type**, from the server's own lists (its databases, tables, columns and
+  functions, read from its system tables when the session first runs there, and again a
+  quarter of an hour later): tables after `FROM` and `JOIN` — `log` finds `system.query_log` —
+  a database's tables after `db.`, the columns of the tables the statement reads (by their
+  aliases too, wherever the cursor is in it), functions with their parentheses, keywords, and
+  formats after `FORMAT`. `tab` takes one, `↑` `↓` choose (then `⏎` takes it too), `esc`
+  closes them, `ctrl+space` asks for them anywhere.
+- **Claude or OpenCode writes it**: say what you want in a `--` comment and press `ctrl+g`.
+  Claude Code answers signed in with your Pro or Max plan (`claude -p`, no tools, no API key,
+  nothing saved), OpenCode as you signed it in (`opencode run`, every permission denied); both
+  run in an empty folder of their own, without the monitor's secrets. They get the server's name
+  and version, your text, the tables its words point at with their columns and the names of
+  the others — no rows, no logins. On a query that failed, `ctrl+g` sends what the server said,
+  to put it right. What comes back takes the text's place — read it, then `⏎` runs it;
+  `ctrl+z` puts back what was there. `ctrl+t` or a click on the chip switches between Claude
+  and OpenCode; `ASSISTANT=opencode` starts with OpenCode.
+- **The answer** is a table under it — numbers on the right, `NULL` dimmed, as many columns as
+  fit — with how long it took and what the server read. `shift+tab` goes into it: the arrows
+  move through it, `y` copies the row and `Y` all of it as tab-separated text (through the
+  terminal, and `pbcopy` on a Mac).
+- What ran is kept: `↑` on the first line goes back through it, and the session — its server,
+  its text and what ran — comes back with the next start.
+
+![A query session: what Claude wrote for a comment, and its answer](docs/screenshots/140x40-query-session.png)
+
+![Suggestions as it is typed](docs/screenshots/140x40-query-suggest.png)
+
+| In a query session | |
+|---|---|
+| `⏎` | a new line — or runs the statement once it ends with `;` |
+| `ctrl+r` | run what is there |
+| `tab` · `↑` `↓` · `esc` | take a suggestion · choose one · close them (`ctrl+space` asks) |
+| `ctrl+g` · `ctrl+t` | Claude (or OpenCode) writes it, or puts it right · the other one |
+| `ctrl+z` | put back what was there before Claude wrote, or before a clear |
+| `ctrl+c` | stop the query or the writing · clear the text |
+| `ctrl+o` | run on another server |
+| `shift+tab` | the answer: the arrows move, `y` `Y` copy, `tab` comes back |
+| `↑` on the first line | what ran before |
+| `ctrl+\` | the session bar, as everywhere on view 5 |
 
 ### Reading the screen
 
@@ -300,18 +350,20 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `tab` | move between the tree and the insights |
 | `space` | fold / unfold the healthy nodes |
 | `u` | pivot node ↔ user: who is burning the fleet |
+| `c` | a query session on the node under the cursor — SQL, read-only (also on view 3) |
 | `s` | sort: pressure, memory, CPU, name |
 | `/` | filter by node, user, person, SQL or query id · `esc` clears |
 | `1 2 3 4` | views · `5`…`9` the sessions |
 | `F1`…`F9` | the same, from anywhere — Claude's screen too |
 | `ctrl+\` | the sessions (view 5); there, the key before a number — see *Claude, OpenCode and a terminal in the monitor* |
-| a click · the wheel | a tab, a session · the cursor (on view 5, the session's page up and down) |
+| a click · the wheel | a row, an insight, a job, a tile or a tape line puts the cursor there, a second click opens it; a tab, a session · the wheel moves the cursor (on view 5, the session's page up and down) |
 | `p` | pause (the numbers stop, the clock does not) |
 | `?` | help · `q` quit |
 
 Nothing here can kill or change a query: every request is `readonly=1`, and also capped at
 2 threads, 6 GB and 2 seconds when the server lets a session set those (a read-only user's
-own profile carries its caps otherwise).
+own profile carries its caps otherwise). A query session's queries are `readonly=1` too, with
+30 seconds and 1000 rows when the server allows them; a write is refused by the server itself.
 
 ## Developing
 

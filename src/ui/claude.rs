@@ -61,6 +61,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, well: Rect, margin: u16
         picker(frame, app, theme, area, choosing);
         return;
     }
+    // A query session is drawn by the monitor itself: there is no program's screen.
+    if let Some(console) = app.claude.current().and_then(|s| s.console.as_deref()) {
+        super::console::draw(frame, app, theme, area, console);
+        return;
+    }
     app.viewport.hits.borrow_mut().push((area, Hit::Pane));
 
     let Some(session) = app.claude.current() else {
@@ -69,7 +74,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, well: Rect, margin: u16
             Span::styled("⏎", theme.strong()),
             Span::styled(" starts Claude · ", theme.muted()),
             Span::styled("ctrl+\\ n", theme.strong()),
-            Span::styled(" opens Claude, OpenCode or a terminal", theme.muted()),
+            Span::styled(" opens Claude, OpenCode, a terminal or a query session", theme.muted()),
         ])]);
         return;
     };
@@ -122,6 +127,10 @@ fn how_to_get(kind: Kind, program: &str) -> [String; 2] {
             "A terminal runs your shell here, as a tab of its own would.".into(),
             format!("`{program}` would not start — {} chooses another shell; ⏎ tries again.", kind.variable()),
         ],
+        Kind::Query => [
+            "A query session runs SQL on a server of the fleet, read-only.".into(),
+            format!("It needs the fleet's servers: {} names them.", kind.variable()),
+        ],
     }
 }
 
@@ -143,6 +152,7 @@ fn kind_style(kind: Kind, theme: &Theme) -> Style {
         Kind::Claude => theme.claude(),
         Kind::OpenCode => theme.strong(),
         Kind::Terminal => theme.sev(Severity::Ok).add_modifier(Modifier::BOLD),
+        Kind::Query => theme.accent().add_modifier(Modifier::BOLD),
     }
 }
 
@@ -227,6 +237,8 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         second.push("   ", Style::default());
         if index == sessions.active && sessions.closing {
             second.push("x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        } else if let Some(console) = &session.console {
+            console_line(&mut second, console, theme);
         } else {
             place(&mut second, &session.dir, session.branch.as_deref(), inner, theme);
         }
@@ -245,7 +257,8 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         lines.push(card_row(first, width, picking, theme));
         if picking {
             let mut second = Cells::new();
-            second.push("   choose its folder →", theme.faint());
+            let query = matches!(&sessions.mode, Mode::Opening(p) if p.kind == Kind::Query);
+            second.push(if query { "   choose its server →" } else { "   choose its folder →" }, theme.faint());
             lines.push(card_row(second, width, true, theme));
         }
         hits.push((Rect::new(area.x, y, area.width, if picking { 2 } else { 1 }), Hit::NewSession));
@@ -285,6 +298,33 @@ fn card_row(inner: Cells, width: usize, lit: bool, theme: &Theme) -> Line<'stati
     }));
     spans.push(Span::styled("  ", fill));
     Line::from(spans)
+}
+
+/// A query session's second line: its run or its helper under way, how the last went, else what
+/// its SQL is.
+fn console_line(cells: &mut Cells, console: &crate::console::Console, theme: &Theme) {
+    use crate::console::RunState;
+    match &console.state {
+        RunState::Running { .. } => {
+            cells.push("◐ running…", theme.accent());
+        }
+        _ if console.asking() => {
+            cells.push(format!("{} writing…", console.assistant.glyph()), theme.claude());
+        }
+        RunState::Failed { error, .. } => {
+            cells.push(format!("✖ {error}"), theme.sev(Severity::Crit));
+        }
+        _ => match &console.answer {
+            Some(answer) if !answer.columns.is_empty() => {
+                cells.push(format!("✔ {}", fmt::plural(answer.rows.len(), "row", "rows")), theme.muted());
+            }
+            _ => {
+                let sql = console.sql();
+                let what = if sql.trim().is_empty() { "read-only SQL".to_string() } else { crate::sqltext::summary(&sql).label() };
+                cells.push(what, theme.faint());
+            }
+        },
+    }
 }
 
 /// Where a session works, in what is left of `room`: its folder — cut from the left, the end
@@ -352,9 +392,9 @@ fn session_bar(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
     }
     let x = area.x + cells.width() as u16;
     match &sessions.mode {
-        Mode::Opening(_) => {
+        Mode::Opening(picker) => {
             cells.push(" + new session ", theme.tab_active());
-            cells.push("  choose its folder below", theme.faint());
+            cells.push(if picker.kind == Kind::Query { "  choose its server below" } else { "  choose its folder below" }, theme.faint());
         }
         Mode::Bar if sessions.closing => {
             cells.push(" x again closes it ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
@@ -384,11 +424,16 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
     head.push(format!("{} ", picker.kind.glyph()), kind_style(picker.kind, theme));
     let what = match picker.kind {
         Kind::Terminal => "New terminal".to_string(),
+        Kind::Query => "New query session".to_string(),
         kind => format!("New {} session", kind.title()),
     };
     head.push(what, theme.strong());
     head.push(
-        if picker.everywhere { "  ·  take a conversation up, from any folder" } else { "  ·  where should it work?" },
+        match picker.kind {
+            Kind::Query => "  ·  which server should it run on?",
+            _ if picker.everywhere => "  ·  take a conversation up, from any folder",
+            _ => "  ·  where should it work?",
+        },
         theme.muted(),
     );
     let cancel = " ✕ cancel ";
@@ -429,6 +474,28 @@ fn picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, picker: &Pick
     // The search, on a raised field of its own; what it found so far on its right.
     let inner = width.saturating_sub(4);
     let count = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    if picker.kind == Kind::Query {
+        let shown = picker.servers_shown().len();
+        let status = count(shown, "server", "servers");
+        let mut field = Cells::new();
+        field.push("  ⌕  ", theme.accent());
+        if picker.query.is_empty() {
+            field.push("▏", theme.accent());
+            field.push("search the servers", theme.faint());
+        } else {
+            field.push(picker.query.clone(), theme.strong());
+            field.push("▏", theme.accent());
+        }
+        field.pad_to(inner.saturating_sub(fmt::width(&status)));
+        field.push(format!("{status}  "), theme.faint());
+        lines.push(if theme.paints_background() { raised_line(field, width, theme) } else { boxed(field, width, theme) });
+        lines.push(Line::from(""));
+        let mut note = Cells::new();
+        note.push("   it runs read-only, with a time and a row limit — nothing it does can change a table", theme.faint());
+        lines.push(note.line(width, Style::default()));
+        lines.push(Line::from(""));
+        return rows_and_note(frame, app, theme, area, picker, lines, hits);
+    }
     let status = if picker.looking {
         "looking…".to_string()
     } else if picker.searching() {
@@ -518,7 +585,17 @@ fn rows_and_note(
         lines.push(pick_line(*row, picker, index == cursor, width, app.now(), theme));
         hits.push((Rect::new(area.x, y, area.width, 1), Hit::Pick(*row)));
     }
-    let note = if picker.everywhere && rows.is_empty() && !picker.looking_for_conversations() {
+    let note = if picker.kind == Kind::Query {
+        if picker.servers.is_empty() {
+            Some(("no server yet — the fleet is still being found".to_string(), theme.faint()))
+        } else if rows.is_empty() {
+            Some(("no server is called that".to_string(), theme.faint()))
+        } else if rows.len() > scroll + room {
+            Some((format!("↓ {} more", rows.len() - scroll - room), theme.faint()))
+        } else {
+            None
+        }
+    } else if picker.everywhere && rows.is_empty() && !picker.looking_for_conversations() {
         Some((format!("no {} conversation to take up", picker.kind.title()), theme.faint()))
     } else if picker.everywhere {
         None
@@ -610,6 +687,19 @@ fn pick_line(row: PickRow, picker: &Picker, on: bool, width: usize, now: i64, th
         PickRow::Everywhere => {
             cells.push(" ↻  ", theme.muted());
             cells.push("conversations in every folder…", theme.text2());
+        }
+        PickRow::Server(index) => {
+            let Some((name, answering)) = picker.servers.get(index) else {
+                return Line::from("");
+            };
+            if *answering {
+                cells.push(" ●  ", theme.sev(Severity::Ok));
+                cells.push(name.clone(), theme.text());
+            } else {
+                cells.push(" ↯  ", theme.sev(Severity::Crit));
+                cells.push(name.clone(), theme.muted());
+                cells.push("  not answering", theme.faint());
+            }
         }
         PickRow::Here => {
             cells.push(" ", Style::default());

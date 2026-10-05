@@ -93,6 +93,8 @@ pub struct Config {
     pub utc: bool,
     /// How a prayer's reminder reaches you off the screen.
     pub notify: Notify,
+    /// Who writes a query session's SQL when asked (`ASSISTANT=opencode`; Claude by default).
+    pub assistant: crate::console::Assistant,
 }
 
 /// Where and whether: `PRAYER_CITY` (a city by name) or `PRAYER_AT` (`lat,lon`), else the city
@@ -131,7 +133,8 @@ OPENCODE_CMD and SHELL_CMD for what view 5's sessions run (default: claude, open
 MOUSE=0 to leave the mouse to the terminal, TIME=utc for a UTC clock (the machine's own
 zone otherwise), PRAYER_CITY (e.g. Bandung) or PRAYER_AT (lat,lon) for where the prayer
 times are for (the time zone's city otherwise), PRAYER_REMIND for how many minutes ahead
-the reminder comes (10; 0 for none), PRAYER=off, and NOTIFY=bell or NOTIFY=off.
+the reminder comes (10; 0 for none), PRAYER=off, NOTIFY=bell or NOTIFY=off, and
+ASSISTANT=opencode for the helper a query session asks with ctrl+g (Claude by default).
 ";
 
 /// `variable` as a command and its arguments, quotes as a shell reads them; `default` when it
@@ -600,6 +603,11 @@ impl Config {
                 Some("bell") => Notify::Bell,
                 Some("off" | "0" | "none" | "no") => Notify::Off,
                 Some(other) => return Err(ConfigError::Bad("NOTIFY", format!("{other:?} is not off, bell or desktop"))),
+            },
+            assistant: match env.get("ASSISTANT").map(|a| a.trim().to_ascii_lowercase()).as_deref() {
+                None | Some("" | "claude") => crate::console::Assistant::Claude,
+                Some("opencode") => crate::console::Assistant::OpenCode,
+                Some(other) => return Err(ConfigError::Bad("ASSISTANT", format!("{other:?} is not claude or opencode"))),
             },
             warnings,
         })

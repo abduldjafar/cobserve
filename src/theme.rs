@@ -400,6 +400,22 @@ impl Theme {
             _ => Style::default().add_modifier(Modifier::REVERSED),
         }
     }
+
+    /// A list over what is under it — a query session's suggestions, its servers — a step
+    /// above the raised field it opens from; and the row chosen in it.
+    pub fn popup(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.keycap),
+            _ => Style::default(),
+        }
+    }
+
+    pub fn popup_chosen(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.border),
+            _ => Style::default().add_modifier(Modifier::REVERSED),
+        }
+    }
 }
 
 /// xterm's 256-colour palette: the 6×6×6 cube from 16 and the 24 greys from 232. Picks

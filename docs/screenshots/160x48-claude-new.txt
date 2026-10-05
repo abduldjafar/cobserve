@@ -11,7 +11,7 @@
                                                                                                                                                                 
   SESSIONS  4                        ✻ New Claude session  ·  where should it work?                                                                  ✕ cancel   
                                                                                                                                                                 
-    ✻  billing export          5     run    ✻ Claude    ▣ OpenCode    ❯ Terminal     shift+tab switches                                                         
+    ✻  billing export          5     run    ✻ Claude    ▣ OpenCode    ❯ Terminal    ▦ Query     shift+tab switches                                              
        ~/work/billing  ⎇ main                                                                                                                                   
                                        ⌕  ▏search the folders below here, or type a path                                                         7 folders      
     ▣  late partitions       ● 6                                                                                                                                

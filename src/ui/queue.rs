@@ -9,7 +9,7 @@
 //! its row, like the tree does for a query.
 
 use super::widgets::{code_block, dots, rule, sparkline, thin_bar, Cells, Scale};
-use crate::app::{scroll_into_view, App, QueueRowRef};
+use crate::app::{scroll_into_view, App, Hit, QueueRowRef};
 use crate::fmt;
 use crate::model::{Job, JobState, QueueRow, Stale};
 use crate::severity::{self, Severity};
@@ -91,6 +91,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         offset = scroll_into_view(offset, None, height, len);
     }
     app.viewport.queue.set(offset);
+    for &(line, index) in &out.jobs {
+        if line >= offset && line < offset + height {
+            app.viewport.hits.borrow_mut().push((Rect::new(area.x, area.y + (line - offset) as u16, area.width, 1), Hit::Job(index)));
+        }
+    }
     let visible: Vec<Line<'static>> = out.lines.into_iter().skip(offset).take(height).collect();
     frame.render_widget(Paragraph::new(visible), area);
 }
@@ -98,6 +103,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 /// The lines of the view as they are built, and where the cursor's row landed.
 struct Out {
     lines: Vec<Line<'static>>,
+    /// Each job's line, and its index: what a click on it is.
+    jobs: Vec<(usize, usize)>,
     /// The next job row's index, in the order [`App::queue_rows`] gives.
     index: usize,
     selected: Option<usize>,
@@ -109,7 +116,7 @@ struct Out {
 
 impl Out {
     fn new(selected: Option<usize>, room: usize) -> Out {
-        Out { lines: Vec::new(), index: 0, selected, selected_line: None, block_len: 0, room }
+        Out { lines: Vec::new(), jobs: Vec::new(), index: 0, selected, selected_line: None, block_len: 0, room }
     }
 
     fn is_selected(&self) -> bool {
@@ -118,6 +125,7 @@ impl Out {
 
     /// A job's row, with its SQL under it when it is the selected one.
     fn push_job(&mut self, line: Line<'static>, job: &Job, app: &App, theme: &Theme, width: usize) {
+        self.jobs.push((self.lines.len(), self.index));
         if self.is_selected() {
             self.selected_line = Some(self.lines.len());
             self.lines.push(line);

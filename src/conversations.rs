@@ -215,6 +215,8 @@ fn parse_opencode(text: &str, dir: Option<&Path>) -> Vec<Conversation> {
     let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(text.trim()) else {
         return Vec::new();
     };
+    // A query session's questions to OpenCode are not conversations to take up.
+    let helpers = crate::assist::dir();
     rows.iter()
         .filter_map(|row| {
             let id = row.get("id")?.as_str()?.to_string();
@@ -229,6 +231,7 @@ fn parse_opencode(text: &str, dir: Option<&Path>) -> Vec<Conversation> {
                 open: false,
             })
         })
+        .filter(|conversation| !conversation.dir.starts_with(&helpers))
         .collect()
 }
 

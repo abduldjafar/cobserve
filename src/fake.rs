@@ -800,6 +800,213 @@ impl FakeSource {
 
 }
 
+// -- query sessions ---------------------------------------------------------
+
+/// The made-up fleet's databases, tables and columns, as a server lists them: the system tables
+/// and the ones its queries read.
+pub fn schema() -> crate::complete::Schema {
+    use crate::complete::{Schema, Table};
+    let table = |database: &str, name: &str, engine: &str, columns: &[(&str, &str)]| Table {
+        database: database.into(),
+        name: name.into(),
+        engine: engine.into(),
+        columns: columns.iter().map(|(n, t)| (n.to_string(), t.to_string())).collect(),
+    };
+    let tables = vec![
+        table("accounting", "raw", "ReplicatedMergeTree", &[("event_time", "DateTime"), ("event_date", "Date"), ("user", "String"), ("amount", "Decimal(18, 2)")]),
+        table("accounting_lt", "bank_record", "ReplicatedMergeTree", &[("BillOpId", "UInt64"), ("Bank", "LowCardinality(String)"), ("AccNr", "String"), ("amount", "String"), ("EventDate", "Date")]),
+        table("default", "refunds", "ReplicatedMergeTree", &[("id", "UInt64"), ("amount", "Decimal(18, 2)"), ("status", "LowCardinality(String)"), ("created_at", "DateTime")]),
+        table("gateway", "transfers", "ReplicatedMergeTree", &[("ts", "DateTime"), ("status", "LowCardinality(String)"), ("amount", "Decimal(18, 2)"), ("merchant_id", "UInt64"), ("currency", "LowCardinality(String)")]),
+        table("open_banking", "ais", "ReplicatedMergeTree", &[("ts", "DateTime"), ("state", "LowCardinality(String)"), ("bank", "LowCardinality(String)")]),
+        table("payments", "not_initiated", "ReplicatedMergeTree", &[("created_at", "DateTime"), ("payment_id", "UUID"), ("amount", "Decimal(18, 2)")]),
+        table("statistics", "daily_rollup", "ReplicatedSummingMergeTree", &[("d", "Date"), ("user", "String"), ("amount", "Decimal(18, 2)")]),
+        table("statistics", "fx_exposure", "ReplicatedMergeTree", &[("event_date", "Date"), ("currency", "LowCardinality(String)"), ("amount", "Decimal(18, 2)"), ("merchant_id", "UInt64")]),
+        table("wallet", "ledger", "ReplicatedMergeTree", &[("merchant_id", "UInt64"), ("month", "UInt8"), ("amount", "Decimal(18, 2)"), ("created_at", "DateTime")]),
+        table("system", "asynchronous_metrics", "SystemAsynchronousMetrics", &[("metric", "String"), ("value", "Float64"), ("description", "String")]),
+        table("system", "clusters", "SystemClusters", &[("cluster", "String"), ("shard_num", "UInt32"), ("replica_num", "UInt32"), ("host_name", "String"), ("port", "UInt16"), ("is_local", "UInt8")]),
+        table("system", "columns", "SystemColumns", &[("database", "String"), ("table", "String"), ("name", "String"), ("type", "String"), ("position", "UInt64"), ("data_compressed_bytes", "UInt64")]),
+        table("system", "databases", "SystemDatabases", &[("name", "String"), ("engine", "String"), ("data_path", "String")]),
+        table("system", "disks", "SystemDisks", &[("name", "String"), ("path", "String"), ("free_space", "UInt64"), ("total_space", "UInt64")]),
+        table("system", "events", "SystemEvents", &[("event", "String"), ("value", "UInt64"), ("description", "String")]),
+        table("system", "merges", "SystemMerges", &[("database", "String"), ("table", "String"), ("elapsed", "Float64"), ("progress", "Float64"), ("num_parts", "UInt64"), ("total_size_bytes_compressed", "UInt64"), ("memory_usage", "UInt64")]),
+        table("system", "metrics", "SystemMetrics", &[("metric", "String"), ("value", "Int64"), ("description", "String")]),
+        table("system", "mutations", "SystemMutations", &[("database", "String"), ("table", "String"), ("mutation_id", "String"), ("command", "String"), ("create_time", "DateTime"), ("is_done", "UInt8"), ("latest_fail_reason", "String")]),
+        table("system", "parts", "SystemParts", &[("database", "String"), ("table", "String"), ("partition", "String"), ("name", "String"), ("active", "UInt8"), ("rows", "UInt64"), ("bytes_on_disk", "UInt64"), ("modification_time", "DateTime")]),
+        table("system", "processes", "SystemProcesses", &[("is_initial_query", "UInt8"), ("user", "String"), ("query_id", "String"), ("elapsed", "Float64"), ("read_rows", "UInt64"), ("read_bytes", "UInt64"), ("total_rows_approx", "UInt64"), ("memory_usage", "Int64"), ("peak_memory_usage", "Int64"), ("query", "String"), ("query_kind", "String"), ("current_database", "String")]),
+        table("system", "query_log", "SystemQueryLog", &[("type", "Enum8('QueryStart' = 1, 'QueryFinish' = 2, 'ExceptionBeforeStart' = 3, 'ExceptionWhileProcessing' = 4)"), ("event_date", "Date"), ("event_time", "DateTime"), ("query_duration_ms", "UInt64"), ("read_rows", "UInt64"), ("read_bytes", "UInt64"), ("result_rows", "UInt64"), ("memory_usage", "UInt64"), ("query", "String"), ("query_kind", "LowCardinality(String)"), ("exception_code", "Int32"), ("exception", "String"), ("user", "String"), ("query_id", "String"), ("log_comment", "String")]),
+        table("system", "replicas", "SystemReplicas", &[("database", "String"), ("table", "String"), ("is_leader", "UInt8"), ("is_readonly", "UInt8"), ("absolute_delay", "UInt64"), ("queue_size", "UInt32"), ("active_replicas", "UInt8"), ("total_replicas", "UInt8")]),
+        table("system", "tables", "SystemTables", &[("database", "String"), ("name", "String"), ("engine", "String"), ("total_rows", "Nullable(UInt64)"), ("total_bytes", "Nullable(UInt64)"), ("metadata_modification_time", "DateTime")]),
+    ];
+    let mut databases: Vec<String> = tables.iter().map(|t| t.database.clone()).collect();
+    databases.sort();
+    databases.dedup();
+    Schema { databases, tables, functions: Schema::fallback().functions }
+}
+
+/// What the made-up fleet answers a query session — `system.processes` from the snapshot, its
+/// tables, parts, databases and log, a few rows of its own tables — and how it refuses: a write
+/// as a read-only login's, a table it does not have as unknown.
+pub fn console_answer(snapshot: Option<&FleetSnapshot>, node: &str, sql: &str) -> Result<crate::console::Answer, String> {
+    use crate::console::Answer;
+    let text = crate::sqltext::strip_comments(sql);
+    let lower = crate::sqltext::collapse(&text).to_lowercase();
+    let first = lower.split(|c: char| !c.is_alphanumeric()).find(|w| !w.is_empty()).unwrap_or_default().to_string();
+    let writes = ["insert", "alter", "drop", "create", "truncate", "optimize", "kill", "delete", "update", "system", "rename", "grant", "revoke", "attach", "detach"];
+    if writes.contains(&first.as_str()) {
+        return Err("Code 164 · monitor: Cannot execute query in readonly mode. (READONLY)".into());
+    }
+    let schema = schema();
+    let at = node_of(snapshot, node);
+    let column = |name: &str, kind: &str| (name.to_string(), kind.to_string());
+    let answer = |columns: Vec<(String, String)>, rows: Vec<Vec<Option<String>>>| Answer {
+        node: node.to_string(),
+        read_rows: Some(rows.len() as u64 * 37 + 1),
+        read_bytes: Some(rows.len() as u64 * 4096 + 512),
+        columns,
+        rows,
+        ..Answer::default()
+    };
+    let limit = lower.split("limit ").nth(1).and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next()).and_then(|n| n.parse::<usize>().ok());
+    let grouped_by_user = lower.contains("group by") && lower.contains("user");
+
+    if lower.contains("system.processes") || lower.starts_with("show processlist") {
+        let queries: Vec<&QueryRow> = at.map(|n| n.queries.iter().collect()).unwrap_or_default();
+        if grouped_by_user {
+            let mut users: Vec<(String, usize, u64)> = Vec::new();
+            for query in &queries {
+                match users.iter_mut().find(|(user, ..)| *user == query.user) {
+                    Some(entry) => {
+                        entry.1 += 1;
+                        entry.2 += query.memory_bytes;
+                    }
+                    None => users.push((query.user.clone(), 1, query.memory_bytes)),
+                }
+            }
+            users.sort_by_key(|entry| std::cmp::Reverse(entry.2));
+            let rows = users.into_iter().take(limit.unwrap_or(1000)).map(|(user, n, memory)| vec![Some(user), Some(n.to_string()), Some(crate::fmt::bytes(memory))]).collect();
+            return Ok(answer(vec![column("user", "String"), column("queries", "UInt64"), column("memory", "String")], rows));
+        }
+        let rows = queries
+            .iter()
+            .take(limit.unwrap_or(1000))
+            .map(|q| {
+                vec![
+                    Some(q.query_id.clone()),
+                    Some(q.user.clone()),
+                    Some(format!("{:.1}", q.elapsed_s)),
+                    Some(crate::fmt::bytes(q.memory_bytes)),
+                    Some(crate::sqltext::collapse(&q.sql)),
+                ]
+            })
+            .collect();
+        let columns = vec![column("query_id", "String"), column("user", "String"), column("elapsed", "Float64"), column("memory", "String"), column("query", "String")];
+        return Ok(answer(columns, rows));
+    }
+    if lower.contains("system.databases") || lower.starts_with("show databases") {
+        return Ok(answer(vec![column("name", "String")], schema.databases.iter().map(|d| vec![Some(d.clone())]).collect()));
+    }
+    if lower.contains("system.tables") || lower.starts_with("show tables") {
+        let rows = schema
+            .tables
+            .iter()
+            .filter(|t| t.database != "system")
+            .enumerate()
+            .map(|(i, t)| vec![Some(t.database.clone()), Some(t.name.clone()), Some(t.engine.clone()), Some(((i as u64 + 3) * 7_919_311).to_string())])
+            .collect();
+        return Ok(answer(vec![column("database", "String"), column("name", "String"), column("engine", "String"), column("total_rows", "Nullable(UInt64)")], rows));
+    }
+    if lower.contains("system.parts") {
+        let mut rows: Vec<Vec<Option<String>>> = schema
+            .tables
+            .iter()
+            .filter(|t| t.database != "system")
+            .enumerate()
+            .map(|(i, t)| {
+                let bytes = (i as u64 * 37 + 11) * 1_311_000_000 % 900_000_000_000;
+                vec![Some(t.database.clone()), Some(t.name.clone()), Some((i * 13 + 9).to_string()), Some(((i as u64 + 2) * 48_211_017).to_string()), Some(crate::fmt::bytes(bytes))]
+            })
+            .collect();
+        rows.sort_by_key(|row| std::cmp::Reverse(row[3].as_ref().and_then(|r| r.parse::<u64>().ok()).unwrap_or(0)));
+        rows.truncate(limit.unwrap_or(1000));
+        let columns = vec![column("database", "String"), column("table", "String"), column("parts", "UInt64"), column("rows", "UInt64"), column("size", "String")];
+        return Ok(answer(columns, rows));
+    }
+    if lower.contains("system.query_log") {
+        let rows = [("r_redash", 41_210, "SELECT region, count() FROM accounting_lt.bank_record GROUP BY region"), ("airflow", 18_377, "INSERT INTO statistics.daily_rollup SELECT …"), ("grafana", 912, "SELECT toStartOfMinute(ts), count() FROM gateway.transfers …"), ("r_redash", 655, "SELECT currency, sum(amount) FROM statistics.fx_exposure …")]
+            .iter()
+            .take(limit.unwrap_or(1000))
+            .map(|(user, ms, query)| vec![Some("2026-10-04 15:4".to_string() + &(ms % 10).to_string() + ":07"), Some(user.to_string()), Some(ms.to_string()), Some(query.to_string())])
+            .collect();
+        let columns = vec![column("event_time", "DateTime"), column("user", "String"), column("query_duration_ms", "UInt64"), column("query", "String")];
+        return Ok(answer(columns, rows));
+    }
+    // A table of its own: a few rows of it; a table it does not have, unknown.
+    let summary = crate::sqltext::summary(&text);
+    if let Some(target) = summary.target.filter(|t| !t.ends_with("()")) {
+        let (database, name) = match target.split_once('.') {
+            Some((db, name)) => (Some(db), name),
+            None => (None, target.as_str()),
+        };
+        let Some(table) = schema.table(database, name) else {
+            return Err(format!("Code 60 · Unknown table expression identifier '{target}' in scope SELECT. (UNKNOWN_TABLE)"));
+        };
+        if first == "describe" || first == "desc" {
+            return Ok(answer(vec![column("name", "String"), column("type", "String")], table.columns.iter().map(|(n, t)| vec![Some(n.clone()), Some(t.clone())]).collect()));
+        }
+        let rows = (0..limit.unwrap_or(8).min(8)).map(|i| table.columns.iter().map(|(_, kind)| Some(sample(kind, i))).collect()).collect();
+        return Ok(answer(table.columns.clone(), rows));
+    }
+    if first == "select" {
+        let expression = crate::sqltext::collapse(text.trim().trim_end_matches(';')).chars().skip(7).collect::<String>();
+        let value = match expression.trim() {
+            "version()" => at.map(|n| n.version.clone()).unwrap_or_default(),
+            "hostName()" => node.to_string(),
+            literal if literal.parse::<f64>().is_ok() => literal.to_string(),
+            literal if literal.starts_with('\'') && literal.ends_with('\'') && literal.len() >= 2 => literal[1..literal.len() - 1].to_string(),
+            _ => "1".to_string(),
+        };
+        return Ok(answer(vec![column(expression.trim(), "String")], vec![vec![Some(value)]]));
+    }
+    Ok(Answer { node: node.to_string(), text: Some("FAKE=1 answers system.processes, .tables, .parts, .databases, .query_log and its own tables".into()), ..Answer::default() })
+}
+
+fn node_of<'a>(snapshot: Option<&'a FleetSnapshot>, node: &str) -> Option<&'a NodeSnapshot> {
+    snapshot?.nodes.iter().find(|n| n.name == node)
+}
+
+/// A made-up value of a column's type, the `i`th of a few.
+fn sample(kind: &str, i: usize) -> String {
+    let kind = kind.trim_start_matches("Nullable(").trim_start_matches("LowCardinality(");
+    match kind {
+        k if k.starts_with("Date") && !k.starts_with("DateTime") => format!("2026-10-{:02}", 4 - (i % 4)),
+        k if k.starts_with("DateTime") => format!("2026-10-04 15:{:02}:{:02}", 51 - i % 50, (i * 17) % 60),
+        k if k.starts_with("Decimal") || k.starts_with("Float") => format!("{}.{:02}", 1200 + i * 317, (i * 29) % 100),
+        k if k.starts_with("UInt") || k.starts_with("Int") => (10_421 + i * 7).to_string(),
+        "UUID" => format!("6f1c{i:04x}-2b7e-4c1a-9d3e-0a5b8c7d{:04x}", i * 31),
+        _ => ["EUR", "open", "settled", "GBP", "failed", "USD", "pending", "LT"][i % 8].to_string(),
+    }
+}
+
+/// What the made-up helper writes: a query for what the comments ask — the users by memory, the
+/// biggest tables, the slowest queries, what runs — with the comments kept, after a moment.
+pub fn assist(ask: &crate::console::Ask) -> Result<String, String> {
+    let comments: Vec<&str> = ask.sql.lines().filter(|l| l.trim_start().starts_with("--")).collect();
+    let words = ask.sql.to_lowercase();
+    let has = |list: &[&str]| list.iter().any(|w| words.contains(w));
+    let body = if has(&["memory", "memori", "ram"]) {
+        "SELECT user, count() AS queries, formatReadableSize(sum(memory_usage)) AS memory\nFROM system.processes\nGROUP BY user\nORDER BY sum(memory_usage) DESC\nLIMIT 10;"
+    } else if has(&["biggest", "largest", "size", "disk", "besar", "table", "tabel"]) {
+        "SELECT database, table, count() AS parts, sum(rows) AS rows, formatReadableSize(sum(bytes_on_disk)) AS size\nFROM system.parts\nWHERE active\nGROUP BY database, table\nORDER BY sum(bytes_on_disk) DESC\nLIMIT 10;"
+    } else if has(&["slow", "lambat", "lama", "log", "yesterday", "kemarin"]) {
+        "SELECT event_time, user, query_duration_ms, query\nFROM system.query_log\nWHERE type = 'QueryFinish' AND event_date = today()\nORDER BY query_duration_ms DESC\nLIMIT 10;"
+    } else if ask.error.is_some() && !ask.sql.trim().is_empty() {
+        "SELECT query_id, user, elapsed, formatReadableSize(memory_usage) AS memory, query\nFROM system.processes\nORDER BY elapsed DESC;"
+    } else {
+        "SELECT query_id, user, round(elapsed, 1) AS elapsed, formatReadableSize(memory_usage) AS memory, query\nFROM system.processes\nORDER BY elapsed DESC\nLIMIT 20;"
+    };
+    Ok(if comments.is_empty() { body.to_string() } else { format!("{}\n{body}", comments.join("\n")) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -937,6 +1144,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_query_session_on_the_made_up_fleet_gets_believable_answers() {
+        let mut fake = FakeSource::new();
+        let snapshot = fake.snapshot();
+        let per_user = console_answer(Some(&snapshot), "clickhouse3", "SELECT user, count() FROM system.processes GROUP BY user;").unwrap();
+        assert_eq!(per_user.columns[0].0, "user");
+        assert!(per_user.rows.iter().any(|r| r[0].as_deref() == Some("r_redash")), "{:?}", per_user.rows);
+        let parts = console_answer(Some(&snapshot), "clickhouse3", "SELECT * FROM system.parts LIMIT 3").unwrap();
+        assert_eq!(parts.rows.len(), 3);
+        let ledger = console_answer(Some(&snapshot), "clickhouse3", "SELECT * FROM wallet.ledger").unwrap();
+        assert_eq!((ledger.columns.len(), ledger.rows.len()), (4, 8));
+        assert!(console_answer(Some(&snapshot), "clickhouse3", "DROP TABLE wallet.ledger").unwrap_err().contains("READONLY"));
+        assert!(console_answer(Some(&snapshot), "clickhouse3", "SELECT * FROM wallet.nope").unwrap_err().contains("UNKNOWN_TABLE"));
+        assert_eq!(console_answer(Some(&snapshot), "clickhouse3", "SELECT 1").unwrap().rows, [vec![Some("1".to_string())]]);
+        // Its tables are the ones its queries read.
+        let schema = schema();
+        assert!(schema.table(Some("gateway"), "transfers").is_some() && schema.table(Some("system"), "processes").is_some());
+        let ask = crate::console::Ask { id: 1, assistant: crate::console::Assistant::Claude, node: None, sql: "-- top users by memory".into(), error: None };
+        let sql = assist(&ask).unwrap();
+        assert!(sql.starts_with("-- top users by memory\nSELECT user") && sql.ends_with(';'), "{sql}");
     }
 }
 

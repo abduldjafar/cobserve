@@ -32,5 +32,5 @@
   ─ clickhouse3 · pay-ch-node-1:9000 ─────────────────────────────────────────────────────────────────────────────────  
   MEM 59.6/64 GiB  93.1%  ▂▃▄▅▆▇▇▃ → steady    CPU 14.9/16 cores  93.4%  ▇▇▇▇▇▆▇▇ → steady                              
   memory: queries 45.7% + server 47.4% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.4 GiB = 0.2× a 24.0 GiB query   
-  shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 46 ms · numbers from 07:01:31 WIB                              
-   ↑↓  move   ⏎  open   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy   p  pause   ?  help     
+  shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 46 ms · numbers from 07:44:18 WIB                              
+   ↑↓  move   ⏎  open   c  SQL on it   ←→  fold   tab  insights   u  pivot   /  filter   s  sort   ␣  healthy           

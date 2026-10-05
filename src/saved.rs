@@ -19,7 +19,7 @@ pub struct Saved {
     pub active: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SavedSession {
     pub kind: SavedKind,
     #[serde(default)]
@@ -28,14 +28,23 @@ pub struct SavedSession {
     /// The conversation to take up: Claude Code's session id, OpenCode's.
     #[serde(default)]
     pub conversation: Option<String>,
+    /// A query session's server, the SQL in it, and what ran there before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SavedKind {
+    #[default]
     Claude,
     OpenCode,
     Terminal,
+    Query,
 }
 
 impl From<Kind> for SavedKind {
@@ -44,6 +53,7 @@ impl From<Kind> for SavedKind {
             Kind::Claude => SavedKind::Claude,
             Kind::OpenCode => SavedKind::OpenCode,
             Kind::Terminal => SavedKind::Terminal,
+            Kind::Query => SavedKind::Query,
         }
     }
 }
@@ -54,6 +64,7 @@ impl From<SavedKind> for Kind {
             SavedKind::Claude => Kind::Claude,
             SavedKind::OpenCode => Kind::OpenCode,
             SavedKind::Terminal => Kind::Terminal,
+            SavedKind::Query => Kind::Query,
         }
     }
 }
@@ -109,8 +120,22 @@ mod tests {
     fn sessions_survive_a_round_trip_and_a_file_from_elsewhere_is_ignored() {
         let saved = Saved {
             sessions: vec![
-                SavedSession { kind: SavedKind::Claude, name: Some("billing export".into()), dir: "~/work/billing".into(), conversation: Some("aaa".into()) },
-                SavedSession { kind: SavedKind::Terminal, name: None, dir: "~/work/reports".into(), conversation: None },
+                SavedSession {
+                    kind: SavedKind::Claude,
+                    name: Some("billing export".into()),
+                    dir: "~/work/billing".into(),
+                    conversation: Some("aaa".into()),
+                    ..SavedSession::default()
+                },
+                SavedSession { kind: SavedKind::Terminal, dir: "~/work/reports".into(), ..SavedSession::default() },
+                SavedSession {
+                    kind: SavedKind::Query,
+                    dir: "~".into(),
+                    node: Some("clickhouse3".into()),
+                    sql: Some("SELECT 1".into()),
+                    history: vec!["SELECT 2".into()],
+                    ..SavedSession::default()
+                },
             ],
             active: 1,
         };
