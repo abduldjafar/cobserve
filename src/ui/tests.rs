@@ -194,6 +194,85 @@ fn the_queue_view_lists_people_and_the_stitch_to_clickhouse() {
 }
 
 #[test]
+fn x_then_y_cancels_a_job_in_redash_and_any_other_key_keeps_it() {
+    let footer = |screen: &str| screen.lines().last().unwrap_or_default().to_string();
+    let mut fake = FakeSource::new();
+    let mut app = App::new();
+    for _ in 0..3 {
+        app.update(Event::Snapshot(Box::new(fake.snapshot())));
+    }
+    app.update(Event::Queue(Box::new(fake.queue())));
+    app.update(key(KeyCode::Char('2')));
+    render(&app, 140, 48);
+    let job = app.selected_job().cloned().expect("the first running job under the cursor");
+    assert_eq!(crate::app::job_words(&job), "#7438 Gateway transfers of grigol.gankava");
+    assert!(footer(&render(&app, 140, 48)).contains("x  cancel job"));
+
+    // x asks, about that job, and says what a cancel does to it.
+    app.update(key(KeyCode::Char('x')));
+    let screen = render(&app, 140, 48);
+    assert!(screen.contains("cancel in Redash? · #7438 Gateway transfers of grigol.gankava"), "{screen}");
+    assert!(screen.contains("its worker is freed — but its query runs on in ClickHouse on clickhouse3 until KILL QUERY stops it"), "{screen}");
+    assert!(screen.contains(&format!("DELETE /api/jobs/{}", job.id)), "{screen}");
+    let keys = footer(&screen);
+    assert!(keys.contains("y  cancel it in Redash   esc  keep it   any other key keeps it"), "{keys}");
+    // Any other key keeps it, and does nothing else: the cursor has not moved.
+    app.update(key(KeyCode::Down));
+    assert!(app.take_cancels().is_empty() && app.cancel_asked().is_none());
+    assert_eq!(app.selected_job().map(|j| j.id.clone()), Some(job.id.clone()), "the key only answered");
+
+    // x, then y: sent, and marked until Redash answers.
+    app.update(key(KeyCode::Char('x')));
+    app.update(key(KeyCode::Char('y')));
+    assert_eq!(app.take_cancels(), std::slice::from_ref(&job.id));
+    assert_eq!(app.notice(), Some("asking Redash to cancel #7438 Gateway transfers of grigol.gankava…"));
+    assert!(render(&app, 140, 48).contains("⊘ cancelling… · → clickhouse3"));
+    app.update(key(KeyCode::Char('x')));
+    assert!(app.cancel_asked().is_none() && app.notice().is_some_and(|n| n.contains("already been asked")), "not twice");
+
+    // Redash says yes: the query in ClickHouse is not stopped by that, and the notice says so.
+    app.update(Event::Cancelled(job.id.clone(), Ok(())));
+    assert_eq!(
+        app.notice(),
+        Some("Redash cancelled #7438 Gateway transfers of grigol.gankava — its query runs on in ClickHouse on clickhouse3 until KILL QUERY stops it")
+    );
+    assert!(render(&app, 140, 48).contains("⊘ cancelled · → clickhouse3"));
+    // And it is on the tape, where it can be read later.
+    app.update(key(KeyCode::Char('4')));
+    let tape = render(&app, 160, 48);
+    assert!(tape.contains("Redash job cancelled from here: #7438 Gateway transfers of grigol.gankava — its query runs on in ClickHouse on clickhouse3"), "{tape}");
+    app.update(key(KeyCode::Char('2')));
+    // Once the worker has let go, the job is gone from the list, and its mark with it.
+    fake.cancel(&job.id).expect("the fake has it");
+    app.update(Event::Queue(Box::new(fake.queue_now())));
+    let screen = render(&app, 140, 48);
+    assert!(!screen.contains("⊘") && !app.queue_rows().iter().any(|j| j.id == job.id), "{screen}");
+    assert!(screen.contains("RUNNING · 5 on a worker"), "{screen}");
+
+    // Redash refuses: said, and the mark goes.
+    let other = app.selected_job().cloned().expect("another job under the cursor");
+    app.update(key(KeyCode::Char('x')));
+    app.update(key(KeyCode::Char('y')));
+    app.take_cancels();
+    app.update(Event::Cancelled(other.id.clone(), Err("HTTP 403 · the API key has to be an admin's".into())));
+    let said = app.notice().unwrap_or_default().to_string();
+    assert!(said.starts_with("Redash did not cancel ") && said.ends_with(": HTTP 403 · the API key has to be an admin's"), "{said}");
+    assert!(app.cancelling(&other.id).is_none());
+
+    // A waiting job leaves its queue.
+    let first_waiting = app.queue_rows().iter().position(|j| j.state == crate::model::JobState::Queued).expect("a waiting job");
+    let at = app.queue_rows().iter().position(|j| j.id == other.id).unwrap();
+    for _ in at..first_waiting {
+        app.update(key(KeyCode::Down));
+    }
+    app.update(key(KeyCode::Char('x')));
+    let screen = render(&app, 140, 48);
+    assert!(screen.contains("⊘ waiting") && screen.contains("it leaves the queue and never runs"), "{screen}");
+    app.update(key(KeyCode::Esc));
+    assert!(app.cancel_asked().is_none() && app.take_cancels().is_empty(), "esc keeps it");
+}
+
+#[test]
 fn j_and_k_scroll_the_sql_under_a_job() {
     let mut app = app_after(3);
     app.update(key(KeyCode::Char('2')));
@@ -1687,6 +1766,10 @@ fn export_screens() {
     queue.update(key(KeyCode::Down));
     save("120x36-queue", &mut queue, 120, 36);
     save("160x48-queue", &mut queue, 160, 48);
+    // `x` on the oldest running job: what a cancel will do to it, before anything is sent.
+    queue.update(key(KeyCode::Char('x')));
+    save("120x36-queue-cancel", &mut queue, 120, 36);
+    queue.update(key(KeyCode::Esc));
 
     let mut quiet = app_after(118);
     quiet.update(Event::Queue(Box::new(quiet_redash_with_leftovers())));

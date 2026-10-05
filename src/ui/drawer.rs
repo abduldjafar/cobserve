@@ -627,7 +627,52 @@ fn query_detail(stat: &QueryStat<'_>, node: &str, user: &str, app: &App, theme: 
 // Other views
 // ---------------------------------------------------------------------------
 
+/// `x` asked whether to cancel a job: the question, about the job it was asked of (the list
+/// may have moved under the cursor since), what a cancel does to it, and the keys.
+fn cancel_question(job: &crate::model::Job, theme: &Theme, width: usize) -> Drawer {
+    let head = vec![
+        Span::styled("cancel in Redash?", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
+        Span::styled(" · ", theme.faint()),
+        Span::styled(crate::app::job_words(job), theme.text()),
+    ];
+    let age = fmt::dur(job.age_s as f64);
+    let (state, what) = match (job.state, job.clickhouse_target()) {
+        (JobState::Queued, _) => (format!("waiting {age} in {}", job.queue), "it leaves the queue and never runs".to_string()),
+        (JobState::Started, Some((node, _))) => (
+            format!("running {age} on a worker of {}", job.queue),
+            format!("its worker is freed — but its query runs on in ClickHouse on {node} until KILL QUERY stops it"),
+        ),
+        (JobState::Started, None) if job.on_clickhouse() == Some(true) => (
+            format!("running {age} on a worker of {}", job.queue),
+            "its worker is freed — but a query it started in ClickHouse runs on until KILL QUERY stops it".to_string(),
+        ),
+        (JobState::Started, None) => (
+            format!("running {age} on a worker of {}", job.queue),
+            "it is stopped on its worker, which is then free for the queue".to_string(),
+        ),
+        (JobState::Stale(_), _) => (
+            format!("in RQ's started list for {age}"),
+            "it leaves the started list — it holds no worker, so the queue moves no faster".to_string(),
+        ),
+    };
+    let mut first = Cells::new();
+    first.push("⊘ ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+    first.push(state, theme.text());
+    first.push(format!(" · {}", job.label()), theme.person());
+    if let Some(source) = &job.data_source {
+        first.push(format!(" · on {source}"), theme.muted());
+    }
+    let mut keys = Cells::new();
+    keys.push("y", theme.strong());
+    keys.push(" cancels it · any other key keeps it", theme.muted());
+    keys.push(format!(" · DELETE /api/jobs/{}, as Redash's Cancel does", job.id), theme.faint());
+    (head, vec![first.line_unpadded(width), muted_line(what, theme, width), keys.line_unpadded(width)])
+}
+
 fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
+    if let Some(job) = app.cancel_asked() {
+        return cancel_question(job, theme, width);
+    }
     let explanation = app.queue_explanation();
     let Some(job) = app.selected_job() else {
         return (
@@ -661,7 +706,7 @@ fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
                 format!(" · {ahead} job{} ahead of it", if ahead == 1 { "" } else { "s" }),
                 theme.sev(Severity::Warn),
             );
-            cells.push(" · nothing to kill: it has not reached ClickHouse", theme.muted());
+            cells.push(" · not in ClickHouse yet: x takes it out of the queue", theme.muted());
         }
         (JobState::Started, Some((node, query_id))) => {
             cells.push(format!("running {age} → "), theme.text());
@@ -701,6 +746,12 @@ fn queue(app: &App, theme: &Theme, width: usize) -> Drawer {
             }
         }
     }
+    // A cancel asked for: sent, or taken by Redash and waiting for the worker to let go.
+    match app.cancelling(&job.id) {
+        Some(c) if c.accepted => cells.push(" · ⊘ cancelled in Redash — its worker lets go at its next check", theme.sev(Severity::Warn)),
+        Some(_) => cells.push(" · ⊘ asking Redash to cancel it…", theme.sev(Severity::Warn)),
+        None => &mut cells,
+    };
     lines.push(cells.line_unpadded(width));
 
     // Who, what, on what — and where the SQL under the row comes from.

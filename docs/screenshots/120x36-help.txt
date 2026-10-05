@@ -16,21 +16,21 @@
    ▸ clickhous      ctrl+\  the sessions · then 1-4 a view, 5-9 or ↑↓ a session, / one by name, n new …   0        —    
    ▸ clickhous              Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x clo…   2      12s    
    ▸ 4 healthy     F1 … F9  the same tabs from anywhere, a session's screen too · or click them              ␣ unfold   
+                 x  then y  on view 2: cancel the Redash job under the cursor, as Redash's Cancel does                  
                 ⇧⏎  ctrl+j  a new line in Claude's or OpenCode's prompt — ctrl+j in any terminal                        
                          z  the clock: the local zone ↔ UTC · or click it · ctrl+\ z in a session                       
                          d  wave a prayer's reminder away · ctrl+\ d in a session · or click ✕                          
                          p  pause: the numbers stop, the clock does not                                                 
                  q  ctrl-c  quit                                                                                        
-               ─ ON SCREEN ────────────────────────────────────────────────────────────────────────────                 
-  ─ INSIGHTS ·         ✖ ▲  critical (red) · warning (amber), by DESIGN.md §7                             ────────────  
-   ✖ clickhous           ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                                     
+  ─ INSIGHTS · ─ ON SCREEN ────────────────────────────────────────────────────────────────────────────   ────────────  
+   ✖ clickhous         ✖ ▲  critical (red) · warning (amber), by DESIGN.md §7                                           
+   ▲ clickhous           ✕  runaway query: ≥ 30 s, or ≥ 80% of its own memory limit                                     
    ▲ clickhous           ↯  node not answering — its numbers are unknown, not zero                                      
-   ▲ clickhous    ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                                        
-   ▲ Redash          ▁▂▃▅▇  the last 4 minutes, each cell its worst moment                                              
-   ▲ Redash #7         NEW  joined the fleet during this session                                                        
-   ▲ Redash #8       ━━●┄┄  the day: prayer times at the place, ● now · PRAYER_CITY or PRAYER_AT sets …                 
-  ─ clickhouse           ↻  a session kept from the last run: it takes its conversation up when opened    ────────────  
-  MEM 58.7/64                                                                                                           
-  memory: quer read-only by design: nothing here can kill or change a query                               0 GiB query   
-  shard 1 · re                                                                                                          
+   ▲ Redash       ↗ ↑  ↘ ↓  rising · rising fast · falling, over the last minute                                        
+   ▲ Redash #7       ▁▂▃▅▇  the last 4 minutes, each cell its worst moment                                              
+   ▲ Redash #8         NEW  joined the fleet during this session                                                        
+  ─ clickhouse       ━━●┄┄  the day: prayer times at the place, ● now · PRAYER_CITY or PRAYER_AT sets …   ────────────  
+  MEM 58.7/64            ↻  a session kept from the last run: it takes its conversation up when opened                  
+  memory: quer                                                                                            0 GiB query   
+  shard 1 · re ClickHouse is only read: nothing here can kill or change a query there                                   
    ?  close   any other key goes back                                                                                   

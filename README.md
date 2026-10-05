@@ -1,8 +1,9 @@
 # cobserve
 
 *co-observe* — keep watch over a data fleet together: you, the people using it, and the AI
-sessions you work with, all in one terminal. It only ever **observes**: nothing in it can
-change a query or a table.
+sessions you work with, all in one terminal. It **observes**: nothing in it can change a
+ClickHouse query or a table. The one thing it does is cancel a Redash job you pick, after
+asking — what Redash's own Cancel button does.
 
 A terminal monitor for on call: the ClickHouse fleet and the Redash queue on one screen,
 **who** is using each node, and **what it means**: ranked insights, trends and forecasts, a
@@ -22,7 +23,7 @@ on top of it and are listed in `DESIGN.md` §13.
 | View | Key | What it answers |
 |---|---|---|
 | **NODES** | `1` | Every node's memory and CPU against its own capacity, and who holds it: user rows (a query from Redash resolved to the person behind it) plus the server's own share always add up to the node (§5.3). Below the tree, **insights**; below them, the **drawer** for the selected row. |
-| **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL. |
+| **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL; `x`, then `y`, cancels the job in Redash. |
 | **MAP** | `3` | The whole fleet as cards, marked by their severity, with bars and history. A forty-node fleet on one screen. |
 | **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
 | **SESSIONS** | `5` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need, while the fleet and the Redash queue stay in sight above them. |
@@ -61,10 +62,10 @@ and are not repeated here.
 
 ### The Redash queue
 
-View 2 reads what the Redash admins' own queue script reads, with the same admin API key and
-nothing that could cancel a job: `/api/admin/queries/rq_status` for the queues and the
-workers, `/api/users/{id}` for who (name and address), `/api/queries/{id}` for the query (name
-and SQL) and `/api/data_sources` for what it runs on (name and type).
+View 2 reads what the Redash admins' own queue script reads, with the same admin API key:
+`/api/admin/queries/rq_status` for the queues and the workers, `/api/users/{id}` for who (name
+and address), `/api/queries/{id}` for the query (name and SQL) and `/api/data_sources` for what
+it runs on (name and type). The one thing it sends is a cancel you asked for.
 
 - **RUNNING** is a job a live worker holds. Redash's started list is not enough: when a worker
   dies its job stays there, for months without a time limit.
@@ -76,6 +77,15 @@ and SQL) and `/api/data_sources` for what it runs on (name and type).
   Redash* for Query Results.
 - **WAITING** has names and ages only with Redis (`redis_url:`); Redash's API only counts the
   waiting jobs.
+- **Cancel** a job when the queue backs up: `x` on it says what a cancel will do, `y` does it —
+  `DELETE /api/jobs/<id>`, as Redash's Cancel button and the admins' script do — and any other
+  key keeps it. A waiting job leaves its queue; a running one is stopped on its worker, marked
+  `⊘` until the worker has let go; a leftover leaves the started list. A query it started in
+  ClickHouse **runs on**: Redash's cancel does not reach it, and nothing here sends
+  `KILL QUERY` — the question and the notice after it say so, and on which node, and the tape
+  keeps a line for every cancel.
+
+![x on a running job: what a cancel will do, before anything is sent](docs/screenshots/120x36-queue-cancel.png)
 
 ![Redash with leftovers in its started list](docs/screenshots/120x36-queue-leftovers.png)
 
@@ -380,6 +390,7 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `c` | a query session on the node under the cursor — SQL, read-only (also on view 3) |
 | `s` | sort: pressure, memory, CPU, name |
 | `/` | filter by node, user, person, SQL or query id · `esc` clears |
+| `x` then `y` | view 2: cancel the Redash job under the cursor — any other key keeps it |
 | `1 2 3 4` | views · `5`…`9` the sessions |
 | `F1`…`F9` | the same, from anywhere — Claude's screen too |
 | `ctrl+\` | the sessions (view 5); there, the key before a number — see *Claude, OpenCode and a terminal in the monitor* |
@@ -387,10 +398,12 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `p` | pause (the numbers stop, the clock does not) |
 | `?` | help · `q` quit |
 
-Nothing here can kill or change a query: every request is `readonly=1`, and also capped at
+Nothing here can kill or change a ClickHouse query: every request is `readonly=1`, and also capped at
 2 threads, 6 GB and 2 seconds when the server lets a session set those (a read-only user's
 own profile carries its caps otherwise). A query session's queries are `readonly=1` too, with
 30 seconds and 1000 rows when the server allows them; a write is refused by the server itself.
+The only request that changes anything goes to Redash, and only after `x` and `y` on view 2:
+the cancel of that one job.
 
 ## Developing
 

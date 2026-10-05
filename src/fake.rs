@@ -433,6 +433,8 @@ pub struct FakeSource {
     queue_tick: Duration,
     live: Vec<Live>,
     seq: u64,
+    /// Jobs cancelled from view 2: gone from the queue from then on.
+    cancelled: std::collections::HashSet<String>,
 }
 
 impl Default for FakeSource {
@@ -451,6 +453,7 @@ impl FakeSource {
             queue_tick: Duration::ZERO,
             live: Vec::new(),
             seq: 0,
+            cancelled: Default::default(),
         }
     }
 
@@ -650,8 +653,24 @@ impl FakeSource {
     /// A backed-up Redash (§8): the four `queries` workers all busy — three on ClickHouse, one
     /// on MySQL — 12 waiting, the oldest past 1m40s; a scheduled refresh on ClickHouse and one
     /// on Query Results; and three entries RQ's started list never let go of.
+    /// The queue 3 s on.
     pub fn queue(&mut self) -> QueueStatus {
         self.queue_tick += Duration::from_millis(3000);
+        self.queue_now()
+    }
+
+    /// A job cancelled, as Redash would: a waiting one leaves its queue, a running one its
+    /// worker, a leftover the started list. Its query in ClickHouse, if any, runs on.
+    pub fn cancel(&mut self, id: &str) -> Result<(), String> {
+        if !self.queue_now().jobs.iter().any(|job| job.id == id) {
+            return Err("HTTP 500 · Redash no longer has it — it may have just finished".into());
+        }
+        self.cancelled.insert(id.to_string());
+        Ok(())
+    }
+
+    /// The queue as it is now, without moving its clock.
+    pub fn queue_now(&self) -> QueueStatus {
         let grown = self.queue_tick.as_secs();
         let clickhouse = |job: &mut Job, source: &str| {
             job.data_source = Some(source.to_string());
@@ -774,7 +793,7 @@ impl FakeSource {
             workers_busy: busy,
             workers_total: total,
         };
-        let queues = vec![
+        let mut queues = vec![
             row("default", 0, 0, None, 0, 0, 1),
             row("emails", 0, 0, None, 0, 0, 1),
             row("periodic", 0, 0, None, 0, 0, 1),
@@ -782,6 +801,21 @@ impl FakeSource {
             row("scheduled_queries", 2, 3, Some(22 + grown.min(30) + 9), 0, 2, 2),
             row("schemas", 0, 0, None, 0, 2, 2),
         ];
+        // What was cancelled is gone, and its queue counts one less of it.
+        let mut freed = 0;
+        for job in jobs.iter().filter(|job| self.cancelled.contains(&job.id)) {
+            let Some(row) = queues.iter_mut().find(|q| q.name == job.queue) else { continue };
+            match job.state {
+                JobState::Queued => row.waiting = row.waiting.saturating_sub(1),
+                JobState::Started => {
+                    row.running = row.running.saturating_sub(1);
+                    row.workers_busy = row.workers_busy.saturating_sub(1);
+                    freed += 1;
+                }
+                JobState::Stale(_) => row.stale = row.stale.saturating_sub(1),
+            }
+        }
+        jobs.retain(|job| !self.cancelled.contains(&job.id));
 
         QueueStatus {
             reachable: true,
@@ -790,7 +824,7 @@ impl FakeSource {
             jobs,
             names_available: true,
             // Four on `queries`, two on scheduled_queries and schemas, one for the rest.
-            workers_busy: 6,
+            workers_busy: 6u32.saturating_sub(freed),
             workers_total: 7,
             host: Some(format!("redash.{DOMAIN}")),
             version: Some("10.1.0".to_string()),
@@ -1015,6 +1049,21 @@ pub fn assist(ask: &crate::console::Ask) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::model::{fold_healthy, node_view, shares_add_up};
+
+    #[test]
+    fn a_cancelled_job_leaves_the_queue_and_frees_its_worker() {
+        let mut fake = FakeSource::new();
+        let before = fake.queue();
+        let queries = |status: &QueueStatus| status.queue("queries").map(|q| (q.running, q.workers_busy)).unwrap();
+        assert_eq!((queries(&before), before.workers_busy), ((4, 4), 6));
+        fake.cancel("run-1").unwrap();
+        fake.cancel("wait-2").unwrap();
+        let after = fake.queue_now();
+        assert!(!after.jobs.iter().any(|j| j.id == "run-1" || j.id == "wait-2"));
+        assert_eq!((queries(&after), after.workers_busy), ((3, 3), 5));
+        assert_eq!(after.queue("queries").unwrap().waiting, before.queue("queries").unwrap().waiting - 1);
+        assert!(fake.cancel("run-1").is_err(), "gone: Redash no longer has it");
+    }
 
     #[test]
     fn the_fleet_looks_like_the_screen_in_the_design() {

@@ -19,6 +19,11 @@
 //!
 //! `rq_status` reports queued jobs as a *count*, so the names of waiting jobs live in RQ's
 //! Redis keys. That is read-only here too: two commands, no writes, no dependency.
+//!
+//! One call changes something, and only when someone asks for it on view 2 and says yes:
+//! `DELETE /api/jobs/{id}`, which cancels that one job — what Redash's own Cancel button and
+//! the admins' script do. Redash then lets go of it; a query it started in ClickHouse runs on
+//! until a `KILL QUERY` there stops it, which nothing here sends.
 
 use crate::attrib;
 use crate::config::RedashConfig;
@@ -310,6 +315,8 @@ pub enum Error {
     Http(u16),
     Connection(String),
     Body(String),
+    /// A job id that is not one, kept out of the request's path.
+    NotAJob,
 }
 
 impl std::fmt::Display for Error {
@@ -320,7 +327,17 @@ impl std::fmt::Display for Error {
             Error::Http(code) => write!(f, "HTTP {code}"),
             Error::Connection(e) => write!(f, "{e}"),
             Error::Body(e) => write!(f, "{UNREADABLE}{e}"),
+            Error::NotAJob => write!(f, "not a job id Redash gave"),
         }
+    }
+}
+
+/// Why Redash did not cancel a job, in words for the notice.
+fn cancel_error(error: &Error) -> String {
+    match error {
+        // Redash answers 500 for a job it no longer has: RQ cannot find it to cancel.
+        Error::Http(code @ (404 | 500)) => format!("HTTP {code} · Redash no longer has it — it may have just finished"),
+        other => other.to_string(),
     }
 }
 
@@ -453,17 +470,50 @@ impl RedashSource {
         })
     }
 
-    /// Poll until the loop ends. Errors are reported, never fatal.
-    pub async fn run(self, tx: tokio::sync::mpsc::UnboundedSender<Event>) {
+    /// Poll until the loop ends, and cancel the jobs asked for on the way. Errors are
+    /// reported, never fatal.
+    pub async fn run(self, tx: tokio::sync::mpsc::UnboundedSender<Event>, mut cancels: tokio::sync::mpsc::UnboundedReceiver<String>) {
         let mut tick = tokio::time::interval(QUEUE_POLL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tick.tick().await;
+            tokio::select! {
+                _ = tick.tick() => {}
+                Some(id) = cancels.recv() => {
+                    let result = self.cancel(&id).await.map_err(|e| cancel_error(&e));
+                    if tx.send(Event::Cancelled(id, result)).is_err() {
+                        return;
+                    }
+                    // Read again at once, as the admins' script does after a cancel: the
+                    // screen shows straight away whether the job let go of its worker.
+                }
+            }
             let status = self.status().await;
             if tx.send(Event::Queue(Box::new(status))).is_err() {
                 return;
             }
         }
+    }
+
+    /// One job cancelled, as Redash's Cancel button does: `DELETE /api/jobs/{id}`. A waiting
+    /// job leaves its queue; a running one is stopped on its worker, which lets go of it.
+    pub async fn cancel(&self, id: &str) -> Result<(), Error> {
+        // RQ's ids are UUIDs: anything else is not put into a path.
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Err(Error::NotAJob);
+        }
+        let url = format!("{}/api/jobs/{id}", self.base_url);
+        let response = self
+            .client
+            .delete(&url)
+            .header("Authorization", format!("Key {}", self.api_key))
+            .send()
+            .await
+            .map_err(|e| Error::Connection(short(&e.to_string())))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(Error::Http(status.as_u16()));
+        }
+        Ok(())
     }
 
     /// One poll: per queue what runs, what waits and what was left behind, with names.
@@ -1470,7 +1520,8 @@ mod tests {
     type Requests = std::sync::Arc<Mutex<Vec<(String, String)>>>;
 
     /// Enough of a Redash on a free local port: a GET is answered from `routes` by its path,
-    /// anything else is a 404, and the path and `Authorization` of every request are kept.
+    /// another method by `METHOD path`, anything else is a 404, and the path (`METHOD path`
+    /// for all but a GET) and `Authorization` of every request are kept.
     fn fake_redash(routes: Vec<(String, String)>) -> (String, Requests) {
         use std::io::{BufRead, BufReader, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1483,7 +1534,10 @@ mod tests {
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut request = String::new();
                 reader.read_line(&mut request).ok();
-                let path = request.split_whitespace().nth(1).unwrap_or_default().to_string();
+                let mut words = request.split_whitespace();
+                let method = words.next().unwrap_or_default().to_string();
+                let path = words.next().unwrap_or_default().to_string();
+                let path = if method == "GET" { path } else { format!("{method} {path}") };
                 let mut auth = String::new();
                 loop {
                     let mut header = String::new();
@@ -1568,6 +1622,37 @@ mod tests {
                     {"id": 3, "name": "Query Results", "type": "results"}]"#,
             ),
         ]
+    }
+
+    #[tokio::test]
+    async fn a_job_is_cancelled_with_a_delete_of_it_and_nothing_else_is_sent() {
+        let mut routes = quiet_redash_with_leftovers();
+        routes.push(("DELETE /api/jobs/s1".to_string(), "null".to_string()));
+        let (url, requests) = fake_redash(routes);
+        let source = RedashSource::new(&config(&url)).unwrap();
+        assert_eq!(source.cancel("s1").await, Ok(()));
+        // One that Redash no longer has, and one that is not an id at all.
+        assert_eq!(source.cancel("gone-1").await, Err(Error::Http(404)));
+        assert!(cancel_error(&Error::Http(500)).contains("may have just finished"));
+        assert_eq!(source.cancel("../admin").await, Err(Error::NotAJob));
+        let seen = requests.lock().unwrap().clone();
+        assert_eq!(seen, [
+            ("DELETE /api/jobs/s1".to_string(), "Key test-key".to_string()),
+            ("DELETE /api/jobs/gone-1".to_string(), "Key test-key".to_string()),
+        ], "the key in the header only, and nothing sent for a path that is not an id");
+
+        // Through the loop: asked once, answered, and the queue read again straight away.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(source.run(tx, cancel_rx));
+        let first = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap();
+        assert!(matches!(first, Some(Event::Queue(_))), "the first poll");
+        cancel_tx.send("s1".to_string()).unwrap();
+        let answer = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap();
+        assert!(matches!(&answer, Some(Event::Cancelled(id, Ok(()))) if id == "s1"), "{answer:?}");
+        let again = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap();
+        assert!(matches!(again, Some(Event::Queue(_))), "read again before the next tick");
+        task.abort();
     }
 
     #[tokio::test]

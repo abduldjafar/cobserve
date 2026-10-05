@@ -10,6 +10,7 @@ use crate::folders::Found;
 use crate::history::{self, History};
 use crate::insight::{self, Insight, Subject};
 use crate::model::{fleet_totals, mark_new_nodes, FleetSnapshot, FleetView, Job, JobState, QueueStatus};
+use crate::severity::Severity;
 use crate::tape::{Tape, Watch};
 use crate::tree::{self, Row, RowId, TreeState};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -245,7 +246,29 @@ pub enum Event {
     Schema(String, Result<crate::complete::Schema, String>),
     /// What a helper wrote for a query session: the session, the question, the SQL.
     Assisted(u64, u64, Result<String, String>),
+    /// What Redash answered to cancelling a job, by its id: yes, or why not.
+    Cancelled(String, Result<(), String>),
     Quit,
+}
+
+/// A job Redash has been asked to cancel from view 2.
+#[derive(Debug, Clone)]
+pub struct Cancelling {
+    /// `#7438 Gateway transfers of grigol.gankava`, for the notice when Redash answers — the
+    /// job may have left the list by then.
+    pub what: String,
+    /// It ran on a ClickHouse data source — and on which node its query was found — which a
+    /// cancel in Redash does not stop.
+    pub on_clickhouse: bool,
+    pub node: Option<String>,
+    /// Redash said yes; the job stays marked until it has left the queue.
+    pub accepted: bool,
+    pub since: SystemTime,
+}
+
+/// A job in a few words: its query and whose it is.
+pub fn job_words(job: &Job) -> String {
+    format!("{} of {}", job.query_label(), job.label())
 }
 
 /// What the footer should say (§3: contextual).
@@ -280,6 +303,13 @@ pub struct App {
     unreachable_since: HashMap<String, SystemTime>,
     /// Which row of view 2 the cursor is on, so ⏎ can jump to its ClickHouse query (§2.8).
     queue_selection: Option<usize>,
+    /// View 2: the job `x` asked about — by its id, as the list moves under the cursor every
+    /// 3 s — until `y` cancels it in Redash or any other key keeps it.
+    queue_confirm: Option<String>,
+    /// Jobs to cancel in Redash, for `main.rs` to send once.
+    cancels: Vec<String>,
+    /// What Redash has been asked to cancel, by job id, until the job has left the queue.
+    cancelling: HashMap<String, Cancelling>,
     pub quit: bool,
 
     /// The last few minutes of every number, for sparklines, trends and forecasts.
@@ -357,6 +387,9 @@ impl App {
             clock: SystemTime::now(),
             unreachable_since: HashMap::new(),
             queue_selection: None,
+            queue_confirm: None,
+            cancels: Vec::new(),
+            cancelling: HashMap::new(),
             quit: false,
             history: History::default(),
             tape: Tape::default(),
@@ -486,6 +519,7 @@ impl App {
                     self.on_queue(*queue)
                 }
             }
+            Event::Cancelled(id, result) => self.on_cancelled(&id, result),
             Event::Notice(message) => {
                 let now = SystemTime::now();
                 // The same message twice in a row does not restart the clock: a source that
@@ -793,6 +827,10 @@ impl App {
     /// A click on what was drawn there, or the wheel: over Claude's screen it is Claude's,
     /// elsewhere it moves the cursor like ↑ ↓.
     fn on_mouse(&mut self, event: MouseEvent) {
+        // A click while a cancel waits for `y` keeps the job, as any other key does.
+        if matches!(event.kind, MouseEventKind::Down(_)) {
+            self.queue_confirm = None;
+        }
         let hit = self
             .viewport
             .hits
@@ -1211,6 +1249,14 @@ impl App {
 
     fn on_queue(&mut self, queue: QueueStatus) {
         self.queue = queue;
+        // A job Redash said yes to stays marked while it is listed — a worker lets go of a
+        // running one at its next check — and no longer than ten minutes.
+        let listed: HashSet<&str> = self.queue.jobs.iter().map(|job| job.id.as_str()).collect();
+        let now = SystemTime::now();
+        self.cancelling.retain(|id, c| {
+            let young = now.duration_since(c.since).map_or(true, |age| age < Duration::from_secs(600));
+            young && (!c.accepted || listed.contains(id.as_str()))
+        });
         // The stitch has to run on every queue poll too: the source knows nothing about
         // ClickHouse, so a fresh status arrives with every running job unlinked.
         self.stitch_queue();
@@ -1233,6 +1279,98 @@ impl App {
     /// Which job row view 2 has selected.
     pub fn queue_selection(&self) -> Option<usize> {
         self.queue_selection
+    }
+
+    /// `x` on view 2: whether to cancel the job under the cursor, asked before anything is sent.
+    fn ask_to_cancel(&mut self) {
+        let Some(job) = self.selected_job() else {
+            return;
+        };
+        if self.cancelling.contains_key(&job.id) {
+            let what = job_words(job);
+            self.notice = Some((format!("Redash has already been asked to cancel {what}"), SystemTime::now()));
+            return;
+        }
+        self.queue_confirm = Some(job.id.clone());
+    }
+
+    /// The job `x` asked about, while it waits for `y`.
+    pub fn cancel_asked(&self) -> Option<&Job> {
+        let id = self.queue_confirm.as_deref()?;
+        self.queue.jobs.iter().find(|job| job.id == id)
+    }
+
+    /// `y`: the job is cancelled in Redash — `main.rs` sends it, Redash's answer comes back as
+    /// [`Event::Cancelled`].
+    fn cancel_job(&mut self, id: &str) {
+        let Some(job) = self.queue.jobs.iter().find(|job| job.id == id) else {
+            self.notice = Some(("that job has left the queue — nothing was cancelled".into(), SystemTime::now()));
+            return;
+        };
+        let what = job_words(job);
+        let node = job.clickhouse_target().map(|(node, _)| node.to_string());
+        let on_clickhouse = node.is_some() || job.on_clickhouse() == Some(true);
+        let cancelling = Cancelling { what: what.clone(), on_clickhouse, node, accepted: false, since: SystemTime::now() };
+        self.cancelling.insert(id.to_string(), cancelling);
+        self.cancels.push(id.to_string());
+        self.notice = Some((format!("asking Redash to cancel {what}…"), SystemTime::now()));
+    }
+
+    /// Redash's answer to a cancel: yes — and, for a job on ClickHouse, that its query runs
+    /// on there — or why not. A yes goes on the tape too, where it stays to be read.
+    fn on_cancelled(&mut self, id: &str, result: Result<(), String>) {
+        let what = self.cancelling.get(id).map_or_else(|| format!("job {id}"), |c| c.what.clone());
+        let message = match result {
+            Ok(()) => {
+                let mut message = format!("Redash cancelled {what}");
+                let mut parts = vec![("Redash job cancelled from here: ".to_string(), insight::Tone::Plain), (what.clone(), insight::Tone::Strong)];
+                let mut level = Severity::Info;
+                if let Some(cancelling) = self.cancelling.get_mut(id) {
+                    cancelling.accepted = true;
+                    let runs_on = " — its query runs on in ClickHouse";
+                    match &cancelling.node {
+                        Some(node) => {
+                            message.push_str(&format!("{runs_on} on {node} until KILL QUERY stops it"));
+                            parts.push((format!("{runs_on} on "), insight::Tone::Sev(Severity::Warn)));
+                            parts.push((node.clone(), insight::Tone::Node));
+                            parts.push((" until KILL QUERY stops it".to_string(), insight::Tone::Muted));
+                            level = Severity::Warn;
+                        }
+                        None if cancelling.on_clickhouse => {
+                            let runs = " — a query it started in ClickHouse runs on until KILL QUERY stops it";
+                            message.push_str(runs);
+                            parts.push((runs.to_string(), insight::Tone::Sev(Severity::Warn)));
+                            level = Severity::Warn;
+                        }
+                        None => {}
+                    }
+                }
+                let event = crate::tape::Event {
+                    at: history::secs(SystemTime::now()),
+                    level,
+                    kind: crate::tape::Kind::Queue,
+                    parts,
+                    subject: Some(Subject::Queue),
+                };
+                Self::add_events(&mut self.tape, &mut self.tape_selection, vec![event]);
+                message
+            }
+            Err(why) => {
+                self.cancelling.remove(id);
+                format!("Redash did not cancel {what}: {why}")
+            }
+        };
+        self.notice = Some((message, SystemTime::now()));
+    }
+
+    /// The cancels for `main.rs` to send, once.
+    pub fn take_cancels(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.cancels)
+    }
+
+    /// Whether Redash has been asked to cancel the job, and whether it has said yes.
+    pub fn cancelling(&self, id: &str) -> Option<&Cancelling> {
+        self.cancelling.get(id)
     }
 
     /// View 2's lists: what runs — the table above already says how full the queue is, and
@@ -1564,6 +1702,16 @@ impl App {
             return;
         }
 
+        // `x` on view 2 asked whether to cancel a job: `y` does; any other key keeps it, and
+        // does nothing else, so a stray key cannot both answer and act.
+        if let Some(id) = self.queue_confirm.take() {
+            if self.view == View::Queue && matches!(key.code, KeyCode::Char('y' | 'Y')) {
+                self.cancel_job(&id);
+            }
+            self.sync_view_state();
+            return;
+        }
+
         // Filter entry swallows everything except Esc, Enter and the printable characters.
         if self.filter_input.is_some() {
             let mut input = self.filter_input.take().unwrap_or_default();
@@ -1824,6 +1972,7 @@ impl App {
             KeyCode::End => self.move_queue_row(isize::MAX / 2),
             // On the queue, ⏎ is the stitch of §2.8 instead of an expand.
             KeyCode::Enter => self.activate_queue_row(),
+            KeyCode::Char('x') => self.ask_to_cancel(),
             _ => {}
         }
     }
