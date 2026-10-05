@@ -11,7 +11,7 @@ contract for every number on screen.
 4. [Try it without a fleet](#4-try-it-without-a-fleet)
 5. [Connect it to your fleet](#5-connect-it-to-your-fleet)
 6. [The screen at a glance](#6-the-screen-at-a-glance)
-7. [The five views](#7-the-five-views)
+7. [The seven views](#7-the-seven-views)
 8. [Sessions](#8-sessions)
 9. [Recipes for on call](#9-recipes-for-on-call)
 10. [Configuration](#10-configuration)
@@ -32,6 +32,10 @@ installed on the servers. It shows:
   running job became. It uses Redash's admin API every 3 seconds, and optionally Redis.
 - **what it means**: insights ranked worst first, trends and forecasts, and a tape of
   everything that changed.
+- **Airflow**: what every DAG did over the last day — what runs now, what waits, what failed
+  and where, and each DAG's day on a timeline. It uses Airflow's REST API every 15 seconds.
+- **your Jira tickets**: in your board's columns, In progress to Done, with their age and due
+  date. It uses Jira's REST API every minute.
 - **your work beside it**: Claude Code, OpenCode, your shell, and a SQL console on any server,
   in up to fifty sessions.
 
@@ -63,7 +67,9 @@ What it does **not** do:
 | **Network access to every ClickHouse node** | It talks to each node directly, on its HTTP port (8123 by default). It uses the names in `system.clusters`, or their addresses when a name does not resolve. On a VPN, connect first. | yes, for a real fleet |
 | **Redash URL and an admin's API key** | For view 2 and the REDASH line. Without them that line says *not configured* and everything else works. | optional |
 | **Redash's Redis URL** | For the names and ages of *waiting* jobs, and to cancel them one by one. Without it, the waiting jobs are only a count. | optional |
-| **Claude Code**, signed in | For Claude sessions on view 5, and for `ctrl+k` in a query session. Needs a Pro, Max, Team or Enterprise account. | optional |
+| **An Airflow 2 login** | For view 5: the URL of Airflow, and the user and password of its web UI (a user whose role can read DAGs). | optional |
+| **A Jira personal access token** | For view 6: Jira Server or Data Center's URL, and a token made under Profile → Personal Access Tokens. | optional |
+| **Claude Code**, signed in | For Claude sessions on view 7, and for `ctrl+k` in a query session. Needs a Pro, Max, Team or Enterprise account. | optional |
 | **OpenCode**, signed in | For OpenCode sessions, or as the `ctrl+k` helper instead of Claude. | optional |
 | **Docker and Python 3** | Only for the local test rig in `dev/`. | optional |
 | `pbcopy` (macOS), `wl-copy` or `xclip` (Linux) | Copying answers to the clipboard. Terminals that support OSC 52 copy without them. | optional |
@@ -91,7 +97,7 @@ You can also build without installing. `cargo build --release` leaves the progra
 
 ### Claude Code and OpenCode (optional)
 
-These are only needed for the sessions on view 5 and for `ctrl+k` in a query session.
+These are only needed for the sessions on view 7 and for `ctrl+k` in a query session.
 
 ```sh
 # Claude Code (or: brew install --cask claude-code · npm install -g @anthropic-ai/claude-code)
@@ -228,7 +234,7 @@ redash:                                   # optional
   email_domain: example.net
 ```
 
-- **Keep the file outside your projects.** Sessions on view 5 run programs in folders of your
+- **Keep the file outside your projects.** Sessions on view 7 run programs in folders of your
   choice, and those programs can read files there. `~/.config/cobserve/` is a good place.
 - **A password is only sent to its own server.** A node discovery finds that is not in the file
   uses `default_login` if there is one. Otherwise it shows *not polled*, rather than being sent
@@ -250,7 +256,24 @@ redash:                                   # optional
 - **Redash versions**: Redash 10 and newer (RQ) is what it is built against. Older, Celery-based
   versions are read through their own endpoint.
 
-### 5.6 A launcher, so you type one word
+### 5.6 Airflow and Jira
+
+- **Airflow** (view 5): set `AIRFLOW_URL` (its web address, `https://airflow.example.net`),
+  `AIRFLOW_USER` and `AIRFLOW_PASSWORD`, or an `airflow:` section in the file with `url`, `user`
+  and `password`. It is the login of Airflow's web UI: its API is signed into the same way, with
+  the login form, because an Airflow whose API takes only its own session (the default) refuses
+  Basic auth. A login that is refused is not tried again for five minutes, or until `r`.
+- **Jira** (view 6): set `JIRA_URL` (`https://jira.example.net`) and `JIRA_TOKEN`, or a `jira:`
+  section with `url` and `token`. The token is a **personal access token** of Jira Server or
+  Data Center: Profile → Personal Access Tokens → Create token. View 6 shows the tickets
+  assigned to the token's owner.
+- **Another board**: the columns are `In progress, In Review, Feedback, Done` unless
+  `JIRA_STATUSES` (or `statuses:` in the file) names others, left to right; the last is where
+  finished tickets go, and shows those resolved in the last `JIRA_DONE_DAYS` days (7).
+- Both only read: Airflow and Jira are asked with GET, and nothing here can change a run or a
+  ticket. Their secrets are taken out of every session's environment, like the others.
+
+### 5.7 A launcher, so you type one word
 
 Put this in `~/bin/cobserve-fleet` and run `chmod +x` on it. The secrets stay in the credential
 file:
@@ -261,7 +284,7 @@ export PRAYER_CITY=Jakarta          # or PRAYER=off
 exec cobserve --credential ~/.config/cobserve/credentials.yaml "$@"
 ```
 
-### 5.7 Is it working?
+### 5.8 Is it working?
 
 - **Footer**: the right side says *N nodes polled · slowest … ms · read-only*.
 - **Band**: the **FLEET** line counts nodes, memory and CPU. The **REDASH** line counts what
@@ -269,13 +292,15 @@ exec cobserve --credential ~/.config/cobserve/credentials.yaml "$@"
 - **A node in trouble** says why, in its row and in the insights: *unreachable*, *no access*
   (with the missing grant), *login refused for user …*, or *not polled*.
   [12](#12-troubleshooting) has the fix for each.
+- **Views 5 and 6**: the first line says the host, its version and *read 4s ago*; without a
+  configuration they say what to set, and when a read fails they say why.
 
 ---
 
 ## 6. The screen at a glance
 
 ```
- ◆ cobserve  ✖ critical       1 nodes  2 queue  3 map  4 tape  5 sessions    ● live 2s  15:52:07 WIB   ← masthead
+ ◆ cobserve  ✖ critical   1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s  15:52:07 WIB   ← masthead
  ━━ Subuh 04:21 ━━━ Terbit 05:33 ━━━ Dzuhur 11:45 ━━━●┄┄ Ashar 14:48 · in 1h12m ┄┄ Maghrib ┄┄ Isya ┄┄  ← the day
  FLEET   9 nodes · 1 hot   mem ━━━━╸━━━ 36.4%   cpu ━━━╸━━━━ 28.7%   queries 15 · 4 ✕               ← the band
  REDASH  16 waiting · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale
@@ -291,7 +316,7 @@ exec cobserve --credential ~/.config/cobserve/credentials.yaml "$@"
 - **The band**: the whole fleet and Redash in two lines, on every view.
 - **The drawer**: everything about the row under the cursor that does not fit in the row.
 - **The footer**: the keys that work right now, then any notice, then how the last poll went.
-- **Everywhere**: `?` help · `1`–`4` the views · `5` the sessions · `p` pause · `q` quit · the
+- **Everywhere**: `?` help · `1`–`6` the views · `7` the sessions · `p` pause · `q` quit · the
   mouse clicks and scrolls.
 
 **Colours and marks**: `✖` red is critical and `▲` amber is a warning (by DESIGN.md §7). `✕` is
@@ -301,7 +326,7 @@ joined.
 
 ---
 
-## 7. The five views
+## 7. The seven views
 
 ### 7.1 NODES: who is using the fleet (`1`)
 
@@ -373,7 +398,37 @@ Newest first: a node going hot or unreachable and recovering, runaways starting 
 (*probably killed* when one vanished at its memory limit), the queue backing up and draining,
 and your Redash cancels. `⏎` on a line goes to what it is about.
 
-### 7.5 SESSIONS (`5`)
+### 7.5 AIRFLOW: every DAG's day (`5`)
+
+What Airflow's DAGs did over the last 24 hours, read every 15 seconds:
+
+- **RUNNING**: each run in progress, how long it has run and how far its tasks are
+  (`4/7 ━━━━╸━━`), with the task that runs or waits for its retry. Amber past six hours; red
+  past a day, and **stuck since** its date — a run whose worker died, often months ago.
+- **QUEUED**: what waits to start, amber after an hour.
+- **FAILED**: the day's failures, when each ended and the task it failed at.
+- **ACTIVITY**: a line per DAG that ran, its day on a timeline — an hour a cell, half an hour
+  from 160 columns: `▪` went well, `✖` failed, `▸` runs now, `◌` waits, `━` a run that went on.
+  Beside it the schedule, the day's runs, when it last ran, how long that took and when it runs
+  next.
+
+`⏎` opens the run or the DAG's grid in your browser, `y` copies its link, `r` reads again now.
+The first read shows what runs within seconds and the day a dozen seconds later.
+
+![Airflow](docs/screenshots/120x36-airflow.png)
+
+### 7.6 JIRA: your tickets (`6`)
+
+Your board, for you: the tickets assigned to you in its columns, read every minute. The first
+line is the flow — `In progress 4 › In Review 4 › Feedback 1 › Done 16 in 7 days` — with how
+many open tickets are overdue or due soon. Under it, a block per column, ranked as the board
+ranks it: the key, the summary, the priority, how long the ticket has been in the column, its
+due date (red when overdue, amber today and tomorrow) and the time logged on it. The drawer has
+the rest and the link; `⏎` opens it, `y` copies it, `r` reads again.
+
+![Jira](docs/screenshots/120x36-jira.png)
+
+### 7.7 SESSIONS (`7`)
 
 See [8](#8-sessions).
 
@@ -381,11 +436,11 @@ See [8](#8-sessions).
 
 ## 8. Sessions
 
-View 5 runs programs inside cobserve, while the fleet stays on screen above them as a strip
+View 7 runs programs inside cobserve, while the fleet stays on screen above them as a strip
 of cards. Each session is the real program in a real terminal, with its own folder,
 conversation and permission prompts.
 
-![Claude, OpenCode and a terminal in view 5](docs/screenshots/160x48-claude.png)
+![Claude, OpenCode and a terminal in view 7](docs/screenshots/160x48-claude.png)
 
 ### 8.1 The session bar: `ctrl+\`
 
@@ -394,8 +449,8 @@ The one exception is `ctrl+\`, which opens the bar. After it:
 
 | Key | |
 |---|---|
-| `1`…`4` | a view of the monitor |
-| `5`…`9` · `↑` `↓` | a session: the first five by number, or walk through all fifty |
+| `1`…`6` | a view of the monitor |
+| `7`…`9` · `↑` `↓` | a session: the first three by number, or walk through all fifty |
 | `/` | find a session by name, folder, kind, server or number |
 | `n` | a new session of the kind on screen, in a folder you pick |
 | `c` · `o` · `t` · `q` | a new **C**laude, **O**penCode, **t**erminal or **q**uery (SQL) session |
@@ -518,7 +573,7 @@ the top: click it, or press `ctrl+o`, to run on another server.
 
 1. `ctrl+\`, then `c`.
 2. Pick the project's folder.
-3. Work as usual. `ctrl+\` then `1` looks at the fleet, and `5` comes back.
+3. Work as usual. `ctrl+\` then `1` looks at the fleet, and `7` comes back.
 
 ---
 
@@ -529,8 +584,8 @@ can also hold the cluster and Redash settings.
 
 | Command line | |
 |---|---|
-| `--credential FILE` | the servers with a login each, and optionally `cluster` and `redash:` ([5.4](#54-or-a-login-per-server-the-credential-file)) |
-| `--claude` | start on view 5 with a Claude session |
+| `--credential FILE` | the servers with a login each, and optionally `cluster`, `redash:`, `airflow:` and `jira:` ([5.4](#54-or-a-login-per-server-the-credential-file)) |
+| `--claude` | start on view 7 with a Claude session |
 | `-h` · `-V` | help · version |
 
 **ClickHouse**
@@ -550,6 +605,15 @@ can also hold the cluster and Redash settings.
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | the Redash admin API | unset: *not configured* |
 | `REDIS_URL` | Redash's Redis (read-only), for the waiting jobs | unset: counts only |
 | `EMAIL_DOMAIN` | your organisation's domain: its people are shown by name alone | unset |
+
+**Airflow and Jira**
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `AIRFLOW_URL` / `AIRFLOW_USER` / `AIRFLOW_PASSWORD` | Airflow 2 for view 5, and the login of its web UI | unset: view 5 says how |
+| `JIRA_URL` / `JIRA_TOKEN` | Jira Server or Data Center for view 6, and a personal access token | unset: view 6 says how |
+| `JIRA_STATUSES` | the board's columns, left to right, comma-separated | `In progress,In Review,Feedback,Done` |
+| `JIRA_DONE_DAYS` | how many days of finished tickets the last column shows | `7` |
 
 **Sessions**
 
@@ -619,6 +683,17 @@ own ClickHouse, Redash and Redis, and what Claude Code or OpenCode send when you
 | REDASH: *a web page, not JSON* | the URL is not Redash's own, or the key is wrong | check `REDASH_URL` |
 | WAITING shows only a count | Redis is not set | add `REDIS_URL` |
 | a cancel: *Redash no longer has it* | the job finished just before | nothing to do |
+
+**Airflow and Jira**
+
+| You see | Why | Do |
+|---|---|---|
+| view 5: *login refused* | wrong Airflow user or password | fix `AIRFLOW_USER` / `AIRFLOW_PASSWORD`, then `r` (otherwise it asks again in 5 minutes) |
+| view 5: *signed in, but this login may not read the DAGs* | the user's role lacks DAG read access | ask an Airflow admin for a role that can read DAGs |
+| view 5 or 6: *a web page, not JSON* · *HTTP 404* | the URL is not the service's own address | the address you open in the browser, without a path |
+| view 6: *HTTP 401 · the token was refused* | the token is wrong or expired | make a new one under Profile → Personal Access Tokens |
+| view 6: *The value 'X' does not exist for the field 'status'* | `JIRA_STATUSES` names a status Jira does not have | use the names your board's columns show |
+| a row says *◌ read 3m ago · …* | the last read failed; what is on screen is the read before | the reason follows; `r` tries again |
 
 **Sessions**
 

@@ -24,11 +24,13 @@
 //! prayer's reminder in its place when one is near. Colour comes from `theme.rs`; this module
 //! asks for roles, never for colours.
 
+mod airflow;
 mod band;
 mod claude;
 mod console;
 mod day;
 mod drawer;
+mod jira;
 mod map;
 mod nodes;
 mod queue;
@@ -245,6 +247,8 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         View::Queue => queue::draw(frame, app, theme, a.body),
         View::Map => map::draw(frame, app, theme, a.body),
         View::Tape => tape::draw(frame, app, theme, a.body),
+        View::Airflow => airflow::draw(frame, app, theme, a.body),
+        View::Jira => jira::draw(frame, app, theme, a.body),
         View::Claude => claude::draw(frame, app, theme, a.well, margin),
     }
     if a.insights.height > 0 {
@@ -321,12 +325,12 @@ fn masthead(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, status: Sev
         cells.push(format!(" {}", app.time.label(now)), theme.muted());
         cells
     };
-    let tabs = |long: bool| {
+    let tabs = |long: bool, airy: bool| {
         let mut cells = Cells::new();
         let mut spots = Vec::new();
         for (i, view) in View::ALL.into_iter().enumerate() {
             if i > 0 {
-                cells.push(if long { "   " } else { "  " }, Style::default());
+                cells.push(if long && airy { "   " } else { "  " }, Style::default());
             }
             // A session rang while another view was open: it is done, or it asks.
             let calling = view == View::Claude && app.claude.calling() && app.view != View::Claude;
@@ -348,11 +352,17 @@ fn masthead(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, status: Sev
         (cells, spots)
     };
 
-    // The widest that fits.
-    let options = [(true, true, true), (false, true, true), (false, false, true), (false, false, false)];
-    let (mut l, mut r, (mut t, mut spots)) = (left(true), right(true), tabs(true));
-    for (poll, long, word) in options {
-        (l, r, (t, spots)) = (left(word), right(poll), tabs(long));
+    // The widest that fits: the tabs' names close up before they go.
+    let options = [
+        (true, true, true, true),
+        (true, true, false, true),
+        (false, true, false, true),
+        (false, false, false, true),
+        (false, false, false, false),
+    ];
+    let (mut l, mut r, (mut t, mut spots)) = (left(true), right(true), tabs(true, true));
+    for (poll, long, airy, word) in options {
+        (l, r, (t, spots)) = (left(word), right(poll), tabs(long, airy));
         if l.width() + t.width() + r.width() + 6 <= room {
             break;
         }
@@ -435,8 +445,8 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
     // line in its prompt, before the F-keys: ⇧⏎ where the terminal tells it from ⏎, ctrl+j
     // anywhere.
     let mut running_keys = vec![
-        ("1-4", "views"),
-        ("5-9 ↑↓", "sessions"),
+        ("1-6", "views"),
+        ("7-9 ↑↓", "sessions"),
         ("/", "find one"),
         ("n", "new"),
         ("r", "rename"),
@@ -500,6 +510,26 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("?", "help"),
             ("q", "quit"),
         ],
+        View::Airflow if !app.airflow.reachable => &[("r", "read now"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+        View::Airflow => &[
+            ("↑↓", "move"),
+            ("⏎", "open in Airflow"),
+            ("y", "copy link"),
+            ("r", "read now"),
+            ("p", "pause"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        View::Jira if !app.jira.reachable => &[("r", "read now"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+        View::Jira => &[
+            ("↑↓", "move"),
+            ("⏎", "open in Jira"),
+            ("y", "copy link"),
+            ("r", "read now"),
+            ("p", "pause"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
         View::Claude if matches!(app.claude.mode, crate::claude::Mode::Naming(_)) => &[
             ("⏎", "keep the name"),
             ("esc", "cancel"),
@@ -526,8 +556,8 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             cells.push(" ctrl+\\ ", theme.tab_active());
             cells.push(" then", theme.muted());
             &[
-                ("1-4", "views"),
-                ("5-9 ↑↓", "sessions"),
+                ("1-6", "views"),
+                ("7-9 ↑↓", "sessions"),
                 ("/", "find one"),
                 ("n", "new"),
                 ("q", "SQL"),
@@ -637,7 +667,8 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
 /// `?` — the keymap of §3 and what every glyph on screen means.
 const HELP_KEYS: &[(&str, &str)] = &[
     ("↑ ↓  j k", "move the cursor · PgUp PgDn Home End jump"),
-    ("⏎", "open / close · on an insight, a queue job, a tile or a tape line: go there"),
+    ("⏎", "open / close · on an insight, a job, a tile, a tape line: go there · a run, a ticket: its page"),
+    ("y  r", "on airflow and jira: copy the link of the row · read again now"),
     ("← →  h l", "collapse / expand, vim-style"),
     ("J K  ⇧↑↓", "scroll the SQL under the selected query or Redash job"),
     ("tab", "move between the tree and the insights"),
@@ -646,16 +677,14 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("c", "SQL on the node under the cursor, in a query session: read-only, it suggests"),
     ("s", "sort: pressure, memory, CPU, name"),
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
-    ("1 2 3 4 5", "views: nodes · queue · map · tape · sessions — up to 50, the first five on 5-9"),
-    ("ctrl+\\", "the sessions · then 1-4 a view, 5-9 or ↑↓ a session, / one by name, n new (c o t q:"),
+    ("1 … 7", "views: nodes · queue · map · tape · airflow · jira · sessions — up to 50, the first on 7-9"),
+    ("ctrl+\\", "the sessions · then 1-6 a view, 7-9 or ↑↓ a session, / one by name, n new (c o t q:"),
     ("", "Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x close"),
     ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
     ("x  then y", "on view 2: cancel the Redash job under the cursor, as Redash's Cancel does"),
     ("⇧⏎  ctrl+j", "a new line in Claude's or OpenCode's prompt — ctrl+j in any terminal"),
-    ("z", "the clock: the local zone ↔ UTC · or click it · ctrl+\\ z in a session"),
-    ("d", "wave a prayer's reminder away · ctrl+\\ d in a session · or click ✕"),
-    ("p", "pause: the numbers stop, the clock does not"),
-    ("q  ctrl-c", "quit"),
+    ("z  d", "the clock: local ↔ UTC (or click it) · d waves a prayer's reminder away · ctrl+\\ first in a session"),
+    ("p  q", "pause: the numbers stop, the clock does not · q or ctrl-c quits"),
 ];
 
 const HELP_LEGEND: &[(&str, &str)] = &[
@@ -666,7 +695,8 @@ const HELP_LEGEND: &[(&str, &str)] = &[
     ("▁▂▃▅▇", "the last 4 minutes, each cell its worst moment"),
     ("NEW", "joined the fleet during this session"),
     ("━━●┄┄", "the day: prayer times at the place, ● now · PRAYER_CITY or PRAYER_AT sets where"),
-    ("↻", "a session kept from the last run: it takes its conversation up when opened"),
+    ("▪ ✖ ▸ ◌", "airflow's day, a cell an hour: runs that went well, failed, run now, wait"),
+    ("↻", "a session kept from the last run · on airflow: a task waiting for its retry"),
 ];
 
 fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {

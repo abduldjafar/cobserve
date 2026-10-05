@@ -34,10 +34,21 @@ impl Clock {
         self.local(at, "%H:%M")
     }
 
-    fn format(&self, at: i64, pattern: &str) -> String {
+    /// `at` in the zone shown, as `pattern` (chrono's `strftime`) writes it: `Sep 30`, `Mon 06:00`.
+    pub fn format(&self, at: i64, pattern: &str) -> String {
         match self.shown {
             Shown::Utc => Utc.timestamp_opt(at, 0).single().map(|t| t.format(pattern).to_string()).unwrap_or_default(),
             Shown::Local => self.local(at, pattern),
+        }
+    }
+
+    /// Seconds east of UTC in the zone shown at `at`: where its hours begin, for a timeline whose
+    /// cells start on the hour of the clock on screen.
+    pub fn offset_s(&self, at: i64) -> i64 {
+        match (self.shown, self.pinned) {
+            (Shown::Utc, _) => 0,
+            (Shown::Local, Some(zone)) => i64::from(zone.local_minus_utc()),
+            (Shown::Local, None) => local(at).map_or(0, |t| i64::from(t.offset().fix().local_minus_utc())),
         }
     }
 

@@ -1,4 +1,4 @@
-  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 sessions                     ● live 2s   15:52:07 WIB  
+  ◆ cobserve   ✖ critical           1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions          ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━━━━ Terbit 05:33 ━━━━━━ Dzuhur 11:45 ━━━━━━ Ashar 14:48 ━━●┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
                                                                                                                                             
   FLEET   9 nodes · 1 hot   mem ━━━━╸━━━━━━━ 36.4% 280/768 GiB   cpu ━━━╸━━━━━━━━ 28.7% 55/192 cores   queries 15 · 4 ✕                     
@@ -11,30 +11,30 @@
                                                                                                                                             
   SESSIONS  24                  ✻ Claude Code  ~/work/billing                                                                               
                                                                                                                                             
-    ✻  work               5     > make the invoice export stream its rows instead of building one big Vec                                   
-    ▣  check the exports  6                                                                                                                 
-    ❯  tidy weekly totals 7     ● I'll read the exporter first.                                                                             
-    ✻  look at slow me… ● 8                                                                                                                 
-    ✻  rerun a dashboard  9     ● Read(src/export/invoice.rs)                                                                               
-    ▣  fix the README    10       └  214 lines                                                                                              
-    ❯  check late parti… 11                                                                                                                 
-    ✻  tidy the exports  12     ● Update(src/export/invoice.rs)                                                                             
-    ✻  look at weekly t… 13       └  18 lines added, 31 removed                                                                             
-    ▣  rerun slow merges 14                                                                                                                 
-    ❯  fix a dashboard   15     ✻ Running the tests… (esc to interrupt)                                                                     
-    ✻  check the README  16                                                                                                                 
-    ✻  tidy late partit… 17     ────────────────────────────────────────────────────────────────────────────────                            
-    ▣  look at the expo… 18     ❯                                                                                                           
-    ❯  rerun weekly tot… 19     ────────────────────────────────────────────────────────────────────────────────                            
-    ✻  fix slow merges   20                                                                                                                 
-  ▎ ✻  stream the invoi… 21                                                                                                                 
+    ✻  work               7     > make the invoice export stream its rows instead of building one big Vec                                   
+    ▣  check the exports  8                                                                                                                 
+    ❯  tidy weekly totals 9     ● I'll read the exporter first.                                                                             
+    ✻  look at slow m… ● 10                                                                                                                 
+    ✻  rerun a dashboard 11     ● Read(src/export/invoice.rs)                                                                               
+    ▣  fix the README    12       └  214 lines                                                                                              
+    ❯  check late parti… 13                                                                                                                 
+    ✻  tidy the exports  14     ● Update(src/export/invoice.rs)                                                                             
+    ✻  look at weekly t… 15       └  18 lines added, 31 removed                                                                             
+    ▣  rerun slow merges 16                                                                                                                 
+    ❯  fix a dashboard   17     ✻ Running the tests… (esc to interrupt)                                                                     
+    ✻  check the README  18                                                                                                                 
+    ✻  tidy late partit… 19     ────────────────────────────────────────────────────────────────────────────────                            
+    ▣  look at the expo… 20     ❯                                                                                                           
+    ❯  rerun weekly tot… 21     ────────────────────────────────────────────────────────────────────────────────                            
+    ✻  fix slow merges   22                                                                                                                 
+  ▎ ✻  stream the invoi… 23                                                                                                                 
   ▎    ~/work/billing                                                                                                                       
-    ▣  tidy the README   22                                                                                                                 
-    ❯  look at late par… 23                                                                                                                 
-    ✻  rerun the exports 24                                                                                                                 
+    ▣  tidy the README   24                                                                                                                 
+    ❯  look at late par… 25                                                                                                                 
+    ✻  rerun the exports 26                                                                                                                 
      ↓ 4 more                                                                                                                               
                                                                                                                                             
     +  new session                                                                                                                          
     ↻  past conversations                                                                                                                   
                                                                                                                                             
-   ctrl+\  then   1-4  views   5-9 ↑↓  sessions   /  find one   n  new   r  rename   x  close   ctrl+j  new line   F1-F9  any tab           
+   ctrl+\  then   1-6  views   7-9 ↑↓  sessions   /  find one   n  new   r  rename   x  close   ctrl+j  new line   F1-F9  any tab           

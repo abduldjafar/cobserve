@@ -27,6 +27,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         View::Queue => queue(app, theme, width),
         View::Map => map(app, theme, width),
         View::Tape => tape(app, theme, width),
+        View::Airflow => airflow(app, theme, width),
+        View::Jira => jira(app, theme, width),
         // View 5 has no drawer (the layout gives it none); nothing to say if asked.
         View::Claude => (title("claude", theme), Vec::new()),
     };
@@ -821,4 +823,271 @@ fn tape(app: &App, theme: &Theme, width: usize) -> Drawer {
         lines.push(muted_line("⏎ goes to what it is about", theme, width));
     }
     (head, lines)
+}
+
+/// A moment in the drawer: `13:39:12` today, `Oct 3 13:39` before.
+fn moment(app: &App, at: i64, now: i64) -> String {
+    if app.time.format(at, "%F") == app.time.format(now, "%F") {
+        app.time.format(at, "%H:%M:%S")
+    } else {
+        app.time.format(at, "%b %-d %H:%M")
+    }
+}
+
+fn airflow(app: &App, theme: &Theme, width: usize) -> Drawer {
+    let activity = &app.airflow;
+    if !activity.reachable {
+        return (title("airflow", theme), Vec::new());
+    }
+    let Some(key) = app.airflow_selection() else {
+        return (title("airflow", theme), vec![muted_line("↑↓ to pick a run or a DAG", theme, width)]);
+    };
+    let now = app.now();
+    let dag = activity.dag(key.dag());
+    match key.run().and_then(|id| activity.run(key.dag(), id)) {
+        Some(run) => airflow_run(activity, run, dag, app, now, theme, width),
+        None => airflow_dag(activity, key.dag(), dag, app, now, theme, width),
+    }
+}
+
+/// A run: how it went and when, what its tasks are doing, and whose DAG it is.
+fn airflow_run(
+    activity: &crate::airflow::Activity,
+    run: &crate::airflow::Run,
+    dag: Option<&crate::airflow::Dag>,
+    app: &App,
+    now: i64,
+    theme: &Theme,
+    width: usize,
+) -> Drawer {
+    use crate::airflow::RunState;
+    let head = vec![
+        Span::styled(run.dag.clone(), theme.strong()),
+        Span::styled(" · ", theme.faint()),
+        Span::styled(run.id.clone(), theme.muted()),
+    ];
+    let sev = run.severity(now);
+    let mut when = Cells::new();
+    let state_style = match run.state {
+        RunState::Success => theme.sev(Severity::Ok),
+        RunState::Running if !sev.is_problem() => theme.accent().add_modifier(Modifier::BOLD),
+        _ => theme.sev(sev).add_modifier(Modifier::BOLD),
+    };
+    when.push(run.state.word().to_string(), state_style);
+    if run.is_stuck(now) {
+        when.push(" · stuck: running for more than a day", theme.sev(Severity::Crit));
+    }
+    if let Some(start) = run.start {
+        when.push(format!(" · started {}", moment(app, start, now)), theme.text2());
+    } else if let Some(queued) = run.queued {
+        when.push(format!(" · queued {}", moment(app, queued, now)), theme.text2());
+    }
+    match (run.state.is_live(), run.took(now)) {
+        (true, Some(took)) => when.push(format!(" · for {}", fmt::dur(took as f64)), theme.text2()),
+        (false, Some(took)) => when.push(format!(" · took {}", fmt::dur(took as f64)), theme.text2()),
+        _ => &mut when,
+    };
+    if let Some(end) = run.end {
+        when.push(format!(" · ended {}", moment(app, end, now)), theme.text2());
+    }
+    // The moment Airflow says the run is for, where that is not when it began.
+    match run.logical {
+        Some(logical) if run.start.is_none_or(|s| (s - logical).abs() > 60) => {
+            when.push(format!(" · logical date {} · {}", app.time.format(logical, "%b %-d %H:%M"), run.kind), theme.muted());
+        }
+        _ => {
+            when.push(format!(" · {}", run.kind), theme.muted());
+        }
+    }
+    if let Some(note) = &run.note {
+        when.push(format!(" · “{note}”"), theme.text());
+    }
+
+    let mut tasks = Cells::new();
+    let progress = activity.progress_of(run);
+    if let Some(p) = progress.filter(|p| p.total > 0) {
+        tasks.push(format!("tasks {} of {} done", p.done, p.total), theme.text());
+    }
+    let live = activity.tasks_of(run);
+    let running: Vec<String> = live
+        .iter()
+        .filter(|t| !t.retrying())
+        .map(|t| match &t.host {
+            Some(host) => format!("{} on {}", t.id, host.split('.').next().unwrap_or(host)),
+            None => t.id.clone(),
+        })
+        .collect();
+    if !running.is_empty() {
+        tasks.push(if tasks.width() > 0 { " · running " } else { "running " }, theme.muted());
+        tasks.push(running.join(", "), theme.accent());
+    }
+    let retrying: Vec<String> = live.iter().filter(|t| t.retrying()).map(|t| t.id.clone()).collect();
+    if !retrying.is_empty() {
+        tasks.push(format!("{}↻ waiting for a retry: {}", if tasks.width() > 0 { " · " } else { "" }, retrying.join(", ")), theme.sev(Severity::Warn));
+    }
+    match progress {
+        Some(p) if !p.failed.is_empty() => {
+            tasks.push(if tasks.width() > 0 { " · failed at " } else { "failed at " }, theme.muted());
+            tasks.push(p.failed.join(", "), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
+            if p.upstream_failed > 0 {
+                tasks.push(format!(" · {} did not run after it", p.upstream_failed), theme.muted());
+            }
+        }
+        Some(p) if run.state == RunState::Failed => {
+            tasks.push(format!("{}{} — failed by the scheduler, by hand or by a timeout", if tasks.width() > 0 { " · " } else { "" }, p.without_a_failure()), theme.muted());
+        }
+        _ => {}
+    }
+    if tasks.width() == 0 {
+        tasks.push(if run.state == RunState::Queued { "no task has started" } else { "its tasks were not read" }, theme.muted());
+    }
+
+    let mut owner = Cells::new();
+    if let Some(dag) = dag {
+        if !dag.owners.is_empty() {
+            owner.push(dag.owners.join(", "), theme.person());
+            owner.push(" · ", theme.faint());
+        }
+        if let Some(schedule) = &dag.schedule {
+            owner.push(schedule.clone(), theme.muted());
+            owner.push(" · ", theme.faint());
+        }
+    }
+    owner.push("⏎ opens the run in Airflow · y copies its link", theme.faint());
+    (head, vec![when.line_unpadded(width), tasks.line_unpadded(width), owner.line_unpadded(width)])
+}
+
+/// A DAG: what it is for, how its day went, its schedule and what comes next.
+fn airflow_dag(
+    activity: &crate::airflow::Activity,
+    id: &str,
+    dag: Option<&crate::airflow::Dag>,
+    app: &App,
+    now: i64,
+    theme: &Theme,
+    width: usize,
+) -> Drawer {
+    let mut head = vec![Span::styled(id.to_string(), theme.strong())];
+    if let Some(dag) = dag.filter(|d| !d.owners.is_empty()) {
+        head.push(Span::styled(" · ", theme.faint()));
+        head.push(Span::styled(dag.owners.join(", "), theme.person()));
+    }
+    let about = dag.and_then(|d| d.description.clone()).unwrap_or_else(|| "no description".to_string());
+    let mut lines = vec![muted_line(about, theme, width)];
+
+    let sections = activity.sections(now);
+    let mut day = Cells::new();
+    if let Some(dag) = dag {
+        match (&dag.schedule, &dag.cron) {
+            (Some(words), Some(cron)) if words != cron => day.push(format!("{words} ({cron})"), theme.text2()),
+            (Some(words), _) => day.push(words.clone(), theme.text2()),
+            (None, Some(cron)) => day.push(cron.clone(), theme.text2()),
+            (None, None) => day.push("no schedule", theme.muted()),
+        };
+        day.push(" · ", theme.faint());
+    }
+    if let Some(line) = sections.dags.iter().find(|l| l.id == id) {
+        day.push(format!("{} in 24 h: ", fmt::plural(line.runs.len(), "run", "runs")), theme.text2());
+        day.push(format!("✔ {}", line.ok), theme.sev(Severity::Ok));
+        if line.failed > 0 {
+            day.push(format!(" ✖ {}", line.failed), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
+        }
+        if line.live > 0 {
+            day.push(format!(" ▸ {}", line.live), theme.accent());
+        }
+        if let Some(run) = line.last_done {
+            let ago = run.end.or(run.at()).map(|at| fmt::ago(now - at)).unwrap_or_default();
+            let took = run.took(now).map(|s| format!(", took {}", fmt::dur(s as f64))).unwrap_or_default();
+            day.push(format!(" · last finished {ago}{took}"), theme.text2());
+        }
+    }
+    match dag {
+        Some(dag) if dag.paused => {
+            day.push(" · paused", theme.sev(Severity::Warn));
+        }
+        Some(dag) => {
+            if let Some(next) = dag.next.filter(|n| *n > now) {
+                let at = if next - now < 20 * 3600 { app.time.format(next, "%H:%M") } else { app.time.format(next, "%a %b %-d %H:%M") };
+                day.push(format!(" · next {at}, in {}", crate::jira::age(next - now)), theme.text2());
+            }
+        }
+        None => {}
+    }
+    lines.push(day.line_unpadded(width));
+
+    let mut tail = Cells::new();
+    if let Some(dag) = dag.filter(|d| !d.tags.is_empty()) {
+        tail.push(format!("tags {}", dag.tags.join(", ")), theme.muted());
+        tail.push(" · ", theme.faint());
+    }
+    tail.push("⏎ opens its grid in Airflow · y copies the link", theme.faint());
+    lines.push(tail.line_unpadded(width));
+    (head, lines)
+}
+
+fn jira(app: &App, theme: &Theme, width: usize) -> Drawer {
+    let board = &app.jira;
+    if !board.reachable {
+        return (title("jira", theme), Vec::new());
+    }
+    let Some(ticket) = app.jira_selection().and_then(|key| board.tickets.iter().find(|t| t.key == key)) else {
+        return (title("jira", theme), vec![muted_line("no ticket in these columns — r reads again", theme, width)]);
+    };
+    let now = app.now();
+    let mut head = vec![Span::styled(ticket.key.clone(), theme.accent().add_modifier(Modifier::BOLD))];
+    let mut about: Vec<String> = Vec::new();
+    about.extend(ticket.kind.clone());
+    if !ticket.priority_unset() {
+        about.extend(ticket.priority.clone());
+    }
+    let in_status = ticket.in_status(now).map(|s| format!(" for {}", crate::jira::age(s))).unwrap_or_default();
+    about.push(format!("{}{in_status}", ticket.status));
+    head.push(Span::styled(format!(" · {}", about.join(" · ")), theme.muted()));
+
+    let mut summary = Cells::new();
+    summary.push(ticket.summary.clone(), theme.text());
+
+    let mut facts = Cells::new();
+    let fact = |cells: &mut Cells, text: String, style: Style| {
+        if cells.width() > 0 {
+            cells.push(" · ", theme.faint());
+        }
+        cells.push(text, style);
+    };
+    if let Some(reporter) = &ticket.reporter {
+        fact(&mut facts, format!("from {reporter}"), theme.person());
+    }
+    if let Some(created) = ticket.created {
+        fact(&mut facts, format!("made {}", app.time.format(created, "%b %-d")), theme.text2());
+    }
+    if let Some(updated) = ticket.updated {
+        fact(&mut facts, format!("updated {}", fmt::ago(now - updated)), theme.text2());
+    }
+    let finished = board.statuses.len() > 1 && board.statuses.last().is_some_and(|s| s.eq_ignore_ascii_case(&ticket.status));
+    if let Some(resolved) = ticket.resolved.filter(|_| finished) {
+        fact(&mut facts, format!("finished {}", moment(app, resolved, now)), theme.sev(Severity::Ok));
+    }
+    if let (Some(day), Some(date)) = (ticket.due_day(), &ticket.due) {
+        let today = crate::jira::today(now, app.time.offset_s(now));
+        let sev = crate::jira::due_severity(day, today, finished);
+        let style = if sev.is_problem() { theme.sev(sev).add_modifier(Modifier::BOLD) } else { theme.text2() };
+        fact(&mut facts, format!("due {date} ({})", crate::jira::due_label(day, today)), style);
+    }
+    if let Some(logged) = ticket.logged_s {
+        fact(&mut facts, format!("{} logged", crate::jira::logged(logged)), theme.text2());
+    }
+    if let Some(parent) = &ticket.parent {
+        fact(&mut facts, format!("under {parent}"), theme.accent());
+    }
+    if !ticket.labels.is_empty() {
+        fact(&mut facts, ticket.labels.join(", "), theme.muted());
+    }
+
+    let mut link = Cells::new();
+    if let Some(url) = board.link(&ticket.key) {
+        link.push(url, theme.accent());
+        link.push(" · ", theme.faint());
+    }
+    link.push("⏎ opens it · y copies the link · r reads Jira again", theme.faint());
+    (head, vec![summary.line_unpadded(width), facts.line_unpadded(width), link.line_unpadded(width)])
 }

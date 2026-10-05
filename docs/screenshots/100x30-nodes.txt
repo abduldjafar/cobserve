@@ -1,4 +1,4 @@
-  ◆ cobserve   ✖ critical             1 n  2 q  3 m  4 t  5 s                ● live   15:52:07 WIB  
+  ◆ cobserve   ✖ critical        1 n  2 q  3 m  4 t  5 a  6 j  7 s           ● live   15:52:07 WIB  
   ━━ Subuh ━━━━━ Terbit ━━━━━ Dzuhur ━━━━━ Ashar ━●┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
                                                                                                     
   FLEET   9 nodes · 1 hot   mem ━━━╸━━━━━━ 36.4%   cpu ━━━╺━━━━━━ 28.7%   queries 15 · 4 ✕          

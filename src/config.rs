@@ -66,10 +66,52 @@ impl std::fmt::Debug for RedashConfig {
     }
 }
 
+/// Jira for view 6: where it is, a personal access token, and the board's columns.
+#[derive(Clone, PartialEq, Eq)]
+pub struct JiraConfig {
+    pub url: Option<String>,
+    pub token: Option<String>,
+    /// The columns, left to right; the last is where finished tickets go.
+    pub statuses: Vec<String>,
+    /// How many days of finished tickets the last column shows.
+    pub done_days: u32,
+}
+
+impl std::fmt::Debug for JiraConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JiraConfig")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "…"))
+            .field("statuses", &self.statuses)
+            .field("done_days", &self.done_days)
+            .finish()
+    }
+}
+
+/// Airflow for view 5: where it is, and the login its web UI takes.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct AirflowConfig {
+    pub url: Option<String>,
+    pub user: Option<String>,
+    pub password: Option<String>,
+}
+
+impl std::fmt::Debug for AirflowConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AirflowConfig")
+            .field("url", &self.url)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "…"))
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub clickhouse: ClickHouseConfig,
     pub redash: RedashConfig,
+    pub jira: JiraConfig,
+    pub airflow: AirflowConfig,
     pub poll: Duration,
     /// Discovery runs every 60 s (§6.2).
     pub discover_every: Duration,
@@ -131,7 +173,10 @@ Usage: cobserve [--credential FILE] [--claude]
 
 Everything else comes from the environment (DESIGN.md §9): CH_SEED_URLS, CH_CLUSTER,
 CH_USER, CH_PASSWORD, CH_HTTP_PORT, REDASH_URL, REDASH_ADMIN_API_KEY, REDIS_URL,
-EMAIL_DOMAIN, POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, CLAUDE_CMD,
+EMAIL_DOMAIN, AIRFLOW_URL, AIRFLOW_USER and AIRFLOW_PASSWORD for view 5, JIRA_URL and
+JIRA_TOKEN (a personal access token) for view 6 with JIRA_STATUSES (the board's columns,
+comma-separated; In progress,In Review,Feedback,Done) and JIRA_DONE_DAYS (how far back the
+last one reaches; 7), POLL_MS, THEME, NO_COLOR, FAKE=1 for a generated fleet, CLAUDE_CMD,
 OPENCODE_CMD and SHELL_CMD for what view 5's sessions run (default: claude, opencode, $SHELL),
 MOUSE=0 to leave the mouse to the terminal, TIME=utc for a UTC clock (the machine's own
 zone otherwise), PRAYER_CITY (e.g. Bandung) or PRAYER_AT (lat,lon) for where the prayer
@@ -359,10 +404,61 @@ fn percent_decode(text: &str) -> String {
 // `*`, `!`, `|`, `>`, `%` or `@`, or ` #` inside it).
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, expecting = "clickhouse: and redash: sections")]
+#[serde(deny_unknown_fields, expecting = "clickhouse:, redash:, airflow: and jira: sections")]
 struct FileContents {
     clickhouse: Option<FileClickHouse>,
     redash: Option<FileRedash>,
+    airflow: Option<FileAirflow>,
+    jira: Option<FileJira>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "url:, user: and password:")]
+struct FileAirflow {
+    url: Option<String>,
+    user: Option<String>,
+    password: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "url:, token:, statuses: and done_days:")]
+struct FileJira {
+    url: Option<String>,
+    token: Option<String>,
+    /// A list, or one line of them separated by commas.
+    statuses: Option<FileList>,
+    done_days: Option<String>,
+}
+
+/// `statuses: [In progress, Done]`, a list under it, or `statuses: In progress, Done`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FileList {
+    Many(Vec<String>),
+    One(String),
+}
+
+impl FileList {
+    fn items(&self) -> Vec<String> {
+        match self {
+            FileList::Many(items) => items.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+            FileList::One(line) => split_list(line),
+        }
+    }
+}
+
+/// `In progress, In Review,Done` → the names, trimmed, empty ones dropped.
+fn split_list(line: &str) -> Vec<String> {
+    line.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+/// An http(s) URL, or what is wrong with it — never repeating it: it might carry a login.
+fn web_url(name: &'static str, url: Option<String>) -> Result<Option<String>, ConfigError> {
+    match url {
+        Some(url) if url.starts_with("http://") || url.starts_with("https://") => Ok(Some(url.trim_end_matches('/').to_string())),
+        Some(_) => Err(ConfigError::Bad(name, "is not an http:// or https:// url".to_string())),
+        None => Ok(None),
+    }
 }
 
 #[derive(Deserialize)]
@@ -574,6 +670,46 @@ impl Config {
                 .filter(|value| !value.is_empty())
                 .or_else(|| env.get(name))
         };
+
+        // Airflow and Jira are optional, like Redash: half a configuration is worth a word in the
+        // footer, not a refusal to start.
+        let airflow_file = file.and_then(|f| f.contents.airflow.as_ref());
+        let airflow = AirflowConfig {
+            url: web_url("AIRFLOW_URL", pick(airflow_file.and_then(|a| a.url.as_ref()), "AIRFLOW_URL"))?,
+            user: pick(airflow_file.and_then(|a| a.user.as_ref()), "AIRFLOW_USER"),
+            // A password is taken as written, spaces and all.
+            password: airflow_file
+                .and_then(|a| a.password.clone())
+                .filter(|p| !p.is_empty())
+                .or_else(|| env.get("AIRFLOW_PASSWORD")),
+        };
+        if airflow.url.is_some() && (airflow.user.is_none() || airflow.password.is_none()) {
+            warnings.push("Airflow has a url but no user and password — AIRFLOW_USER and AIRFLOW_PASSWORD, or under airflow: in the file".to_string());
+        }
+
+        let jira_file = file.and_then(|f| f.contents.jira.as_ref());
+        let statuses = match jira_file.and_then(|j| j.statuses.as_ref()).map(FileList::items) {
+            Some(list) if !list.is_empty() => list,
+            _ => env
+                .get("JIRA_STATUSES")
+                .map(|line| split_list(&line))
+                .filter(|list| !list.is_empty())
+                .unwrap_or_else(|| crate::jira::DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect()),
+        };
+        let done_days = match (file, jira_file.and_then(|j| j.done_days.as_deref())) {
+            (Some(file), Some(raw)) => raw.trim().parse().map_err(|_| file.error("jira: done_days is not a number of days"))?,
+            _ => env.number("JIRA_DONE_DAYS", crate::jira::DEFAULT_DONE_DAYS)?,
+        };
+        let jira = JiraConfig {
+            url: web_url("JIRA_URL", pick(jira_file.and_then(|j| j.url.as_ref()), "JIRA_URL"))?,
+            token: pick(jira_file.and_then(|j| j.token.as_ref()), "JIRA_TOKEN"),
+            statuses,
+            done_days,
+        };
+        if jira.url.is_some() != jira.token.is_some() {
+            warnings.push("Jira needs both a url and a token — JIRA_URL and JIRA_TOKEN, or under jira: in the file".to_string());
+        }
+
         Ok(Config {
             clickhouse,
             redash: RedashConfig {
@@ -581,6 +717,8 @@ impl Config {
                 admin_api_key: pick(redash.and_then(|r| r.api_key.as_ref()), "REDASH_ADMIN_API_KEY"),
                 redis_url: pick(redash.and_then(|r| r.redis_url.as_ref()), "REDIS_URL"),
             },
+            jira,
+            airflow,
             poll: Duration::from_millis(env.number("POLL_MS", 2000u64)?),
             discover_every: Duration::from_secs(60),
             fake,
@@ -997,5 +1135,63 @@ redash:
         let err = Config::load_with(&missing, &none).unwrap_err().to_string();
         assert!(err.contains("nope.yaml: cannot read it"), "{err}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn airflow_and_jira_come_from_the_environment_and_are_optional() {
+        let config = from(&[("FAKE", "1")]).unwrap();
+        assert_eq!(config.jira.url, None);
+        assert_eq!(config.jira.statuses, ["In progress", "In Review", "Feedback", "Done"], "the board's columns");
+        assert_eq!(config.jira.done_days, 7, "the board hides what was finished a week ago");
+        assert_eq!(config.airflow, AirflowConfig::default());
+
+        let config = from(&[
+            ("FAKE", "1"),
+            ("JIRA_URL", "https://jira.example.net/"),
+            ("JIRA_TOKEN", "tok3n-xyz"),
+            ("JIRA_STATUSES", "To Do, In progress ,,Done"),
+            ("JIRA_DONE_DAYS", "14"),
+            ("AIRFLOW_URL", "https://airflow.example.net"),
+            ("AIRFLOW_USER", "me"),
+            ("AIRFLOW_PASSWORD", "s3cret-xyz"),
+        ])
+        .unwrap();
+        assert_eq!(config.jira.url.as_deref(), Some("https://jira.example.net"));
+        assert_eq!(config.jira.statuses, ["To Do", "In progress", "Done"]);
+        assert_eq!(config.jira.done_days, 14);
+        assert_eq!(config.airflow.user.as_deref(), Some("me"));
+        assert_eq!(config.airflow.password.as_deref(), Some("s3cret-xyz"));
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("tok3n-xyz") && !debug.contains("s3cret-xyz"), "never printed: {debug}");
+
+        let err = from(&[("FAKE", "1"), ("JIRA_URL", "jira.example.net")]).unwrap_err().to_string();
+        assert!(err.contains("JIRA_URL") && err.contains("https://"), "{err}");
+        let err = from(&[("FAKE", "1"), ("JIRA_DONE_DAYS", "a week")]).unwrap_err().to_string();
+        assert!(err.contains("JIRA_DONE_DAYS"), "{err}");
+        let half = from(&[("FAKE", "1"), ("JIRA_URL", "https://jira.example.net"), ("AIRFLOW_URL", "https://airflow.example.net")]).unwrap();
+        assert!(half.warnings.iter().any(|w| w.contains("JIRA_TOKEN")), "{:?}", half.warnings);
+        assert!(half.warnings.iter().any(|w| w.contains("AIRFLOW_PASSWORD")), "{:?}", half.warnings);
+    }
+
+    #[test]
+    fn the_file_s_airflow_and_jira_win_over_the_environment() {
+        const SERVERS: &str = "clickhouse:\n  cluster: c\n  servers:\n    - url: http://a:8123\n      user: u\n      password: p\n";
+        let yaml = format!(
+            "{SERVERS}jira:\n  url: https://jira.example.net\n  token: \"from the file\"\n  statuses: [In progress, Done]\n  done_days: 3\nairflow:\n  url: https://airflow.example.net\n  user: me\n  password: \" spaced \"\n"
+        );
+        let config = with_file(&yaml, &[("JIRA_TOKEN", "from env"), ("AIRFLOW_USER", "someone else")]).unwrap();
+        assert_eq!(config.jira.token.as_deref(), Some("from the file"));
+        assert_eq!(config.jira.statuses, ["In progress", "Done"]);
+        assert_eq!(config.jira.done_days, 3);
+        assert_eq!(config.airflow.user.as_deref(), Some("me"));
+        assert_eq!(config.airflow.password.as_deref(), Some(" spaced "), "a password is taken as written");
+
+        let line = with_file(&format!("{SERVERS}jira:\n  statuses: In progress, In Review\n"), &[]).unwrap();
+        assert_eq!(line.jira.statuses, ["In progress", "In Review"], "one line, commas between");
+        let bad = with_file(&format!("{SERVERS}jira:\n  done_days: soon\n"), &[]).unwrap_err().to_string();
+        assert!(bad.contains("done_days") && !bad.contains("soon"), "{bad}");
+        let unknown = with_file(&format!("{SERVERS}jira:\n  password: x\n"), &[]).unwrap_err().to_string();
+        assert!(unknown.contains("password") && !unknown.contains(": x"), "{unknown}");
     }
 }
