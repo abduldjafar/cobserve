@@ -1,0 +1,36 @@
+  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 2 hot   mem ━━━╸━━━━━━ 36.3% 279/768 GiB   cpu ━━━╺━━━━━━ 28.8% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  16 waiting        █ · oldest 2m04s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   ◂ kyc_onboarding_tables › scheduled · 12:30                                                               esc back   
+                                                                                                                        
+    ✔ extract        success          12:30:03       35s  try 1/2    SSHOperator       airflow-worker-1                 
+    ✔ validate       success          12:30:43       35s  try 1/2    PythonOperator    airflow-worker-1                 
+    ✔ transform      success          12:31:23       35s  try 1/2    PythonOperator    airflow-worker-1                 
+    ✔ load           success          12:32:03       35s  try 1/2    SSHOperator       airflow-worker-1                 
+  ▌ ✖ build_cohorts  failed           12:32:43       35s  try 1/2    PythonOperator    airflow-worker-1                 
+    ▲ check_counts   upstream failed  —                —             PythonOperator                                     
+    ▲ publish        upstream failed  —                —             SSHOperator                                        
+    ▲ notify         upstream failed  —                —             PythonOperator                                     
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+  ─ build_cohorts ────────────────────────────────────────────────────────────────────────────────────────────────────  
+  failed · started 12:32:43 · ended 12:33:18 · 35s · try 1 of 2                                                         
+  PythonOperator · on airflow-worker-1                                                                                  
+  ⏎ its log · o in the browser · esc back                                                                               
+   ↑↓  move   ⏎  its log   esc  back   o  in the browser   y  copy link   r  read again                                 

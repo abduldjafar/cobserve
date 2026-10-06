@@ -27,6 +27,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         View::Queue => queue(app, theme, width),
         View::Map => map(app, theme, width),
         View::Tape => tape(app, theme, width),
+        View::Airflow | View::Jira if app.page().is_some() => page(app, theme, width),
         View::Airflow => airflow(app, theme, width),
         View::Jira => jira(app, theme, width),
         // View 5 has no drawer (the layout gives it none); nothing to say if asked.
@@ -953,7 +954,7 @@ fn airflow_run(
             owner.push(" · ", theme.faint());
         }
     }
-    owner.push("⏎ opens the run in Airflow · y copies its link", theme.faint());
+    owner.push("⏎ its tasks here · o in Airflow · y copies its link", theme.faint());
     (head, vec![when.line_unpadded(width), tasks.line_unpadded(width), owner.line_unpadded(width)])
 }
 
@@ -1020,7 +1021,7 @@ fn airflow_dag(
         tail.push(format!("tags {}", dag.tags.join(", ")), theme.muted());
         tail.push(" · ", theme.faint());
     }
-    tail.push("⏎ opens its grid in Airflow · y copies the link", theme.faint());
+    tail.push("⏎ its runs here · o its grid in Airflow · y copies the link", theme.faint());
     lines.push(tail.line_unpadded(width));
     (head, lines)
 }
@@ -1088,6 +1089,70 @@ fn jira(app: &App, theme: &Theme, width: usize) -> Drawer {
         link.push(url, theme.accent());
         link.push(" · ", theme.faint());
     }
-    link.push("⏎ opens it · y copies the link · r reads Jira again", theme.faint());
+    link.push("⏎ in full here · o in Jira · y copies the link · r reads again", theme.faint());
     (head, vec![summary.line_unpadded(width), facts.line_unpadded(width), link.line_unpadded(width)])
+}
+
+/// The drawer under a page: the task or run under the cursor in full, or what the page is.
+fn page(app: &App, theme: &Theme, width: usize) -> Drawer {
+    use crate::detail::{Ask, Body};
+    let Some(page) = app.page() else {
+        return (title("detail", theme), Vec::new());
+    };
+    let now = app.now();
+    let mut lines = Vec::new();
+    let head = match (&page.ask, &page.body) {
+        (Ask::Tasks { .. }, Some(Ok(Body::Tasks(_)))) => match page.task_at_cursor() {
+            Some(task) => {
+                let mut cells = Cells::new();
+                cells.push(task.state.replace('_', " "), theme.sev(task.severity()).add_modifier(Modifier::BOLD));
+                if let Some(start) = task.start {
+                    cells.push(format!(" · started {}", moment(app, start, now)), theme.text2());
+                }
+                if let Some(end) = task.end {
+                    cells.push(format!(" · ended {}", moment(app, end, now)), theme.text2());
+                }
+                if let Some(took) = task.took(now) {
+                    cells.push(format!(" · {}", fmt::dur(took as f64)), theme.text2());
+                }
+                if task.try_number > 0 {
+                    cells.push(format!(" · try {} of {}", task.try_number, task.max_tries + 1), theme.muted());
+                }
+                lines.push(cells.line_unpadded(width));
+                let mut more = Cells::new();
+                more.push(task.operator.clone().unwrap_or_default(), theme.muted());
+                if let Some(host) = &task.host {
+                    more.push(format!(" · on {host}"), theme.muted());
+                }
+                lines.push(more.line_unpadded(width));
+                lines.push(muted_line(if task.try_number > 0 { "⏎ its log · o in the browser · esc back" } else { "it has not run: no log yet · esc back" }, theme, width));
+                vec![Span::styled(task.label(), theme.strong())]
+            }
+            None => title("tasks", theme),
+        },
+        (Ask::Runs(dag), Some(Ok(Body::Runs(_)))) => match page.run_at_cursor() {
+            Some(run) => {
+                let (head, mut body) = airflow_run(&app.airflow, run, app.airflow.dag(dag), app, now, theme, width);
+                body.truncate(1);
+                body.push(muted_line("⏎ its tasks · o in the browser · esc back", theme, width));
+                return (head, body);
+            }
+            None => title(dag.clone(), theme),
+        },
+        (Ask::Log { .. }, Some(Ok(Body::Log(log)))) => {
+            lines.push(muted_line(format!("{} lines · opens at its end · g the top, G the end · o in the browser", log.len()), theme, width));
+            title("log", theme)
+        }
+        (Ask::Issue(key), _) => {
+            if let Some(url) = app.jira.link(key) {
+                let mut cells = Cells::new();
+                cells.push(url, theme.accent());
+                cells.push(" · o opens it · y copies it · esc back", theme.faint());
+                lines.push(cells.line_unpadded(width));
+            }
+            title(key.clone(), theme)
+        }
+        _ => title("detail", theme),
+    };
+    (head, lines)
 }

@@ -121,6 +121,8 @@ pub struct Viewport {
     pub airflow: Cell<usize>,
     pub jira: Cell<usize>,
     pub tape: Cell<usize>,
+    /// The first row shown of a page's list on view 5 or 6.
+    pub page: Cell<usize>,
     pub map: Cell<usize>,
     pub insights: Cell<usize>,
     /// How many tiles fit in a row of the map, so ↑ ↓ can move by a row.
@@ -195,6 +197,8 @@ pub enum Hit {
     /// A row of view 5 (a run, a DAG) and a ticket of view 6, by their place in the lists.
     AirflowRow(usize),
     Ticket(usize),
+    /// A row of a page open on view 5 — a run, a task — by its place in the page.
+    PageRow(usize),
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -268,6 +272,8 @@ pub enum Event {
     Airflow(Box<crate::airflow::Activity>),
     /// Your Jira tickets (view 6).
     Jira(Box<crate::jira::Board>),
+    /// What a page of view 5 or 6 asked for, and what came back.
+    Detail(crate::detail::Ask, Result<crate::detail::Body, String>),
     Quit,
 }
 
@@ -381,6 +387,12 @@ pub struct App {
     /// Sources `r` asked to read again, for the loop; and those whose answer is still awaited.
     refreshes: Vec<Feed>,
     reading: Vec<Feed>,
+    /// The ticket open on view 6, and the pages open on view 5 — a DAG's runs, a run's tasks, a
+    /// task's log — each over the one before; `esc` goes back.
+    pub jira_page: Option<crate::detail::Page>,
+    pub airflow_pages: Vec<crate::detail::Page>,
+    /// What those pages asked for, for the loop to read.
+    detail_asks: Vec<crate::detail::Ask>,
 }
 
 /// What a server has, for a query session: what was read last, and whether it is being read.
@@ -455,6 +467,123 @@ impl App {
             opens: Vec::new(),
             refreshes: Vec::new(),
             reading: Vec::new(),
+            jira_page: None,
+            airflow_pages: Vec::new(),
+            detail_asks: Vec::new(),
+        }
+    }
+
+    /// What the pages asked to read since the loop last asked.
+    pub fn take_detail_asks(&mut self) -> Vec<crate::detail::Ask> {
+        std::mem::take(&mut self.detail_asks)
+    }
+
+    /// The page open on the view on screen, if any.
+    pub fn page(&self) -> Option<&crate::detail::Page> {
+        match self.view {
+            View::Jira => self.jira_page.as_ref(),
+            View::Airflow => self.airflow_pages.last(),
+            _ => None,
+        }
+    }
+
+    fn page_mut(&mut self) -> Option<&mut crate::detail::Page> {
+        match self.view {
+            View::Jira => self.jira_page.as_mut(),
+            View::Airflow => self.airflow_pages.last_mut(),
+            _ => None,
+        }
+    }
+
+    /// A page opened over the view, and what it shows asked for.
+    fn open_page(&mut self, ask: crate::detail::Ask) {
+        self.detail_asks.push(ask.clone());
+        let page = crate::detail::Page::new(ask);
+        match self.view {
+            View::Jira => self.jira_page = Some(page),
+            View::Airflow => self.airflow_pages.push(page),
+            _ => {}
+        }
+    }
+
+    /// An answer for a page: to every page that asked it.
+    fn on_detail(&mut self, ask: crate::detail::Ask, result: Result<crate::detail::Body, String>) {
+        let pages = self.jira_page.iter_mut().chain(self.airflow_pages.iter_mut());
+        for page in pages.filter(|p| p.ask == ask) {
+            page.body = Some(result.clone());
+            let rows = page.rows();
+            page.cursor = page.cursor.min(rows.saturating_sub(1));
+        }
+    }
+
+    /// The keys of a page: the arrows move (or scroll), ⏎ goes a page deeper, `esc` back, `r`
+    /// reads the page again. `o` and `y` are the view's own.
+    fn on_page_key(&mut self, code: KeyCode) {
+        use crate::detail::Ask;
+        match code {
+            KeyCode::Esc | KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => {
+                match self.view {
+                    View::Jira => self.jira_page = None,
+                    _ => {
+                        self.airflow_pages.pop();
+                    }
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => self.page_step(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.page_step(1),
+            KeyCode::PageUp => self.page_step(-20),
+            KeyCode::PageDown | KeyCode::Char(' ') => self.page_step(20),
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(page) = self.page_mut() {
+                    page.cursor = 0;
+                    page.scroll = 0;
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(page) = self.page_mut() {
+                    page.cursor = page.rows().saturating_sub(1);
+                    page.scroll = usize::MAX;
+                }
+            }
+            KeyCode::Char('r') => {
+                if let Some(page) = self.page_mut() {
+                    page.body = None;
+                    let ask = page.ask.clone();
+                    self.detail_asks.push(ask);
+                }
+            }
+            KeyCode::Char('o') => self.open_at_cursor(),
+            KeyCode::Char('y') => self.copy_link(),
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                let next = match self.page() {
+                    Some(page) => match (&page.ask, page.run_at_cursor(), page.task_at_cursor()) {
+                        (Ask::Runs(dag), Some(run), _) => Some(Ask::Tasks { dag: dag.clone(), run: run.id.clone() }),
+                        (Ask::Tasks { dag, run }, _, Some(task)) if task.try_number > 0 => Some(Ask::Log {
+                            dag: dag.clone(),
+                            run: run.clone(),
+                            task: task.id.clone(),
+                            map_index: task.map_index,
+                            attempt: task.try_number,
+                        }),
+                        (Ask::Tasks { .. }, _, Some(task)) => {
+                            self.notice = Some((format!("{} has not run yet: no log", task.label()), SystemTime::now()));
+                            None
+                        }
+                        _ => None,
+                    },
+                    None => None,
+                };
+                if let Some(ask) = next {
+                    self.open_page(ask);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn page_step(&mut self, delta: isize) {
+        if let Some(page) = self.page_mut() {
+            page.step(delta);
         }
     }
 
@@ -543,11 +672,45 @@ impl App {
 
     /// The page of the row under the cursor on view 5 or 6.
     fn link_at_cursor(&self) -> Option<String> {
+        use crate::airflow::RowKey;
+        use crate::detail::Ask;
+        if let Some(page) = self.page() {
+            return match &page.ask {
+                Ask::Issue(key) => self.jira.link(key),
+                Ask::Runs(dag) => match page.run_at_cursor() {
+                    Some(run) => self.airflow.link(&RowKey::Running(dag.clone(), run.id.clone())),
+                    None => self.airflow.link(&RowKey::Dag(dag.clone())),
+                },
+                Ask::Tasks { dag, run } => {
+                    let link = self.airflow.link(&RowKey::Running(dag.clone(), run.clone()))?;
+                    Some(match page.task_at_cursor() {
+                        Some(task) => format!("{link}&task_id={}", crate::sources::segment(&task.id)),
+                        None => link,
+                    })
+                }
+                Ask::Log { dag, run, task, .. } => {
+                    let link = self.airflow.link(&RowKey::Running(dag.clone(), run.clone()))?;
+                    Some(format!("{link}&task_id={}&tab=logs", crate::sources::segment(task)))
+                }
+            };
+        }
         match self.view {
             View::Airflow => self.airflow.link(self.airflow_selected.as_ref()?),
             View::Jira => self.jira.link(self.jira_selected.as_deref()?),
             _ => None,
         }
+    }
+
+    /// `⏎` on view 5's lists: a run's tasks, or a DAG's runs, in a page here.
+    fn open_airflow_row(&mut self) {
+        use crate::airflow::RowKey;
+        use crate::detail::Ask;
+        let ask = match self.airflow_selected.clone() {
+            Some(RowKey::Running(dag, run) | RowKey::Queued(dag, run) | RowKey::Failed(dag, run)) => Ask::Tasks { dag, run },
+            Some(RowKey::Dag(dag)) => Ask::Runs(dag),
+            None => return,
+        };
+        self.open_page(ask);
     }
 
     /// `⏎`, or a second click: the row's page in the browser.
@@ -578,6 +741,9 @@ impl App {
     /// View 5's keys: ↑ ↓ move, ⏎ opens the run or the DAG in Airflow, `y` copies its link, `r`
     /// reads again.
     fn on_airflow_key(&mut self, code: KeyCode) {
+        if !self.airflow_pages.is_empty() {
+            return self.on_page_key(code);
+        }
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.move_airflow(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_airflow(1),
@@ -585,7 +751,8 @@ impl App {
             KeyCode::PageDown => self.move_airflow(10),
             KeyCode::Home => self.move_airflow(isize::MIN / 2),
             KeyCode::End => self.move_airflow(isize::MAX / 2),
-            KeyCode::Enter => self.open_at_cursor(),
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.open_airflow_row(),
+            KeyCode::Char('o') => self.open_at_cursor(),
             KeyCode::Char('y') => self.copy_link(),
             KeyCode::Char('r') => self.read_again(Feed::Airflow),
             _ => {}
@@ -594,6 +761,9 @@ impl App {
 
     /// View 6's keys, the same as view 5's for a ticket.
     fn on_jira_key(&mut self, code: KeyCode) {
+        if self.jira_page.is_some() {
+            return self.on_page_key(code);
+        }
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.move_jira(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_jira(1),
@@ -601,7 +771,12 @@ impl App {
             KeyCode::PageDown => self.move_jira(10),
             KeyCode::Home => self.move_jira(isize::MIN / 2),
             KeyCode::End => self.move_jira(isize::MAX / 2),
-            KeyCode::Enter => self.open_at_cursor(),
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                if let Some(key) = self.jira_selected.clone() {
+                    self.open_page(crate::detail::Ask::Issue(key));
+                }
+            }
+            KeyCode::Char('o') => self.open_at_cursor(),
             KeyCode::Char('y') => self.copy_link(),
             KeyCode::Char('r') => self.read_again(Feed::Jira),
             _ => {}
@@ -754,6 +929,7 @@ impl App {
                     self.on_jira(*board)
                 }
             }
+            Event::Detail(ask, result) => self.on_detail(ask, result),
             Event::Notice(message) => {
                 let now = SystemTime::now();
                 // The same message twice in a row does not restart the clock: a source that
@@ -1240,6 +1416,15 @@ impl App {
                         self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
+                Some(Hit::PageRow(index)) => {
+                    let again = self.page().is_some_and(|p| p.cursor == index);
+                    if let Some(page) = self.page_mut() {
+                        page.cursor = index.min(page.rows().saturating_sub(1));
+                    }
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
                 Some(Hit::Pane) | None => {}
             },
             // A drag in a query session's text selects, wherever the mouse goes meanwhile.
@@ -1264,6 +1449,7 @@ impl App {
                         self.insight_selection = self.insight_selection.saturating_add_signed(delta).min(last);
                     }
                     View::Nodes | View::Queue => self.move_by(delta),
+                    View::Airflow | View::Jira if self.page().is_some() => self.page_step(delta * 3),
                     View::Airflow => self.move_airflow(delta),
                     View::Jira => self.move_jira(delta),
                     View::Tape => {

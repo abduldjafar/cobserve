@@ -15,6 +15,7 @@ mod complete;
 mod config;
 mod console;
 mod conversations;
+mod detail;
 mod fake;
 mod fmt;
 mod folders;
@@ -202,7 +203,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     let (airflow_tx, airflow_rx) = mpsc::unbounded_channel::<()>();
     let (jira_tx, jira_rx) = mpsc::unbounded_channel::<()>();
     let asks = Asks { cancels: cancel_rx, airflow: airflow_rx, jira: jira_rx };
-    spawn_sources(&config, tx.clone(), Arc::clone(&consoles.targets), asks);
+    let details = spawn_sources(&config, tx.clone(), Arc::clone(&consoles.targets), asks);
     // Anything a source could not even start with belongs on screen, not in a log file.
     for warning in &config.warnings {
         app.update(Event::Notice(warning.clone()));
@@ -300,6 +301,9 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         }
         for url in app.take_opens() {
             open_in_browser(&url);
+        }
+        for ask in app.take_detail_asks() {
+            details.read(ask, tx.clone());
         }
 
         if app.quit {
@@ -863,21 +867,60 @@ struct Asks {
     jira: mpsc::UnboundedReceiver<()>,
 }
 
+/// What reads the pages of views 5 and 6 when they ask: each ask a task of its own, so a page
+/// never waits for a poll, nor the screen for a page.
+struct Details {
+    airflow: Option<sources::airflow::AirflowDetails>,
+    jira: Option<sources::jira::JiraDetails>,
+    fake: bool,
+}
+
+impl Details {
+    fn read(&self, ask: detail::Ask, tx: mpsc::UnboundedSender<Event>) {
+        use detail::{Ask, Body};
+        if self.fake {
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+                let answer = fake::detail(&ask, now);
+                let _ = tx.send(Event::Detail(ask, answer));
+            });
+            return;
+        }
+        let (airflow, jira) = (self.airflow.clone(), self.jira.clone());
+        tokio::spawn(async move {
+            let answer = match (&ask, airflow, jira) {
+                (Ask::Issue(key), _, Some(jira)) => jira.issue(key).await.map(|i| Body::Issue(Box::new(i))),
+                (Ask::Runs(dag), Some(airflow), _) => airflow.runs(dag).await.map(Body::Runs),
+                (Ask::Tasks { dag, run }, Some(airflow), _) => airflow.tasks(dag, run).await.map(Body::Tasks),
+                (Ask::Log { dag, run, task, map_index, attempt }, Some(airflow), _) => {
+                    airflow.log(dag, run, task, *map_index, *attempt).await.map(|text| Body::Log(detail::log_lines(&text)))
+                }
+                (Ask::Issue(_), _, None) => Err("Jira is not configured".to_string()),
+                (_, None, _) => Err("Airflow is not configured".to_string()),
+            };
+            let _ = tx.send(Event::Detail(ask, answer));
+        });
+    }
+}
+
 fn spawn_sources(
     config: &Config,
     tx: mpsc::UnboundedSender<Event>,
     console_targets: Arc<std::sync::Mutex<HashMap<String, sources::clickhouse::ConsoleTarget>>>,
     asks: Asks,
-) {
+) -> Details {
     let Asks { mut cancels, airflow: airflow_asks, jira: jira_asks } = asks;
+    let mut details = Details { airflow: None, jira: None, fake: config.fake };
     if config.fake {
         tokio::spawn(fake_loop(config.poll, tx, cancels, airflow_asks, jira_asks));
-        return;
+        return details;
     }
 
     // Airflow and Jira are optional (§9, like Redash): unconfigured, their views say how.
     match sources::airflow::AirflowSource::new(&config.airflow) {
         Some(airflow) => {
+            details.airflow = Some(airflow.details());
             tokio::spawn(airflow.run(tx.clone(), airflow_asks));
         }
         None => {
@@ -886,6 +929,7 @@ fn spawn_sources(
     }
     match sources::jira::JiraSource::new(&config.jira) {
         Some(jira) => {
+            details.jira = Some(jira.details());
             tokio::spawn(jira.run(tx.clone(), jira_asks));
         }
         None => {
@@ -962,6 +1006,7 @@ fn spawn_sources(
             });
         }
     }
+    details
 }
 
 /// FAKE=1: generated data on the same timers the real sources use, so the UI cannot tell the

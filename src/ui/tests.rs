@@ -1302,7 +1302,7 @@ fn airflow_shows_what_runs_waits_and_failed_and_every_dag_s_day() {
     assert!(row("▌").contains("test_clickhouse_connection"), "the cursor starts on the first row: {screen}");
     // The drawer says what the stuck run's task waits for.
     assert!(screen.contains("stuck: running for more than a day"), "{screen}");
-    assert!(screen.lines().last().unwrap().contains("⏎  open in Airflow"), "{screen}");
+    assert!(screen.lines().last().unwrap().contains("⏎  details") && screen.lines().last().unwrap().contains("o  open in Airflow"), "{screen}");
 
     // The day's timeline, under hours of the clock on screen.
     let mut app = app;
@@ -1350,12 +1350,12 @@ fn jira_shows_your_tickets_in_the_board_s_columns() {
 }
 
 #[test]
-fn a_ticket_or_a_run_opens_with_enter_or_a_second_click_and_r_reads_again() {
+fn a_ticket_or_a_run_opens_in_the_browser_with_o_and_r_reads_again() {
     let mut app = app_on('6');
     render(&app, 120, 36);
     app.update(key(KeyCode::Down));
     let key_now = app.jira_selection().map(str::to_string);
-    app.update(key(KeyCode::Enter));
+    app.update(key(KeyCode::Char('o')));
     assert_eq!(app.take_opens(), [format!("https://jira.example.net/browse/{}", key_now.clone().unwrap())]);
     app.update(key(KeyCode::Char('y')));
     assert_eq!(app.take_clipboard().len(), 1);
@@ -1373,15 +1373,113 @@ fn a_ticket_or_a_run_opens_with_enter_or_a_second_click_and_r_reads_again() {
     let screen = render(&app, 120, 36);
     assert!(screen.contains("DATA-2647") && screen.contains("no answer within 15 s"), "{screen}");
 
-    // A click on a run puts the cursor there; a second opens its grid.
+    // A click on a run puts the cursor there; a second opens its tasks here.
     let mut app = app_on('5');
     render(&app, 120, 36);
     click_on(&mut app, Hit::AirflowRow(2));
     assert_eq!(app.airflow_rows().get(2), app.airflow_selection());
     render(&app, 120, 36);
     click_on(&mut app, Hit::AirflowRow(2));
+    assert!(matches!(app.page().map(|p| &p.ask), Some(crate::detail::Ask::Tasks { .. })), "{:?}", app.page());
+    app.update(key(KeyCode::Char('o')));
     let opened = app.take_opens();
     assert!(opened.len() == 1 && opened[0].starts_with("https://airflow.example.net/dags/"), "{opened:?}");
+}
+
+/// The answers a page asked for, as FAKE=1 gives them.
+fn answer_pages(app: &mut App) {
+    for ask in app.take_detail_asks() {
+        let answer = crate::fake::detail(&ask, MOMENT as i64);
+        app.update(Event::Detail(ask, answer));
+    }
+}
+
+#[test]
+fn enter_on_a_ticket_shows_it_in_full_here() {
+    let mut app = app_on('6');
+    for _ in 0..4 {
+        app.update(key(KeyCode::Down));
+    }
+    assert_eq!(app.jira_selection(), Some("DATA-2647"));
+    app.update(key(KeyCode::Enter));
+    assert!(render(&app, 120, 36).contains("reading…"), "until the ticket comes");
+    answer_pages(&mut app);
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("◂ DATA-2647 · Client account balances"), "{screen}");
+    assert!(screen.contains("─ DESCRIPTION") && screen.contains("Asked for") && screen.contains("• one row per day"), "{screen}");
+    assert!(!screen.contains("h3.") && !screen.contains("{code"), "the markup is gone: {screen}");
+    assert!(screen.contains("SELECT toDate(created_at)"), "a code block's lines: {screen}");
+    for _ in 0..30 {
+        app.update(key(KeyCode::Down));
+    }
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("─ COMMENTS · 2") && screen.contains("Jurgita Petrova"), "scrolled to the comments: {screen}");
+    assert!(screen.lines().last().unwrap().contains("esc  back"), "{screen}");
+    app.update(key(KeyCode::Esc));
+    assert!(app.page().is_none());
+    assert!(render(&app, 120, 36).contains("─ IN REVIEW"), "back on the board");
+}
+
+#[test]
+fn a_dag_s_runs_a_run_s_tasks_and_a_failed_task_s_log_open_one_over_the_other() {
+    let mut app = app_on('5');
+    // The DAG whose day has a failure, from its line in ACTIVITY.
+    let at = app.airflow_rows().iter().position(|k| *k == crate::airflow::RowKey::Dag("kyc_onboarding_tables".into())).expect("its line");
+    app.update(key(KeyCode::Home));
+    for _ in 0..at {
+        app.update(key(KeyCode::Down));
+    }
+    app.update(key(KeyCode::Enter));
+    answer_pages(&mut app);
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("◂ kyc_onboarding_tables › its runs"), "{screen}");
+    assert!(screen.contains("✖ scheduled · 12:30") && screen.contains("failed"), "{screen}");
+    // Its failed run: the run's tasks, the failed one red and marked.
+    app.update(key(KeyCode::Enter));
+    answer_pages(&mut app);
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("✖ build_cohorts") && screen.contains("upstream failed"), "{screen}");
+    let failed = match &app.page().unwrap().body {
+        Some(Ok(crate::detail::Body::Tasks(tasks))) => tasks.iter().position(|t| t.state == "failed").unwrap(),
+        other => panic!("{other:?}"),
+    };
+    for _ in 0..failed {
+        app.update(key(KeyCode::Down));
+    }
+    assert!(render(&app, 120, 36).contains("⏎ its log"), "the drawer says where ⏎ goes");
+    app.update(key(KeyCode::Enter));
+    answer_pages(&mut app);
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("build_cohorts · log of try 1"), "{screen}");
+    assert!(screen.contains("AirflowException: 3 table(s) need a look"), "it opens at the end, where the failure is: {screen}");
+    // esc, three times: back to the tasks, the runs, the view.
+    app.update(key(KeyCode::Esc));
+    assert!(matches!(app.page().map(|p| &p.ask), Some(crate::detail::Ask::Tasks { .. })));
+    app.update(key(KeyCode::Esc));
+    app.update(key(KeyCode::Esc));
+    assert!(app.page().is_none());
+    // A task that has not run has no log to open.
+    for (w, h) in [(80, 24), (200, 50)] {
+        assert_eq!(render(&app, w, h).lines().count(), h as usize);
+    }
+}
+
+#[test]
+fn jira_charts_the_hours_logged_this_month_day_by_day() {
+    let app = app_on('6');
+    let screen = render(&app, 120, 36);
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
+    // FAKE=1 on Sunday the 4th: Thursday 6h30 + 2h, Friday 3h + 3h + 2h; nothing at the weekend.
+    let head = row("LOGGED · October 2026");
+    assert!(head.contains("16h30m in 2 working days") && head.contains("8h15m a working day") && head.contains("today 0h"), "{head}");
+    let values = screen.lines().find(|l| l.contains("8½")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(values.contains("8½") && values.contains(" 8"), "the hours over each day: {values}");
+    assert!(row(" 9h │").contains("▇▇"), "the scale in whole hours, 8½ of 9 under it: {screen}");
+    assert!(screen.lines().any(|l| l.trim_start().starts_with("│██ ██")), "the bars' lower cells full: {screen}");
+    let days = row("  1  2  3  4  5");
+    assert!(days.contains("31"), "every day of the month: {days}");
+    let bars = screen.lines().filter(|l| l.contains('│')).count();
+    assert_eq!(bars, 2, "two rows of bars where the body is under 30 rows: {screen}");
 }
 
 #[test]
@@ -1442,8 +1540,13 @@ async fn live_airflow_and_jira() {
     if let Some(mut source) = crate::sources::jira::JiraSource::new(&jira) {
         for round in 1..=2 {
             let started = std::time::Instant::now();
-            let board = source.board().await;
+            let mut board = source.board().await;
             let since = board.tickets.iter().filter(|t| t.status_since.is_some()).count();
+            if source.time_due() {
+                let started = std::time::Instant::now();
+                let read = source.time(&mut board).await;
+                println!("jira time of the month: {read} in {:.1} s", started.elapsed().as_secs_f64());
+            }
             println!(
                 "jira read {round}: {:.1} s · reachable {} · {} tickets ({since} with their status's date) · error {:?}",
                 started.elapsed().as_secs_f64(),
@@ -1459,6 +1562,55 @@ async fn live_airflow_and_jira() {
     println!("{}", render(&app, 160, 48));
     app.update(key(KeyCode::Char('6')));
     println!("{}", render(&app, 160, 48));
+    println!("worklogs this month: {}", app.jira.worklogs.len());
+
+    // The pages: a ticket in full; the runs of a DAG that failed, its failed run's tasks, a log.
+    if let Some(source) = crate::sources::jira::JiraSource::new(&jira)
+        && let Some(key) = app.jira.rows().first().map(|t| t.key.clone())
+    {
+        let started = std::time::Instant::now();
+        let issue = source.details().issue(&key).await;
+        println!("jira page {key}: {:.1} s · {:?}", started.elapsed().as_secs_f64(), issue.as_ref().map(|i| (i.description.len(), i.comments.len(), i.subtasks.len(), i.links.len())));
+        if let Ok(issue) = issue {
+            let answer = key_enter_page(&mut app, crate::detail::Ask::Issue(key), crate::detail::Body::Issue(Box::new(issue)));
+            app.update(answer);
+            println!("{}", render(&app, 160, 48));
+        }
+    }
+    if let Some(mut source) = crate::sources::airflow::AirflowSource::new(&airflow) {
+        let activity = source.now_only().await;
+        let details = source.details();
+        let now = app.now();
+        let failed = app.airflow.sections(now).failed.first().map(|r| (r.dag.clone(), r.id.clone()));
+        let _ = activity;
+        if let Some((dag, run)) = failed {
+            let runs = details.runs(&dag).await;
+            println!("airflow page runs of {dag}: {:?}", runs.as_ref().map(Vec::len));
+            let tasks = details.tasks(&dag, &run).await;
+            println!("airflow page tasks of {run}: {:?}", tasks.as_ref().map(|t| t.iter().map(|t| (t.id.clone(), t.state.clone(), t.try_number)).collect::<Vec<_>>()));
+            if let Some(task) = tasks.ok().and_then(|t| t.into_iter().find(|t| t.state == "failed")) {
+                let started = std::time::Instant::now();
+                let log = details.log(&dag, &run, &task.id, task.map_index, task.try_number).await;
+                let lines = log.as_ref().map(|t| crate::detail::log_lines(t));
+                println!("airflow page log of {}: {:.1} s · {:?} lines", task.id, started.elapsed().as_secs_f64(), lines.as_ref().map(Vec::len));
+                if let Ok(lines) = lines {
+                    for line in lines.iter().rev().take(6).rev() {
+                        println!("  | {}", fmt::truncate(line, 150));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A page put on screen with its answer, as the loop would.
+fn key_enter_page(app: &mut App, ask: crate::detail::Ask, body: crate::detail::Body) -> Event {
+    app.update(key(KeyCode::Enter));
+    app.take_detail_asks();
+    if let Some(page) = app.jira_page.as_mut() {
+        page.ask = ask.clone();
+    }
+    Event::Detail(ask, Ok(body))
 }
 
 #[test]
@@ -2093,6 +2245,30 @@ fn export_screens() {
     jira.update(key(KeyCode::Down));
     save("120x36-jira", &mut jira, 120, 36);
     save("160x48-jira", &mut jira, 160, 48);
+    // ⏎ on it: the ticket in full.
+    jira.update(key(KeyCode::Enter));
+    answer_pages(&mut jira);
+    save("120x36-jira-ticket", &mut jira, 120, 36);
+
+    // A failed run's tasks, and the failed task's log.
+    let mut pages = app_on('5');
+    let failed = pages.airflow_rows().iter().position(|k| matches!(k, crate::airflow::RowKey::Failed(dag, _) if dag == "kyc_onboarding_tables")).expect("a failed run");
+    for _ in 0..failed {
+        pages.update(key(KeyCode::Down));
+    }
+    pages.update(key(KeyCode::Enter));
+    answer_pages(&mut pages);
+    let at = match &pages.page().expect("a page").body {
+        Some(Ok(crate::detail::Body::Tasks(tasks))) => tasks.iter().position(|t| t.state == "failed").unwrap_or(0),
+        _ => 0,
+    };
+    for _ in 0..at {
+        pages.update(key(KeyCode::Down));
+    }
+    save("120x36-airflow-tasks", &mut pages, 120, 36);
+    pages.update(key(KeyCode::Enter));
+    answer_pages(&mut pages);
+    save("120x36-airflow-log", &mut pages, 120, 36);
 
     let mut help = app_after(10);
     help.update(key(KeyCode::Char('?')));

@@ -114,6 +114,117 @@ struct ServerInfo {
 struct Myself {
     #[serde(rename = "displayName")]
     display_name: Option<String>,
+    /// The user name and key a worklog's author is known by.
+    name: Option<String>,
+    key: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ApiWorklogs {
+    #[serde(default)]
+    total: usize,
+    #[serde(default)]
+    worklogs: Vec<ApiWorklog>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiWorklog {
+    author: Option<ApiAuthor>,
+    started: Option<String>,
+    #[serde(rename = "timeSpentSeconds", default)]
+    seconds: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiAuthor {
+    name: Option<String>,
+    key: Option<String>,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorklogSearch {
+    #[serde(default)]
+    total: usize,
+    #[serde(default)]
+    issues: Vec<WorklogIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorklogIssue {
+    key: String,
+    #[serde(default)]
+    fields: WorklogFields,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct WorklogFields {
+    worklog: Option<ApiWorklogs>,
+}
+
+/// A ticket as its page shows it: what a row has, and the rest.
+#[derive(Debug, Deserialize)]
+struct ApiIssueDetail {
+    key: String,
+    #[serde(default)]
+    fields: ApiDetailFields,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ApiDetailFields {
+    #[serde(flatten)]
+    base: ApiFields,
+    description: Option<String>,
+    assignee: Option<ApiUser>,
+    comment: Option<ApiComments>,
+    #[serde(default)]
+    subtasks: Option<Vec<ApiSubtask>>,
+    #[serde(default)]
+    issuelinks: Option<Vec<ApiLink>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiComments {
+    #[serde(default)]
+    comments: Vec<ApiComment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiComment {
+    author: Option<ApiAuthor>,
+    created: Option<String>,
+    #[serde(default)]
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiSubtask {
+    key: String,
+    #[serde(default)]
+    fields: ApiLinkedFields,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ApiLinkedFields {
+    summary: Option<String>,
+    status: Option<ApiStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiLink {
+    #[serde(rename = "type")]
+    kind: Option<ApiLinkType>,
+    #[serde(rename = "inwardIssue")]
+    inward: Option<ApiSubtask>,
+    #[serde(rename = "outwardIssue")]
+    outward: Option<ApiSubtask>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiLinkType {
+    inward: Option<String>,
+    outward: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +307,100 @@ fn is_key(key: &str) -> bool {
     }
 }
 
+fn linked(how: String, issue: ApiSubtask) -> jira::Linked {
+    jira::Linked {
+        how,
+        key: issue.key,
+        summary: issue.fields.summary.unwrap_or_default(),
+        status: issue.fields.status.map(|s| s.name).unwrap_or_default(),
+    }
+}
+
+fn author_name(author: Option<ApiAuthor>) -> String {
+    author.and_then(|a| a.display_name.or(a.name)).unwrap_or_else(|| "someone".to_string())
+}
+
+/// A ticket's answer as its page shows it.
+fn issue_detail(api: ApiIssueDetail) -> jira::IssueDetail {
+    let fields = api.fields;
+    let base = ticket(ApiIssue { key: api.key.clone(), fields: fields.base, changelog: None }, None);
+    let mut links = Vec::new();
+    for link in fields.issuelinks.unwrap_or_default() {
+        let kind = link.kind;
+        if let Some(issue) = link.outward {
+            links.push(linked(kind.as_ref().and_then(|k| k.outward.clone()).unwrap_or_else(|| "links to".into()), issue));
+        } else if let Some(issue) = link.inward {
+            links.push(linked(kind.as_ref().and_then(|k| k.inward.clone()).unwrap_or_else(|| "linked from".into()), issue));
+        }
+    }
+    jira::IssueDetail {
+        key: base.key,
+        summary: base.summary,
+        status: base.status,
+        kind: base.kind,
+        priority: base.priority,
+        assignee: fields.assignee.and_then(|a| a.display_name.or(a.name)),
+        reporter: base.reporter,
+        created: base.created,
+        updated: base.updated,
+        due: base.due,
+        labels: base.labels,
+        parent: base.parent,
+        logged_s: base.logged_s,
+        description: fields.description.unwrap_or_default(),
+        subtasks: fields.subtasks.unwrap_or_default().into_iter().map(|t| linked("sub-task".into(), t)).collect(),
+        links,
+        comments: fields
+            .comment
+            .map(|c| c.comments)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| jira::Comment { author: author_name(c.author), at: c.created.as_deref().and_then(unix), body: c.body })
+            .collect(),
+    }
+}
+
+/// One GET of Jira's API with the token, as every read here makes it.
+async fn fetch<T: DeserializeOwned>(client: &reqwest::Client, base_url: &str, token: &str, path: &str, query: &[(&str, &str)]) -> Result<T, Error> {
+    let response = client
+        .get(format!("{base_url}{path}"))
+        .query(query)
+        .bearer_auth(token)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| Error::Connection(transport(e, REQUEST_TIMEOUT)))?;
+    let status = response.status();
+    let body = response.text().await.map_err(|e| Error::Connection(transport(e, REQUEST_TIMEOUT)))?;
+    if !status.is_success() {
+        return Err(Error::Http(status.as_u16(), said(&body)));
+    }
+    serde_json::from_str(&body).map_err(|e| Error::Body(why_unreadable(&body, &e)))
+}
+
+/// What reads a ticket in full when its page asks: the source's client and token, apart from the
+/// task that polls the board, so a page does not wait for a poll.
+#[derive(Clone)]
+pub struct JiraDetails {
+    base_url: String,
+    token: String,
+    client: reqwest::Client,
+}
+
+impl JiraDetails {
+    pub async fn issue(&self, key: &str) -> Result<jira::IssueDetail, String> {
+        if !is_key(key) {
+            return Err(format!("{key} is not a ticket's key"));
+        }
+        let fields = "summary,status,priority,issuetype,created,updated,resolutiondate,duedate,parent,labels,reporter,timespent,description,assignee,comment,subtasks,issuelinks";
+        let path = format!("/rest/api/2/issue/{key}");
+        fetch::<ApiIssueDetail>(&self.client, &self.base_url, &self.token, &path, &[("fields", fields)])
+            .await
+            .map(issue_detail)
+            .map_err(|e| e.to_string())
+    }
+}
+
 fn ticket(issue: ApiIssue, ranks: Option<&HashMap<String, u32>>) -> Ticket {
     let fields = issue.fields;
     let priority = fields.priority.and_then(|p| p.name).map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
@@ -236,7 +441,15 @@ pub struct JiraSource {
     /// By key: when the ticket was last updated as its history was read, and when it moved
     /// into its status.
     since: HashMap<String, (Option<i64>, Option<i64>)>,
+    /// Who the token's owner is to a worklog: user name and key.
+    me: Vec<String>,
+    /// Your worklogs of the month, and when they were read.
+    worklogs: Vec<jira::Worklog>,
+    worklogs_read: Option<std::time::Instant>,
 }
+
+/// How often the month's worklogs are read again: they change when you log time.
+const WORKLOGS_EVERY: Duration = Duration::from_secs(300);
 
 impl JiraSource {
     /// `None` when Jira is not configured: the view then says how to, instead of pretending
@@ -255,7 +468,15 @@ impl JiraSource {
             user: None,
             ranks: None,
             since: HashMap::new(),
+            me: Vec::new(),
+            worklogs: Vec::new(),
+            worklogs_read: None,
         })
+    }
+
+    /// What reads a ticket in full for its page.
+    pub fn details(&self) -> JiraDetails {
+        JiraDetails { base_url: self.base_url.clone(), token: self.token.clone(), client: self.client.clone() }
     }
 
     /// Read until the loop ends: every minute, and at once when asked. Errors are shown, never
@@ -264,15 +485,23 @@ impl JiraSource {
         let mut tick = tokio::time::interval(POLL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tokio::select! {
-                _ = tick.tick() => {}
+            let asked = tokio::select! {
+                _ = tick.tick() => false,
                 Some(()) = refresh.recv() => {
                     while refresh.try_recv().is_ok() {}
                     tick.reset();
+                    true
                 }
+            };
+            if asked {
+                self.worklogs_read = None;
             }
-            let board = self.board().await;
-            if tx.send(Event::Jira(Box::new(board))).is_err() {
+            // The board first; the month's time after it, when it is due — it is the slow part.
+            let mut board = self.board().await;
+            if tx.send(Event::Jira(Box::new(board.clone()))).is_err() {
+                return;
+            }
+            if self.time_due() && self.time(&mut board).await && tx.send(Event::Jira(Box::new(board))).is_err() {
                 return;
             }
         }
@@ -289,7 +518,10 @@ impl JiraSource {
             );
             self.version = info.ok().and_then(|i| i.version);
             match me {
-                Ok(me) => self.user = me.display_name.or_else(|| Some(String::new())),
+                Ok(me) => {
+                    self.user = me.display_name.or_else(|| Some(String::new()));
+                    self.me = [me.name, me.key].into_iter().flatten().collect();
+                }
                 Err(e) => return self.failed(e),
             }
             if let Ok(list) = priorities {
@@ -324,8 +556,68 @@ impl JiraSource {
             statuses: self.statuses.clone(),
             done_days: self.done_days,
             tickets,
+            worklogs: self.worklogs.clone(),
+            worklogs_read: self.worklogs_read.is_some(),
             taken_at: SystemTime::now(),
         }
+    }
+
+    /// Whether the month's time is to be read: every few minutes, at once after `r`.
+    pub fn time_due(&self) -> bool {
+        self.worklogs_read.is_none_or(|t| t.elapsed() >= WORKLOGS_EVERY)
+    }
+
+    /// The month's time read into `board`; whether it was. One that fails keeps the last.
+    pub async fn time(&mut self, board: &mut Board) -> bool {
+        if !board.reachable {
+            return false;
+        }
+        let Ok(worklogs) = self.read_worklogs().await else {
+            return false;
+        };
+        self.worklogs = worklogs;
+        self.worklogs_read = Some(std::time::Instant::now());
+        board.worklogs = self.worklogs.clone();
+        board.worklogs_read = true;
+        true
+    }
+
+    /// Your worklogs since the 1st of the month, on any ticket: the tickets you logged on (a
+    /// search), then each one's worklogs when the search did not bring them all.
+    async fn read_worklogs(&self) -> Result<Vec<jira::Worklog>, Error> {
+        let jql = "worklogAuthor = currentUser() AND worklogDate >= startOfMonth(-1d)";
+        let limit = PAGE.to_string();
+        let mut issues = Vec::new();
+        for page in 0..MAX_PAGES {
+            let start = (page * PAGE).to_string();
+            let query = [("jql", jql), ("fields", "worklog"), ("maxResults", &limit), ("startAt", &start)];
+            let search: WorklogSearch = self.get("/rest/api/2/search", &query).await?;
+            let got = search.issues.len();
+            issues.extend(search.issues);
+            if got < PAGE || issues.len() >= search.total {
+                break;
+            }
+        }
+        let mut out = Vec::new();
+        for issue in issues {
+            let mut logs = issue.fields.worklog.unwrap_or_default();
+            if logs.worklogs.len() < logs.total && is_key(&issue.key) {
+                let path = format!("/rest/api/2/issue/{}/worklog", issue.key);
+                if let Ok(all) = self.get::<ApiWorklogs>(&path, &[]).await {
+                    logs = all;
+                }
+            }
+            for log in logs.worklogs {
+                let mine = log.author.as_ref().is_some_and(|a| {
+                    [a.name.as_deref(), a.key.as_deref()].into_iter().flatten().any(|n| self.me.iter().any(|m| m == n))
+                });
+                let day = log.started.as_deref().and_then(|s| s.get(..10)).and_then(jira::day_number);
+                if let (true, Some(day)) = (mine, day) {
+                    out.push(jira::Worklog { key: issue.key.clone(), day, seconds: log.seconds });
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn failed(&self, error: Error) -> Board {
@@ -378,21 +670,7 @@ impl JiraSource {
     }
 
     async fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T, Error> {
-        let response = self
-            .client
-            .get(format!("{}{path}", self.base_url))
-            .query(query)
-            .bearer_auth(&self.token)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .await
-            .map_err(|e| Error::Connection(transport(e, REQUEST_TIMEOUT)))?;
-        let status = response.status();
-        let body = response.text().await.map_err(|e| Error::Connection(transport(e, REQUEST_TIMEOUT)))?;
-        if !status.is_success() {
-            return Err(Error::Http(status.as_u16(), said(&body)));
-        }
-        serde_json::from_str(&body).map_err(|e| Error::Body(why_unreadable(&body, &e)))
+        fetch(&self.client, &self.base_url, &self.token, path, query).await
     }
 }
 
@@ -487,5 +765,38 @@ mod tests {
         assert!(!is_key("DATA-12647) OR (1=1"));
         assert!(!is_key("DATA"));
         assert!(!is_key("-12"));
+    }
+
+    #[test]
+    fn a_ticket_in_full_reads_its_description_links_and_comments() {
+        let api: ApiIssueDetail = serde_json::from_str(
+            r#"{ "key": "DATA-12647", "fields": {
+                "summary": "Client balances", "status": { "name": "In Review" }, "priority": { "name": "ASAP" },
+                "description": "h3. Asked for\n* a table", "assignee": { "name": "a.d", "displayName": "Abdul Djafar" },
+                "subtasks": [ { "key": "DATA-12660", "fields": { "summary": "Code review", "status": { "name": "Done" } } } ],
+                "issuelinks": [ { "type": { "inward": "is blocked by", "outward": "blocks" },
+                                  "outwardIssue": { "key": "DATA-1", "fields": { "summary": "Dashboards", "status": { "name": "Backlog" } } } } ],
+                "comment": { "comments": [ { "author": { "displayName": "Ana K" }, "created": "2026-10-02T09:00:00.000+0300", "body": "Looks good" } ] }
+            } }"#,
+        )
+        .expect("parses");
+        let detail = issue_detail(api);
+        assert_eq!((detail.status.as_str(), detail.assignee.as_deref()), ("In Review", Some("Abdul Djafar")));
+        assert_eq!(detail.description, "h3. Asked for\n* a table");
+        assert_eq!((detail.subtasks[0].key.as_str(), detail.subtasks[0].status.as_str()), ("DATA-12660", "Done"));
+        assert_eq!((detail.links[0].how.as_str(), detail.links[0].key.as_str()), ("blocks", "DATA-1"));
+        assert_eq!((detail.comments[0].author.as_str(), detail.comments[0].at), ("Ana K", unix("2026-10-02T06:00:00Z")));
+    }
+
+    #[test]
+    fn a_worklog_answer_has_its_author_day_and_time() {
+        let search: WorklogSearch = serde_json::from_str(
+            r#"{ "total": 1, "issues": [ { "key": "DATA-12788", "fields": { "worklog": { "total": 1, "worklogs": [
+                { "author": { "name": "abdul.djafar@example.net", "key": "JIRAUSER1" }, "started": "2026-10-02T00:00:00.000+0000", "timeSpentSeconds": 10800 } ] } } } ] }"#,
+        )
+        .expect("parses");
+        let log = &search.issues[0].fields.worklog.as_ref().unwrap().worklogs[0];
+        assert_eq!(log.seconds, 10_800);
+        assert_eq!(log.started.as_deref().and_then(|s| s.get(..10)).and_then(jira::day_number), jira::day_number("2026-10-02"));
     }
 }

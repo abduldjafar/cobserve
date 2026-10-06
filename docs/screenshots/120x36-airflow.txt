@@ -32,5 +32,5 @@
   ─ test_clickhouse_connection · manual__2026-01-15T03:52:07+00:00 ───────────────────────────────────────────────────  
   running · stuck: running for more than a day · started Jan 15 10:52 · for 262d04h · manual                            
   tasks 0 of 1 done · ↻ waiting for a retry: ping_clickhouse                                                            
-  airflow · Never, external triggers only · ⏎ opens the run in Airflow · y copies its link                              
-   ↑↓  move   ⏎  open in Airflow   y  copy link   r  read now   p  pause   ?  help   q  quit                            
+  airflow · Never, external triggers only · ⏎ its tasks here · o in Airflow · y copies its link                         
+   ↑↓  move   ⏎  details   o  open in Airflow   y  copy link   r  read now   p  pause   ?  help   q  quit               
