@@ -1226,6 +1226,32 @@ pub fn airflow(now: i64) -> crate::airflow::Activity {
     }
 }
 
+const HOUR: i64 = 3600;
+const DAY: i64 = 86_400;
+
+/// FAKE=1's board: (key, summary, status, priority, rank, kind, in status for, logged, due in
+/// days).
+#[allow(clippy::type_complexity)]
+const FAKE_TICKETS: &[(&str, &str, &str, &str, u32, &str, i64, u64, Option<i64>)] = &[
+    ("DATA-2850", "DE - STATEMENT_DAILY_AGG: upstream moves drifted 131 historical EUR dates", "In progress", "Unspecified", 6, "Task", 12 * HOUR, 0, Some(1)),
+    ("DATA-2849", "DE - airflow-dags: extract duplicated Google auth and parsing helpers into utils (MR !809)", "In progress", "Unspecified", 6, "Task", 15 * HOUR, 1800, None),
+    ("DATA-2804", "DE - Reload mv_statement_daily_agg for 198 dates missing rows of 18 currency accounts", "In progress", "Medium", 3, "Task", 8 * HOUR, 5400, None),
+    ("DATA-2207", "DE - Product metrics integration — PostHog + ClickHouse → portal (PoC)", "In progress", "High", 2, "Story", 11 * DAY, 0, None),
+    ("DATA-2647", "DE - Client account balances as a daily warehouse table (private/business, EUR buckets)", "In Review", "ASAP", 1, "Task", 4 * DAY, 25_920, Some(-2)),
+    ("DATA-2773", "DE - KYC onboarding tables for funnel cohorts and questionnaire decisions", "In Review", "High", 2, "Task", 2 * DAY + 5 * HOUR, 14_400, None),
+    ("DATA-2788", "DE - cbk_accounts_report: close the duplicate-upload race and fix verdict handling (MR !805)", "In Review", "High", 2, "Task", 2 * DAY + 4 * HOUR, 10_800, None),
+    ("DATA-1817", "DE - Replicate gateway.bank_transfer_data (transfer origin rows) to DS 31", "In Review", "High", 2, "Task", 2 * DAY + 3 * HOUR, 7200, None),
+    ("DATA-1289", "DE - Daily per-covenantee history of statement vs accounting balance", "Feedback", "High", 2, "Task", 12 * DAY, 14_400, None),
+    ("DATA-2638", "DE - Enrich accounting_monitoring.statement_mismatches with operation details", "Done", "URGENT", 0, "Task", 2 * HOUR, 7200, None),
+    ("DATA-2737", "DE - Google Chat failure alerts for the 10 highest-impact enabled DAGs", "Done", "High", 2, "Task", 2 * DAY, 7200, None),
+    ("DATA-2650", "DE - Add all gateway.bank_account columns to the ClickHouse reporting table", "Done", "URGENT", 0, "Code review", 3 * DAY + 2 * HOUR, 1800, None),
+    ("DATA-2653", "DE - Replicate CreditOnline tables to ClickHouse BI", "Done", "High", 2, "Code review", 3 * DAY + 3 * HOUR, 1800, None),
+    ("DATA-2594", "DE - Schedule the refresh of the ClickHouse tables the warehouse reads", "Done", "High", 2, "Task", 3 * DAY + 5 * HOUR, 21_600, None),
+    ("DATA-2640", "DE - CBK DAG: immediate alerts with row errors, daily summary", "Done", "ASAP", 1, "Code review", 4 * DAY, 10_800, None),
+    ("DATA-2504", "DE - Replicate kyc_control_panel case, case_event and staff tables", "Done", "ASAP", 1, "Task", 4 * DAY + 2 * HOUR, 21_600, None),
+    ("DATA-2490", "DE - Accounting operations MV for the unmatched-instant dashboards", "Done", "High", 2, "Task", 5 * DAY + 6 * HOUR, 10_800, None),
+];
+
 /// FAKE=1's Jira at `now`: seventeen tickets of a data engineer's week across the board's
 /// columns — one overdue in review, one due tomorrow, a week of finished ones.
 pub fn jira(now: i64) -> crate::jira::Board {
@@ -1236,27 +1262,7 @@ pub fn jira(now: i64) -> crate::jira::Board {
         let date = chrono::DateTime::from_timestamp(now + offset_days * D, 0).map(|t| t.date_naive());
         date.map(|d| d.format("%Y-%m-%d").to_string())
     };
-    // (key, summary, status, priority, rank, kind, in status for, logged, due in days)
-    #[allow(clippy::type_complexity)]
-    let rows: &[(&str, &str, &str, &str, u32, &str, i64, u64, Option<i64>)] = &[
-        ("DATA-2850", "DE - STATEMENT_DAILY_AGG: upstream moves drifted 131 historical EUR dates", "In progress", "Unspecified", 6, "Task", 12 * H, 0, Some(1)),
-        ("DATA-2849", "DE - airflow-dags: extract duplicated Google auth and parsing helpers into utils (MR !809)", "In progress", "Unspecified", 6, "Task", 15 * H, 1800, None),
-        ("DATA-2804", "DE - Reload mv_statement_daily_agg for 198 dates missing rows of 18 currency accounts", "In progress", "Medium", 3, "Task", 8 * H, 5400, None),
-        ("DATA-2207", "DE - Product metrics integration — PostHog + ClickHouse → portal (PoC)", "In progress", "High", 2, "Story", 11 * D, 0, None),
-        ("DATA-2647", "DE - Client account balances as a daily warehouse table (private/business, EUR buckets)", "In Review", "ASAP", 1, "Task", 4 * D, 25_920, Some(-2)),
-        ("DATA-2773", "DE - KYC onboarding tables for funnel cohorts and questionnaire decisions", "In Review", "High", 2, "Task", 2 * D + 5 * H, 14_400, None),
-        ("DATA-2788", "DE - cbk_accounts_report: close the duplicate-upload race and fix verdict handling (MR !805)", "In Review", "High", 2, "Task", 2 * D + 4 * H, 10_800, None),
-        ("DATA-1817", "DE - Replicate gateway.bank_transfer_data (transfer origin rows) to DS 31", "In Review", "High", 2, "Task", 2 * D + 3 * H, 7200, None),
-        ("DATA-1289", "DE - Daily per-covenantee history of statement vs accounting balance", "Feedback", "High", 2, "Task", 12 * D, 14_400, None),
-        ("DATA-2638", "DE - Enrich accounting_monitoring.statement_mismatches with operation details", "Done", "URGENT", 0, "Task", 2 * H, 7200, None),
-        ("DATA-2737", "DE - Google Chat failure alerts for the 10 highest-impact enabled DAGs", "Done", "High", 2, "Task", 2 * D, 7200, None),
-        ("DATA-2650", "DE - Add all gateway.bank_account columns to the ClickHouse reporting table", "Done", "URGENT", 0, "Code review", 3 * D + 2 * H, 1800, None),
-        ("DATA-2653", "DE - Replicate CreditOnline tables to ClickHouse BI", "Done", "High", 2, "Code review", 3 * D + 3 * H, 1800, None),
-        ("DATA-2594", "DE - Schedule the refresh of the ClickHouse tables the warehouse reads", "Done", "High", 2, "Task", 3 * D + 5 * H, 21_600, None),
-        ("DATA-2640", "DE - CBK DAG: immediate alerts with row errors, daily summary", "Done", "ASAP", 1, "Code review", 4 * D, 10_800, None),
-        ("DATA-2504", "DE - Replicate kyc_control_panel case, case_event and staff tables", "Done", "ASAP", 1, "Task", 4 * D + 2 * H, 21_600, None),
-        ("DATA-2490", "DE - Accounting operations MV for the unmatched-instant dashboards", "Done", "High", 2, "Task", 5 * D + 6 * H, 10_800, None),
-    ];
+    let rows = FAKE_TICKETS;
     let tickets = rows
         .iter()
         .map(|&(key, summary, status, priority, rank, kind, since, logged, due)| {
@@ -1297,6 +1303,11 @@ pub fn jira(now: i64) -> crate::jira::Board {
     }
 }
 
+/// The summary FAKE=1's board gives a ticket.
+fn fake_summary(key: &str) -> String {
+    FAKE_TICKETS.iter().find(|t| t.0 == key).map(|t| t.1.to_string()).unwrap_or_default()
+}
+
 /// FAKE=1's time logged this month: a working day of six to nine hours over two or three
 /// tickets, nothing at weekends, today so far a couple of hours.
 fn fake_worklogs(now: i64) -> Vec<crate::jira::Worklog> {
@@ -1310,7 +1321,8 @@ fn fake_worklogs(now: i64) -> Vec<crate::jira::Worklog> {
         let at = month.first + i64::from(day) - 1;
         let hours: &[u64] = if day == month.today { &[2] } else { [&[4u64, 3][..], &[5, 2, 1], &[6, 2], &[3, 3, 2], &[7]][day as usize % 5] };
         for (i, h) in hours.iter().enumerate() {
-            out.push(crate::jira::Worklog { key: keys[(day as usize + i) % keys.len()].to_string(), day: at, seconds: h * 3600 + if i == 0 { 1800 * (day as u64 % 2) } else { 0 } });
+            let key = keys[(day as usize + i) % keys.len()];
+            out.push(crate::jira::Worklog { key: key.to_string(), summary: fake_summary(key), day: at, seconds: h * 3600 + if i == 0 { 1800 * (day as u64 % 2) } else { 0 } });
         }
     }
     out

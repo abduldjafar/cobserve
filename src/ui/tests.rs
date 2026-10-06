@@ -1562,7 +1562,15 @@ async fn live_airflow_and_jira() {
     println!("{}", render(&app, 160, 48));
     app.update(key(KeyCode::Char('6')));
     println!("{}", render(&app, 160, 48));
-    println!("worklogs this month: {}", app.jira.worklogs.len());
+    println!(
+        "worklogs this month: {} · with a summary: {} · tickets: {}",
+        app.jira.worklogs.len(),
+        app.jira.worklogs.iter().filter(|w| !w.summary.is_empty()).count(),
+        app.time_by_ticket().1.len()
+    );
+    app.update(key(KeyCode::Char('t')));
+    println!("{}", render(&app, 160, 48));
+    app.update(key(KeyCode::Esc));
 
     // The pages: a ticket in full; the runs of a DAG that failed, its failed run's tasks, a log.
     if let Some(source) = crate::sources::jira::JiraSource::new(&jira)
@@ -1611,6 +1619,73 @@ fn key_enter_page(app: &mut App, ask: crate::detail::Ask, body: crate::detail::B
         page.ask = ask.clone();
     }
     Event::Detail(ask, Ok(body))
+}
+
+/// The fake fleet on view 6 later in the month — the 22nd, a Thursday — so the month's time has
+/// three weeks in it.
+fn app_late_in_the_month() -> App {
+    let at = MOMENT + 18 * 86_400;
+    let mut app = app_after(5);
+    at_moment(&mut app, at);
+    app.update(Event::Jira(Box::new(crate::fake::jira(at as i64))));
+    app.update(key(KeyCode::Char('6')));
+    app.numbers_fresh_at_the_clock();
+    app
+}
+
+#[test]
+fn t_shows_which_tickets_took_the_time_day_by_day() {
+    let mut app = app_late_in_the_month();
+    app.update(key(KeyCode::Char('t')));
+    assert!(app.jira_time.is_some());
+    let screen = render(&app, 120, 36);
+    let row = |screen: &str, text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
+    assert!(row(&screen, "◂ Time logged · October 2026").contains("working days"), "{screen}");
+    assert!(screen.contains("─ BY TICKET · 6 tickets"), "{screen}");
+    assert!(screen.contains("─ THU 22 OCT"), "today chosen: {screen}");
+    // The day columns line up: a ticket's cell for the 1st under the chart's 1.
+    let days = row(&screen, "  1  2  3  4  5");
+    let first = row(&screen, "DATA-2647");
+    let at = days.find(" 1 ").unwrap() + 1;
+    assert!(first.chars().nth(at).is_some_and(|c| c != ' '), "the 1st's cell under its day:\n{days}\n{first}");
+
+    // ← to the 21st, a Wednesday: its tickets and their share of the day.
+    app.update(key(KeyCode::Left));
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("─ WED 21 OCT · 8h00m on 2 tickets") || screen.contains("─ WED 21 OCT ·"), "{screen}");
+    assert!(screen.contains('%'), "each ticket's share: {screen}");
+    // To a Sunday: nothing, said why.
+    for _ in 0..3 {
+        app.update(key(KeyCode::Left));
+    }
+    assert!(render(&app, 120, 36).contains("a weekend day — nothing logged"));
+
+    // ⏎ on a ticket opens it in full over the page; esc comes back to the page, esc again out.
+    app.update(key(KeyCode::Down));
+    app.update(key(KeyCode::Enter));
+    assert!(matches!(app.page().map(|p| &p.ask), Some(crate::detail::Ask::Issue(_))));
+    app.update(key(KeyCode::Esc));
+    assert!(app.page().is_none() && app.jira_time.is_some());
+    assert!(render(&app, 120, 36).lines().last().unwrap().contains("←→  day"));
+    app.update(key(KeyCode::Esc));
+    assert!(app.jira_time.is_none());
+    for (w, h) in [(80, 24), (100, 30), (200, 50)] {
+        let mut app = app_late_in_the_month();
+        app.update(key(KeyCode::Char('t')));
+        assert_eq!(render(&app, w, h).lines().count(), h as usize, "{w}×{h}");
+    }
+}
+
+#[test]
+#[ignore]
+fn dump_time_by_ticket() {
+    let mut app = app_late_in_the_month();
+    println!("{}", render(&app, 120, 36));
+    app.update(key(KeyCode::Char('t')));
+    app.update(key(KeyCode::Left));
+    println!("{}", render(&app, 120, 36));
+    println!("{}", render(&app, 160, 48));
+    println!("{}", render(&app, 80, 24));
 }
 
 #[test]
@@ -2249,6 +2324,20 @@ fn export_screens() {
     jira.update(key(KeyCode::Enter));
     answer_pages(&mut jira);
     save("120x36-jira-ticket", &mut jira, 120, 36);
+    // `t`: the month's time by ticket, three weeks into it, the day before chosen.
+    let mut time = app_late_in_the_month();
+    time.update(key(KeyCode::Char('t')));
+    time.update(key(KeyCode::Left));
+    let at = MOMENT + 18 * 86_400;
+    let save_at = |name: &str, app: &mut App, w: u16, h: u16| {
+        at_moment(app, at);
+        app.numbers_fresh_at_the_clock();
+        let buf = buffer(app, w, h);
+        std::fs::write(format!("{dir}/{name}.txt"), text_of(&buf) + "\n").expect("write txt");
+        std::fs::write(format!("{dir}/{name}.html"), html_of(&buf, name)).expect("write html");
+    };
+    save_at("120x36-jira-time", &mut time, 120, 36);
+    save_at("160x48-jira-time", &mut time, 160, 48);
 
     // A failed run's tasks, and the failed task's log.
     let mut pages = app_on('5');

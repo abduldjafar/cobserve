@@ -255,7 +255,10 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
             }
         }
         View::Airflow => airflow::draw(frame, app, theme, a.body),
-        View::Jira => jira::draw(frame, app, theme, a.body),
+        View::Jira => match app.jira_time {
+            Some(page) => jira::draw_time(frame, app, theme, a.body, page),
+            None => jira::draw(frame, app, theme, a.body),
+        },
         View::Claude => claude::draw(frame, app, theme, a.well, margin),
     }
     if a.insights.height > 0 {
@@ -533,10 +536,20 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("?", "help"),
             ("q", "quit"),
         ],
+        View::Jira if app.jira_time.is_some() => &[
+            ("←→", "day"),
+            ("↑↓", "ticket"),
+            ("⏎", "the ticket"),
+            ("esc", "back"),
+            ("o", "in Jira"),
+            ("y", "copy link"),
+            ("r", "read again"),
+        ],
         View::Jira if !app.jira.reachable => &[("r", "read now"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
         View::Jira => &[
             ("↑↓", "move"),
             ("⏎", "details"),
+            ("t", "time by ticket"),
             ("o", "open in Jira"),
             ("y", "copy link"),
             ("r", "read now"),
@@ -682,7 +695,7 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
 const HELP_KEYS: &[(&str, &str)] = &[
     ("↑ ↓  j k", "move the cursor · PgUp PgDn Home End jump"),
     ("⏎", "open / close · on an insight, a job, a tile, a tape line: go there · a run, a ticket: its detail"),
-    ("o  y  r", "on airflow and jira: open in the browser · copy the link · read again · esc leaves a detail"),
+    ("o  y  r  t", "airflow, jira: open in the browser · copy the link · read again · t time by ticket"),
     ("← →  h l", "collapse / expand, vim-style"),
     ("J K  ⇧↑↓", "scroll the SQL under the selected query or Redash job"),
     ("tab", "move between the tree and the insights"),

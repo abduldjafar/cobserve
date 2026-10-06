@@ -160,6 +160,7 @@ struct WorklogIssue {
 
 #[derive(Debug, Default, Deserialize)]
 struct WorklogFields {
+    summary: Option<String>,
     worklog: Option<ApiWorklogs>,
 }
 
@@ -590,7 +591,7 @@ impl JiraSource {
         let mut issues = Vec::new();
         for page in 0..MAX_PAGES {
             let start = (page * PAGE).to_string();
-            let query = [("jql", jql), ("fields", "worklog"), ("maxResults", &limit), ("startAt", &start)];
+            let query = [("jql", jql), ("fields", "summary,worklog"), ("maxResults", &limit), ("startAt", &start)];
             let search: WorklogSearch = self.get("/rest/api/2/search", &query).await?;
             let got = search.issues.len();
             issues.extend(search.issues);
@@ -600,6 +601,7 @@ impl JiraSource {
         }
         let mut out = Vec::new();
         for issue in issues {
+            let summary = issue.fields.summary.clone().unwrap_or_default().trim().to_string();
             let mut logs = issue.fields.worklog.unwrap_or_default();
             if logs.worklogs.len() < logs.total && is_key(&issue.key) {
                 let path = format!("/rest/api/2/issue/{}/worklog", issue.key);
@@ -613,7 +615,7 @@ impl JiraSource {
                 });
                 let day = log.started.as_deref().and_then(|s| s.get(..10)).and_then(jira::day_number);
                 if let (true, Some(day)) = (mine, day) {
-                    out.push(jira::Worklog { key: issue.key.clone(), day, seconds: log.seconds });
+                    out.push(jira::Worklog { key: issue.key.clone(), summary: summary.clone(), day, seconds: log.seconds });
                 }
             }
         }

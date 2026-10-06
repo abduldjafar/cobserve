@@ -199,6 +199,9 @@ pub enum Hit {
     Ticket(usize),
     /// A row of a page open on view 5 — a run, a task — by its place in the page.
     PageRow(usize),
+    /// On the month's time: a day's column, and a ticket's row.
+    TimeDay(u32),
+    TimeTicket(usize),
 }
 
 /// Whether a Redash data source's name points at a node: `clickhouse-bi (prod)` names
@@ -393,6 +396,16 @@ pub struct App {
     pub airflow_pages: Vec<crate::detail::Page>,
     /// What those pages asked for, for the loop to read.
     detail_asks: Vec<crate::detail::Ask>,
+    /// View 6's page of the month's time by ticket (`t`): the day chosen and the ticket under the
+    /// cursor. A ticket opened from it opens over it.
+    pub jira_time: Option<TimePage>,
+}
+
+/// Where the cursor is on the month's time: a day of the month (from 1) and a ticket's row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimePage {
+    pub day: u32,
+    pub ticket: usize,
 }
 
 /// What a server has, for a query session: what was read last, and whether it is being read.
@@ -470,7 +483,60 @@ impl App {
             jira_page: None,
             airflow_pages: Vec::new(),
             detail_asks: Vec::new(),
+            jira_time: None,
         }
+    }
+
+    /// The month's time by ticket, as the cursor of its page sees it.
+    pub fn time_by_ticket(&self) -> (crate::jira::Month, Vec<crate::jira::TicketTime>) {
+        let now = self.now();
+        let month = crate::jira::Month::of(now, self.time.offset_s(now));
+        let tickets = month.by_ticket(&self.jira.worklogs);
+        (month, tickets)
+    }
+
+    /// The keys of the month's time: ← → a day, ↑ ↓ a ticket, ⏎ that ticket in full, `esc` out.
+    fn on_time_key(&mut self, code: KeyCode) {
+        let (month, tickets) = self.time_by_ticket();
+        let Some(page) = self.jira_time.as_mut() else {
+            return;
+        };
+        let last = tickets.len().saturating_sub(1);
+        match code {
+            KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('t') => self.jira_time = None,
+            KeyCode::Left | KeyCode::Char('h') => page.day = page.day.saturating_sub(1).max(1),
+            KeyCode::Right | KeyCode::Char('l') => page.day = (page.day + 1).min(month.days),
+            KeyCode::Home => page.day = 1,
+            KeyCode::End => page.day = month.today.min(month.days),
+            KeyCode::Up | KeyCode::Char('k') => page.ticket = page.ticket.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => page.ticket = (page.ticket + 1).min(last),
+            KeyCode::Enter => {
+                if let Some(ticket) = tickets.get(page.ticket) {
+                    let key = ticket.key.clone();
+                    self.open_page(crate::detail::Ask::Issue(key));
+                }
+            }
+            KeyCode::Char('o') => {
+                if let Some(url) = tickets.get(page.ticket).and_then(|t| self.jira.link(&t.key)) {
+                    self.opens.push(url);
+                }
+            }
+            KeyCode::Char('y') => {
+                if let Some(url) = tickets.get(page.ticket).and_then(|t| self.jira.link(&t.key)) {
+                    self.notice = Some((format!("copied {url}"), SystemTime::now()));
+                    self.clipboard.push(url);
+                }
+            }
+            KeyCode::Char('r') => self.read_again(Feed::Jira),
+            _ => {}
+        }
+    }
+
+    /// For the tests and the screenshots that move the clock on: the fleet's last numbers as
+    /// fresh as the clock says, so the header does not call them stale.
+    #[cfg(test)]
+    pub fn numbers_fresh_at_the_clock(&mut self) {
+        self.last_snapshot_wall = Some(self.clock);
     }
 
     /// What the pages asked to read since the loop last asked.
@@ -763,6 +829,14 @@ impl App {
     fn on_jira_key(&mut self, code: KeyCode) {
         if self.jira_page.is_some() {
             return self.on_page_key(code);
+        }
+        if self.jira_time.is_some() {
+            return self.on_time_key(code);
+        }
+        if code == KeyCode::Char('t') {
+            let today = self.time_by_ticket().0.today;
+            self.jira_time = Some(TimePage { day: today, ticket: 0 });
+            return;
         }
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.move_jira(-1),
@@ -1425,6 +1499,20 @@ impl App {
                         self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
+                Some(Hit::TimeDay(day)) => {
+                    if let Some(page) = self.jira_time.as_mut() {
+                        page.day = day;
+                    }
+                }
+                Some(Hit::TimeTicket(index)) => {
+                    let again = self.jira_time.is_some_and(|p| p.ticket == index);
+                    if let Some(page) = self.jira_time.as_mut() {
+                        page.ticket = index;
+                    }
+                    if again {
+                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
                 Some(Hit::Pane) | None => {}
             },
             // A drag in a query session's text selects, wherever the mouse goes meanwhile.
@@ -1450,6 +1538,10 @@ impl App {
                     }
                     View::Nodes | View::Queue => self.move_by(delta),
                     View::Airflow | View::Jira if self.page().is_some() => self.page_step(delta * 3),
+                    View::Jira if self.jira_time.is_some() => {
+                        let code = if delta < 0 { KeyCode::Up } else { KeyCode::Down };
+                        self.on_time_key(code);
+                    }
                     View::Airflow => self.move_airflow(delta),
                     View::Jira => self.move_jira(delta),
                     View::Tape => {

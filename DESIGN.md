@@ -884,7 +884,12 @@ or from a slope over the last minutes of it.
   and after `r`, sent after the board so the board does not wait for them; a day is the date the
   time was logged for, as written. The total, its average over the working days so far and
   today's, and a bar a day, eighths of a cell, up to eight hours or the longest day — counts, so
-  no colour but today's. `⏎` shows the ticket in full in the view's place — fields,
+  no colour but today's. `t` opens the month by ticket over the board: the chart, then a row per
+  ticket logged on (the most first) with a one-row bar under each day — a full cell eight hours —
+  in the chart's columns (the key, then the summary when it has twelve cells, then a column a
+  day of at least three, else two with only the 1st, every fifth, today and the chosen day
+  numbered), and the chosen day's tickets with their share of it. `← →` a day, its column lit
+  through chart and rows; `↑ ↓` a ticket; `⏎` the ticket in full over the page; `esc` back. `⏎` shows the ticket in full in the view's place — fields,
   description with Jira's wiki markup turned into headings, items, code and text, sub-tasks,
   links, comments; `o` opens it in Jira, `y` copies its link, `r` reads again. `JIRA_URL`, `JIRA_TOKEN`, `JIRA_STATUSES`, `JIRA_DONE_DAYS`, or `jira:`
   in the credential file. Both views keep what they last read when a read fails, and say so.

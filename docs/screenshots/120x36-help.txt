@@ -4,7 +4,7 @@
   FLEET   9 no ─ KEYS ─────────────────────────────────────────────────────────────────────────────────    15 · 5 ✕     
   REDASH  19 w    ↑ ↓  j k  move the cursor · PgUp PgDn Home End jump                                        [2] queue  
                          ⏎  open / close · on an insight, a job, a tile, a tape line: go there · a run…                 
-   NODE · USER     o  y  r  on airflow and jira: open in the browser · copy the link · read again · es…   S  LONGEST    
+   NODE · USER  o  y  r  t  airflow, jira: open in the browser · copy the link · read again · t time b…   S  LONGEST    
   ▌▾ clickhous    ← →  h l  collapse / expand, vim-style                                                  2    4m55s ✕  
    ├─ r_redash    J K  ⇧↑↓  scroll the SQL under the selected query or Redash job                         1    4m55s ✕  
    ├─ r_redash         tab  move between the tree and the insights                                        1    3m04s ✕  

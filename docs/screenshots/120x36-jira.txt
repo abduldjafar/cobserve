@@ -7,7 +7,7 @@
    jira.example.net · Jira 9.12.1 · Sam Example                                                           read 0s ago   
     In progress 4  ›  In Review 4  ›  Feedback 1  ›  Done 8 in 7 days     ✖ 1 overdue  ▲ 1 due soon                     
                                                                                                                         
-    LOGGED · October 2026   16h30m in 2 working days · 8h15m a working day · today 0h                                   
+    LOGGED · October 2026   16h30m in 2 working days · 8h15m a working day · today 0h   t by ticket                     
         8½  8                                                                                                           
     9h │▇▇ ▆▆                                                                                                           
        │██ ██                                                                                                           
@@ -33,4 +33,4 @@
   DE - Client account balances as a daily warehouse table (private/business, EUR buckets)                               
   from Jurgita Petrova · made Sep 27 · updated 3d ago · due 2026-10-02 (overdue 2d) · 7h12m logged                      
   https://jira.example.net/browse/DATA-2647 · ⏎ in full here · o in Jira · y copies the link · r reads again            
-   ↑↓  move   ⏎  details   o  open in Jira   y  copy link   r  read now   p  pause   ?  help   q  quit                  
+   ↑↓  move   ⏎  details   t  time by ticket   o  open in Jira   y  copy link   r  read now   p  pause   ?  help        

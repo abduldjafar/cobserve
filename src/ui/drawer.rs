@@ -28,6 +28,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         View::Map => map(app, theme, width),
         View::Tape => tape(app, theme, width),
         View::Airflow | View::Jira if app.page().is_some() => page(app, theme, width),
+        View::Jira if app.jira_time.is_some() => time(app, theme, width),
         View::Airflow => airflow(app, theme, width),
         View::Jira => jira(app, theme, width),
         // View 5 has no drawer (the layout gives it none); nothing to say if asked.
@@ -1156,3 +1157,34 @@ fn page(app: &App, theme: &Theme, width: usize) -> Drawer {
     };
     (head, lines)
 }
+
+/// The drawer under the month's time: the ticket under the cursor, its month in a line.
+fn time(app: &App, theme: &Theme, width: usize) -> Drawer {
+    let (month, tickets) = app.time_by_ticket();
+    let Some(page) = app.jira_time else {
+        return (title("time", theme), Vec::new());
+    };
+    let Some(ticket) = tickets.get(page.ticket) else {
+        return (title("time", theme), vec![muted_line("nothing logged this month yet", theme, width)]);
+    };
+    let worked: Vec<u32> = (1..=month.days).filter(|d| ticket.days[*d as usize - 1] > 0).collect();
+    let head = vec![
+        Span::styled(ticket.key.clone(), theme.accent().add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" · {} this month on {}", crate::jira::hours(ticket.total), fmt::plural(worked.len(), "day", "days")), theme.muted()),
+    ];
+    let mut days = Cells::new();
+    for (i, day) in worked.iter().enumerate() {
+        if i > 0 {
+            days.push(" · ", theme.faint());
+        }
+        days.push(format!("{} ", month.day_name(*day)), theme.text2());
+        days.push(crate::jira::hours(ticket.days[*day as usize - 1]), theme.strong());
+    }
+    let lines = vec![
+        muted_line(crate::jira::split_tag(&ticket.summary).1.to_string(), theme, width),
+        days.line_unpadded(width),
+        muted_line("⏎ the ticket in full · o in Jira · ← → another day · esc back", theme, width),
+    ];
+    (head, lines)
+}
+

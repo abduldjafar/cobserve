@@ -1,0 +1,36 @@
+  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:12 ━━━━ Terbit 05:26 ━━━━ Dzuhur 11:41 ━━━━ Ashar 14:50 ━●┄┄ Maghrib 17:49 · in 1h57m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   8 nodes · 2 hot   mem ━━━╸━━━━━━ 37.0% 260/704 GiB   cpu ━━━╺━━━━━━ 29.0% 51/176 cores   queries 15 · 5 ✕     
+  REDASH  19 waiting        █ · oldest 1m49s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   ◂ Time logged · October 2026   120h in 16 working days · 7h30m a working day · 6 tickets                  esc back   
+                                                                                                                        
+               8½  8       7½  8 8½  8 7½        8 8½  7 7½  8       7½  7 8½  2                                        
+           9h │▇▇ ▅▅       ▄▄ ▅▅ ▇▇ ▅▅ ▄▄       ▅▅ ▇▇ ▃▃ ▄▄ ▅▅       ▄▄ ▃▃ ▇▇                                           
+              │██ ██       ██ ██ ██ ██ ██       ██ ██ ██ ██ ██       ██ ██ ██                                           
+              │██ ██       ██ ██ ██ ██ ██       ██ ██ ██ ██ ██       ██ ██ ██ ▅▅                                        
+                1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31             
+                                                                                                                        
+  ─ BY TICKET · 6 tickets · 120h ─────────────────────────────────────────────────────────────────────────────────────  
+  ▌ DATA-2849  ▁▁ ▂▂       ·· ·· ·· ▃▃ ██       ·· ▂▂ ·· ▅▅ ··       ·· ▃▃ ▆▆ ··                              28h30m    
+    DATA-2804  ▂▂ ▆▆       ·· ▁▁ ▂▂ ▃▃ ··       ·· ▃▃ ▇▇ ·· ··       ·· ▄▄ ·· ··                                 28h    
+    DATA-2773  ▆▆ ··       ·· ▂▂ ▇▇ ·· ··       ▂▂ ▄▄ ·· ·· ··       ██ ·· ·· ··                                 27h    
+    DATA-2647  ·· ··       ▃▃ ▅▅ ·· ·· ··       ▆▆ ·· ·· ·· ▁▁       ·· ·· ·· ··                                 15h    
+    DATA-2207  ·· ··       ·· ·· ·· ▂▂ ··       ·· ·· ·· ▃▃ ▅▅       ·· ·· ▂▂ ▂▂                                 14h    
+    DATA-2638  ·· ··       ▅▅ ·· ·· ·· ··       ·· ·· ·· ·· ▂▂       ·· ·· ▁▁ ··                               7h30m    
+                                                                                                                        
+  ─ WED 21 OCT · 8h30m on 3 tickets ──────────────────────────────────────────────────────────────────────────────────  
+    DATA-2849   5h30m  ━━━━━━━━━━━━━╺━━━━━━  65%  airflow-dags: extract duplicated Google auth and parsing helpers in…  
+    DATA-2207      2h  ━━━━╸━━━━━━━━━━━━━━━  24%  Product metrics integration — PostHog + ClickHouse → portal (PoC)     
+    DATA-2638      1h  ━━╸━━━━━━━━━━━━━━━━━  12%  Enrich accounting_monitoring.statement_mismatches with operation de…  
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+  ─ DATA-2849 · 28h30m this month on 8 days ──────────────────────────────────────────────────────────────────────────  
+  airflow-dags: extract duplicated Google auth and parsing helpers into utils (MR !809)                                 
+  Thu 1 Oct 1h · Fri 2 Oct 2h · Thu 8 Oct 3h · Fri 9 Oct 7h30m · Tue 13 Oct 2h · Thu 15 Oct 4h30m · Tue 20 Oct 3h · W…  
+  ⏎ the ticket in full · o in Jira · ← → another day · esc back                                                         
+   ←→  day   ↑↓  ticket   ⏎  the ticket   esc  back   o  in Jira   y  copy link   r  read again                         
