@@ -429,7 +429,9 @@ due date (red when overdue, amber today and tomorrow) and the time logged on it.
 the rest and the link. `⏎` shows the ticket in full here — description, sub-tasks, links,
 comments — `esc` goes back, `o` opens it in Jira, `y` copies the link, `r` reads again. Over
 the columns, **LOGGED** charts the hours you logged this month, a bar a day, with the total and
-the average per working day.
+the average per working day. `t` opens the month **by ticket**: a row per ticket under the
+chart, a bar under each day, and the chosen day's tickets with their share — `← →` a day, `↑ ↓`
+a ticket, `⏎` that ticket in full, `esc` back.
 
 ![Jira](docs/screenshots/120x36-jira.png)
 

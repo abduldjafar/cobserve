@@ -307,6 +307,8 @@ pub fn age(seconds: i64) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worklog {
     pub key: String,
+    /// The ticket's summary, for a ticket that may not be on the board.
+    pub summary: String,
     /// Days since the epoch: the date part of `started` as Jira wrote it, which is the day the
     /// time was logged for — not that moment moved into another zone.
     pub day: i64,
@@ -357,6 +359,33 @@ impl Month {
         days
     }
 
+    /// The month's time by ticket: each ticket's hours day by day and in all, the most first.
+    pub fn by_ticket(&self, worklogs: &[Worklog]) -> Vec<TicketTime> {
+        let mut tickets: Vec<TicketTime> = Vec::new();
+        for w in worklogs {
+            let at = w.day - self.first;
+            if !(0..i64::from(self.days)).contains(&at) {
+                continue;
+            }
+            let i = match tickets.iter().position(|t| t.key == w.key) {
+                Some(i) => i,
+                None => {
+                    tickets.push(TicketTime { key: w.key.clone(), summary: w.summary.clone(), days: vec![0; self.days as usize], total: 0 });
+                    tickets.len() - 1
+                }
+            };
+            tickets[i].days[at as usize] += w.seconds;
+            tickets[i].total += w.seconds;
+        }
+        tickets.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.key.cmp(&b.key)));
+        tickets
+    }
+
+    /// The date of a day of the month: `Thu 1 Oct`.
+    pub fn day_name(&self, day: u32) -> String {
+        date_of(self.first + i64::from(day) - 1).format("%a %-d %b").to_string()
+    }
+
     /// Saturday or Sunday.
     pub fn is_weekend(&self, day: u32) -> bool {
         use chrono::Datelike;
@@ -369,6 +398,16 @@ impl Month {
     }
 }
 
+/// One ticket's time in the month.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TicketTime {
+    pub key: String,
+    pub summary: String,
+    /// Seconds on each day, the 1st first.
+    pub days: Vec<u64>,
+    pub total: u64,
+}
+
 fn date_of(day: i64) -> chrono::NaiveDate {
     let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
     epoch.checked_add_signed(chrono::Duration::days(day)).unwrap_or(epoch)
@@ -379,6 +418,7 @@ pub fn hours(seconds: u64) -> String {
     let minutes = seconds / 60;
     match (minutes / 60, minutes % 60) {
         (h, 0) => format!("{h}h"),
+        (0, m) => format!("{m}m"),
         (h, m) => format!("{h}h{m:02}m"),
     }
 }
@@ -664,11 +704,18 @@ mod tests {
         assert_eq!(month.first, day_number("2026-10-01").unwrap());
         assert!(month.is_weekend(4) && month.is_weekend(3) && !month.is_weekend(2));
         assert_eq!(month.working_days_so_far(), 2, "Thursday the 1st and Friday the 2nd");
-        let log = |date: &str, h: u64| Worklog { key: "DATA-1".into(), day: day_number(date).unwrap(), seconds: h * 3600 };
+        let log = |date: &str, h: u64| Worklog { key: "DATA-1".into(), summary: String::new(), day: day_number(date).unwrap(), seconds: h * 3600 };
         let days = month.per_day(&[log("2026-10-01", 4), log("2026-10-01", 2), log("2026-10-02", 3), log("2026-09-30", 8)]);
         assert_eq!((days[0], days[1], days[2]), (6 * 3600, 3 * 3600, 0), "September's is not October's");
         assert_eq!(hours(27_000), "7h30m");
+        let on = |key: &str, date: &str, h: u64| Worklog { key: key.into(), summary: format!("{key} work"), day: day_number(date).unwrap(), seconds: h * 3600 };
+        let tickets = month.by_ticket(&[on("DATA-2", "2026-10-01", 2), on("DATA-1", "2026-10-01", 3), on("DATA-2", "2026-10-02", 4), on("DATA-3", "2026-09-30", 9)]);
+        let keys: Vec<&str> = tickets.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys, ["DATA-2", "DATA-1"], "the most first; September's is not October's");
+        assert_eq!((tickets[0].days[0], tickets[0].days[1], tickets[0].total), (7200, 14_400, 21_600));
+        assert_eq!(month.day_name(1), "Thu 1 Oct");
         assert_eq!(hours(0), "0h");
+        assert_eq!(hours(1800), "30m");
     }
 
     #[test]

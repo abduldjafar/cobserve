@@ -197,6 +197,13 @@ every minute, GET only.
        │███ ▅▅▅
           1   2   3   4   5   6   7   8   9  10 …
 ```
+- **`t`: which tickets took the time, day by day.** A page over the board: the month's chart on
+  top, and under it a row for every ticket you logged on this month — a bar under each day, in
+  the chart's own columns, so a day reads straight down — with its month's sum; then the day
+  chosen, its tickets and each one's share of it. `← →` choose the day (its column lit all the
+  way down), `↑ ↓` a ticket, `⏎` opens that ticket in full, `esc` goes back.
+
+![The month's time by ticket](docs/screenshots/120x36-jira-time.png)
 
 Set `JIRA_URL` and `JIRA_TOKEN` (in Jira: Profile → Personal Access Tokens), or a `jira:` section
 in the credential file. For another board, `JIRA_STATUSES` names its columns, left to right
