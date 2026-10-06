@@ -1291,8 +1291,140 @@ pub fn jira(now: i64) -> crate::jira::Board {
         statuses: DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
         done_days: DEFAULT_DONE_DAYS,
         tickets,
+        worklogs: fake_worklogs(now),
+        worklogs_read: true,
         taken_at: std::time::UNIX_EPOCH + Duration::from_secs(now.max(0) as u64),
     }
+}
+
+/// FAKE=1's time logged this month: a working day of six to nine hours over two or three
+/// tickets, nothing at weekends, today so far a couple of hours.
+fn fake_worklogs(now: i64) -> Vec<crate::jira::Worklog> {
+    let month = crate::jira::Month::of(now, 7 * 3600);
+    let keys = ["DATA-2647", "DATA-2773", "DATA-2804", "DATA-2849", "DATA-2207", "DATA-2638"];
+    let mut out = Vec::new();
+    for day in 1..=month.today {
+        if month.is_weekend(day) {
+            continue;
+        }
+        let at = month.first + i64::from(day) - 1;
+        let hours: &[u64] = if day == month.today { &[2] } else { [&[4u64, 3][..], &[5, 2, 1], &[6, 2], &[3, 3, 2], &[7]][day as usize % 5] };
+        for (i, h) in hours.iter().enumerate() {
+            out.push(crate::jira::Worklog { key: keys[(day as usize + i) % keys.len()].to_string(), day: at, seconds: h * 3600 + if i == 0 { 1800 * (day as u64 % 2) } else { 0 } });
+        }
+    }
+    out
+}
+
+/// FAKE=1's answer to a page of view 5 or 6, from the same made-up Airflow and Jira the views show.
+pub fn detail(ask: &crate::detail::Ask, now: i64) -> Result<crate::detail::Body, String> {
+    use crate::detail::{Ask, Body};
+    match ask {
+        Ask::Issue(key) => {
+            let board = jira(now);
+            let ticket = board.tickets.iter().find(|t| &t.key == key).ok_or_else(|| format!("{key} is not on the made-up board"))?;
+            Ok(Body::Issue(Box::new(crate::jira::IssueDetail {
+                key: ticket.key.clone(),
+                summary: ticket.summary.clone(),
+                status: ticket.status.clone(),
+                kind: ticket.kind.clone(),
+                priority: ticket.priority.clone(),
+                assignee: Some("Sam Example".into()),
+                reporter: ticket.reporter.clone(),
+                created: ticket.created,
+                updated: ticket.updated,
+                due: ticket.due.clone(),
+                labels: ticket.labels.clone(),
+                parent: ticket.parent.clone(),
+                logged_s: ticket.logged_s,
+                description: format!(
+                    "Request from the reporting team: {}.\n\nh3. Asked for\n\n* one row per day and currency, *aggregated only*\n* the EUR equivalent beside every total\n** at the ECB rate of that day\n\nh3. Source\n\nThe balances are in {{{{final.internal_account}}}}; its history is rebuilt from the ledger:\n\n{{code:sql}}\nSELECT toDate(created_at) AS day, currency, sum(amount) AS total\nFROM ledger.movements\nGROUP BY day, currency\n{{code}}\n\nSee [the dashboard|https://redash.example.net/dashboards/42] for the numbers today.",
+                    crate::jira::split_tag(&ticket.summary).1.to_lowercase()
+                ),
+                subtasks: vec![crate::jira::Linked { how: "sub-task".into(), key: "DATA-2660".into(), summary: "Code review".into(), status: "Done".into() }],
+                links: vec![crate::jira::Linked { how: "blocks".into(), key: "DATA-2701".into(), summary: "Balances on the CFO dashboard".into(), status: "Backlog".into() }],
+                comments: vec![
+                    crate::jira::Comment { author: "Jurgita Petrova".into(), at: Some(now - 2 * 86_400), body: "Could the buckets be configurable? *Finance* asks for >=50 too.".into() },
+                    crate::jira::Comment { author: "Sam Example".into(), at: Some(now - 86_400 - 3600), body: "Added >=50; the table is rebuilt nightly at 03:00.".into() },
+                ],
+            })))
+        }
+        Ask::Runs(dag) => {
+            let activity = airflow(now);
+            let mut runs: Vec<crate::airflow::Run> = activity.runs.into_iter().filter(|r| &r.dag == dag).collect();
+            runs.sort_by_key(|r| std::cmp::Reverse(r.at()));
+            Ok(Body::Runs(runs))
+        }
+        Ask::Tasks { dag, run } => {
+            let activity = airflow(now);
+            let found = activity.runs.iter().find(|r| &r.dag == dag && &r.id == run).ok_or_else(|| format!("no run {run} of {dag}"))?;
+            Ok(Body::Tasks(fake_tasks(found, now)))
+        }
+        Ask::Log { dag, run, task, attempt, .. } => {
+            let failed = FAKE_DAGS.iter().any(|d| d.id == dag && d.failed_task == task) && airflow(now).runs.iter().any(|r| &r.id == run && r.state == crate::airflow::RunState::Failed);
+            let mut text = format!(
+                "airflow-worker-1.airflow-worker.svc.cluster.local\n*** Found local files:\n***   * /opt/airflow/logs/dag_id={dag}/run_id={run}/task_id={task}/attempt={attempt}.log\n"
+            );
+            for i in 0..40 {
+                text.push_str(&format!("[2026-10-04T05:30:{:02}.{:03}+0000] {{taskinstance.py:2612}} INFO - step {i} of {task}: {} rows\n", i % 60, i * 7, 1000 + i * 37));
+            }
+            if failed {
+                text.push_str("Traceback (most recent call last):\n  File \"/opt/airflow/dags/repo/dag.py\", line 78, in run\n    check(result)\n  File \"/opt/airflow/dags/repo/dag.py\", line 65, in check\n    raise AirflowException(f'{bad} table(s) need a look')\nairflow.exceptions.AirflowException: 3 table(s) need a look: ledger_movements (too_many), fx_rates (missing), payouts (too_many)\n[2026-10-04T05:42:08.408+0000] {local_task_job_runner.py:266} INFO - Task exited with return code 1\n");
+            } else {
+                text.push_str("[2026-10-04T05:42:08.408+0000] {local_task_job_runner.py:266} INFO - Task exited with return code 0\n");
+            }
+            Ok(Body::Log(crate::detail::log_lines(&text)))
+        }
+    }
+}
+
+/// The tasks of a made-up run, their states as its outcome says.
+fn fake_tasks(run: &crate::airflow::Run, now: i64) -> Vec<crate::airflow::TaskRun> {
+    use crate::airflow::{RunState, TaskRun};
+    let template = FAKE_DAGS.iter().find(|d| d.id == run.dag);
+    let count = template.map_or(3, |d| d.tasks.min(12)) as usize;
+    let special = template.map(|d| (d.running_task, d.failed_task));
+    let mut names: Vec<String> = ["extract", "validate", "transform", "load", "refresh_dicts", "check_counts", "publish", "notify", "archive", "cleanup", "stats", "done"]
+        .iter()
+        .take(count)
+        .map(|s| s.to_string())
+        .collect();
+    let at = count / 2;
+    match (run.state, special) {
+        (RunState::Failed, Some((_, failed))) if !failed.is_empty() => names[at] = failed.to_string(),
+        (_, Some((running, _))) if !running.is_empty() => names[at] = running.to_string(),
+        _ => {}
+    }
+    let start = run.start.unwrap_or(now);
+    let step = 40;
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| {
+            let began = start + i as i64 * step;
+            let (state, ran) = match run.state {
+                RunState::Success => ("success", true),
+                RunState::Failed if i < at => ("success", true),
+                RunState::Failed if i == at => ("failed", true),
+                RunState::Failed => ("upstream_failed", false),
+                RunState::Running if i < at => ("success", true),
+                RunState::Running if i == at => ("running", true),
+                RunState::Running => ("scheduled", false),
+                _ => ("queued", false),
+            };
+            TaskRun {
+                id,
+                map_index: -1,
+                state: state.into(),
+                start: ran.then_some(began),
+                end: (ran && state != "running").then_some(began + step - 5),
+                try_number: u32::from(ran),
+                max_tries: 1,
+                operator: Some(if i % 3 == 0 { "SSHOperator" } else { "PythonOperator" }.into()),
+                host: ran.then(|| "airflow-worker-1".to_string()),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

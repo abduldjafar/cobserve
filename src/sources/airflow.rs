@@ -12,7 +12,7 @@
 //! a run has finished; the DAGs every five minutes.
 
 use super::{segment, transport, unix};
-use crate::airflow::{Activity, Beat, Dag, Health, Progress, Run, RunState, Task, WINDOW_S};
+use crate::airflow::{Activity, Beat, Dag, Health, Progress, Run, RunState, Task, TaskRun, WINDOW_S};
 use crate::app::Event;
 use crate::config::AirflowConfig;
 use reqwest::header::{HeaderMap, ACCEPT, COOKIE, LOCATION, REFERER, SET_COOKIE};
@@ -81,6 +81,8 @@ struct ApiTask {
     max_tries: Option<u32>,
     operator: Option<String>,
     hostname: Option<String>,
+    end_date: Option<String>,
+    map_index: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,6 +252,20 @@ fn task(api: ApiTask) -> Option<Task> {
     })
 }
 
+fn task_run(api: ApiTask) -> TaskRun {
+    TaskRun {
+        id: api.task_id,
+        map_index: api.map_index.unwrap_or(-1),
+        state: api.state.unwrap_or_else(|| "none".to_string()),
+        start: api.start_date.as_deref().and_then(unix),
+        end: api.end_date.as_deref().and_then(unix),
+        try_number: api.try_number.unwrap_or(0),
+        max_tries: api.max_tries.unwrap_or(0),
+        operator: api.operator,
+        host: api.hostname.filter(|h| !h.is_empty()),
+    }
+}
+
 /// `{"__type": "CronExpression", "value": "0 22 * * 0"}` → `0 22 * * 0`;
 /// `{"__type": "TimeDelta", "days": 0, "seconds": 3600}` → `1h`.
 fn cron(schedule: Option<&serde_json::Value>) -> Option<String> {
@@ -354,6 +370,107 @@ async fn fetch<T: DeserializeOwned>(client: &reqwest::Client, url: &str, query: 
     serde_json::from_str(&body).map_err(|e| Error::Body(why_unreadable(&body, &e)))
 }
 
+// -- a page's reads ---------------------------------------------------------------------------
+
+/// What reads a page's detail when it is asked for — a DAG's runs, a run's tasks, a task's log —
+/// with the client and the session of the source, apart from the task that polls, so a page does
+/// not wait for a poll. The session is the source's: it signs in, this follows.
+#[derive(Clone)]
+pub struct AirflowDetails {
+    base_url: String,
+    client: reqwest::Client,
+    session: std::sync::Arc<std::sync::Mutex<String>>,
+}
+
+/// The most runs a DAG's page lists.
+const RUNS_LISTED: &str = "50";
+
+impl AirflowDetails {
+    fn cookies(&self) -> Result<String, String> {
+        let cookies = self.session.lock().map(|c| c.clone()).unwrap_or_default();
+        if cookies.is_empty() {
+            return Err("not signed in to Airflow yet — its first read is still on its way".to_string());
+        }
+        Ok(cookies)
+    }
+
+    fn said(error: Error) -> String {
+        match error {
+            Error::Http(401 | 403) => "the Airflow session ran out — r reads Airflow again and signs in".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    /// A DAG's latest runs, newest first.
+    pub async fn runs(&self, dag: &str) -> Result<Vec<Run>, String> {
+        let cookies = self.cookies()?;
+        let url = format!("{}/api/v1/dags/{}/dagRuns", self.base_url, segment(dag));
+        let query = ask("", &[("order_by", "-execution_date"), ("limit", RUNS_LISTED)]).1;
+        let list: RunList = fetch(&self.client, &url, &query, &cookies).await.map_err(Self::said)?;
+        Ok(list.dag_runs.into_iter().filter_map(run).collect())
+    }
+
+    /// A run's task instances, in the order they started; those that have not, after.
+    pub async fn tasks(&self, dag: &str, run: &str) -> Result<Vec<TaskRun>, String> {
+        let cookies = self.cookies()?;
+        let url = format!("{}/api/v1/dags/{}/dagRuns/{}/taskInstances", self.base_url, segment(dag), segment(run));
+        let mut tasks = Vec::new();
+        for page in 0..5 {
+            let offset = (page * PAGE).to_string();
+            let query = ask("", &[("limit", "100"), ("offset", &offset)]).1;
+            let list: TaskList = fetch(&self.client, &url, &query, &cookies).await.map_err(Self::said)?;
+            let got = list.task_instances.len();
+            tasks.extend(list.task_instances.into_iter().map(task_run));
+            if got < PAGE || tasks.len() >= list.total_entries {
+                break;
+            }
+        }
+        tasks.sort_by(|a, b| {
+            a.start
+                .is_none()
+                .cmp(&b.start.is_none())
+                .then(a.start.cmp(&b.start))
+                .then_with(|| a.id.cmp(&b.id))
+                .then(a.map_index.cmp(&b.map_index))
+        });
+        Ok(tasks)
+    }
+
+    /// One try of a task's log, as text.
+    pub async fn log(&self, dag: &str, run: &str, task: &str, map_index: i64, attempt: u32) -> Result<String, String> {
+        let cookies = self.cookies()?;
+        let url = format!(
+            "{}/api/v1/dags/{}/dagRuns/{}/taskInstances/{}/logs/{attempt}",
+            self.base_url,
+            segment(dag),
+            segment(run),
+            segment(task)
+        );
+        let mut query = vec![("full_content".to_string(), "true".to_string())];
+        if map_index >= 0 {
+            query.push(("map_index".to_string(), map_index.to_string()));
+        }
+        let response = self
+            .client
+            .get(&url)
+            .query(&query)
+            .header(ACCEPT, "text/plain")
+            .header(COOKIE, cookies)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|e| transport(e, Duration::from_secs(60)))?;
+        let status = response.status();
+        if status.is_redirection() {
+            return Err(Self::said(Error::Http(401)));
+        }
+        if !status.is_success() {
+            return Err(Self::said(Error::Http(status.as_u16())));
+        }
+        response.text().await.map_err(|e| transport(e, Duration::from_secs(60)))
+    }
+}
+
 // -- the source -------------------------------------------------------------------------------
 
 pub struct AirflowSource {
@@ -363,6 +480,8 @@ pub struct AirflowSource {
     /// Follows no redirect: the login's answer is a redirect, and its cookie is on it.
     client: reqwest::Client,
     cookies: Jar,
+    /// The session's cookies as they are now, for the pages' reads.
+    session: std::sync::Arc<std::sync::Mutex<String>>,
     /// When a login was last refused, so it is not sent again for a while.
     refused: Option<Instant>,
     version: Option<String>,
@@ -394,6 +513,7 @@ impl AirflowSource {
             password,
             client,
             cookies: Jar::default(),
+            session: std::sync::Arc::default(),
             refused: None,
             version: None,
             dags: Vec::new(),
@@ -404,6 +524,11 @@ impl AirflowSource {
             live_before: HashSet::new(),
             failed_tasks: HashMap::new(),
         })
+    }
+
+    /// What reads a page's detail, on the session this source keeps.
+    pub fn details(&self) -> AirflowDetails {
+        AirflowDetails { base_url: self.base_url.clone(), client: self.client.clone(), session: std::sync::Arc::clone(&self.session) }
     }
 
     /// Read until the loop ends: every 15 s, and at once when asked — which also asks a refused
@@ -713,11 +838,17 @@ impl AirflowSource {
             .map_err(connection)?;
         self.cookies.take(answer.headers());
         let location = answer.headers().get(LOCATION).and_then(|l| l.to_str().ok()).unwrap_or_default();
-        if answer.status().is_redirection() && !location.contains("/login") {
+        let signed_in = answer.status().is_redirection() && !location.contains("/login");
+        if !signed_in {
+            self.cookies = Jar::default();
+        }
+        if let Ok(mut session) = self.session.lock() {
+            *session = self.cookies.header();
+        }
+        if signed_in {
             self.refused = None;
             Ok(())
         } else {
-            self.cookies = Jar::default();
             Err(Error::LoginRefused)
         }
     }

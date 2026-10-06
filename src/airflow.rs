@@ -151,6 +151,44 @@ impl Task {
     }
 }
 
+/// One task instance of a run, as its page lists it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TaskRun {
+    pub id: String,
+    /// `-1` for a task that is not mapped; its index otherwise.
+    pub map_index: i64,
+    pub state: String,
+    pub start: Option<i64>,
+    pub end: Option<i64>,
+    pub try_number: u32,
+    pub max_tries: u32,
+    pub operator: Option<String>,
+    pub host: Option<String>,
+}
+
+impl TaskRun {
+    /// How long it ran, or has been running.
+    pub fn took(&self, now: i64) -> Option<i64> {
+        let start = self.start?;
+        Some((self.end.unwrap_or(now) - start).max(0))
+    }
+
+    /// Red for a failure, amber for a retry to come or a failure upstream.
+    pub fn severity(&self) -> Severity {
+        match self.state.as_str() {
+            "failed" => Severity::Crit,
+            "up_for_retry" | "upstream_failed" | "up_for_reschedule" => Severity::Warn,
+            "success" => Severity::Ok,
+            _ => Severity::None,
+        }
+    }
+
+    /// Its name, with its index when it is mapped: `load [3]`.
+    pub fn label(&self) -> String {
+        if self.map_index >= 0 { format!("{} [{}]", self.id, self.map_index) } else { self.id.clone() }
+    }
+}
+
 /// A DAG as Airflow lists it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Dag {

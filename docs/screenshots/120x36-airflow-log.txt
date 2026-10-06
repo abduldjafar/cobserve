@@ -1,0 +1,36 @@
+  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 2 hot   mem ━━━╸━━━━━━ 36.3% 279/768 GiB   cpu ━━━╺━━━━━━ 28.8% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  16 waiting        █ · oldest 2m04s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   ◂ kyc_onboarding_tables › scheduled · 12:30 › build_cohorts · log of try 1                                esc back   
+                                                                                                                        
+   [2026-10-04T05:30:25.175+0000] {taskinstance.py:2612} INFO - step 25 of build_cohorts: 1925 rows                     
+   [2026-10-04T05:30:26.182+0000] {taskinstance.py:2612} INFO - step 26 of build_cohorts: 1962 rows                     
+   [2026-10-04T05:30:27.189+0000] {taskinstance.py:2612} INFO - step 27 of build_cohorts: 1999 rows                     
+   [2026-10-04T05:30:28.196+0000] {taskinstance.py:2612} INFO - step 28 of build_cohorts: 2036 rows                     
+   [2026-10-04T05:30:29.203+0000] {taskinstance.py:2612} INFO - step 29 of build_cohorts: 2073 rows                     
+   [2026-10-04T05:30:30.210+0000] {taskinstance.py:2612} INFO - step 30 of build_cohorts: 2110 rows                     
+   [2026-10-04T05:30:31.217+0000] {taskinstance.py:2612} INFO - step 31 of build_cohorts: 2147 rows                     
+   [2026-10-04T05:30:32.224+0000] {taskinstance.py:2612} INFO - step 32 of build_cohorts: 2184 rows                     
+   [2026-10-04T05:30:33.231+0000] {taskinstance.py:2612} INFO - step 33 of build_cohorts: 2221 rows                     
+   [2026-10-04T05:30:34.238+0000] {taskinstance.py:2612} INFO - step 34 of build_cohorts: 2258 rows                     
+   [2026-10-04T05:30:35.245+0000] {taskinstance.py:2612} INFO - step 35 of build_cohorts: 2295 rows                     
+   [2026-10-04T05:30:36.252+0000] {taskinstance.py:2612} INFO - step 36 of build_cohorts: 2332 rows                     
+   [2026-10-04T05:30:37.259+0000] {taskinstance.py:2612} INFO - step 37 of build_cohorts: 2369 rows                     
+   [2026-10-04T05:30:38.266+0000] {taskinstance.py:2612} INFO - step 38 of build_cohorts: 2406 rows                     
+   [2026-10-04T05:30:39.273+0000] {taskinstance.py:2612} INFO - step 39 of build_cohorts: 2443 rows                     
+   Traceback (most recent call last):                                                                                   
+     File "/opt/airflow/dags/repo/dag.py", line 78, in run                                                              
+       check(result)                                                                                                    
+     File "/opt/airflow/dags/repo/dag.py", line 65, in check                                                            
+       raise AirflowException(f'{bad} table(s) need a look')                                                            
+   airflow.exceptions.AirflowException: 3 table(s) need a look: ledger_movements (too_many), fx_rates (missing),        
+   payouts (too_many)                                                                                                   
+   [2026-10-04T05:42:08.408+0000] {local_task_job_runner.py:266} INFO - Task exited with return code 1                  
+  ─ log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  
+  50 lines · opens at its end · g the top, G the end · o in the browser                                                 
+                                                                                                                        
+                                                                                                                        
+   ↑↓ PgUp PgDn  scroll   g G  top · end   esc  back   o  in the browser   y  copy link   r  read again                 

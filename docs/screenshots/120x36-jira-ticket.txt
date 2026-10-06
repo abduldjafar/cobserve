@@ -1,0 +1,36 @@
+  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
+  ━━ Subuh 04:21 ━━━━ Terbit 05:33 ━━━━ Dzuhur 11:45 ━━━━ Ashar 14:48 ━●┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄┄  
+                                                                                                                        
+  FLEET   9 nodes · 2 hot   mem ━━━╸━━━━━━ 36.3% 279/768 GiB   cpu ━━━╺━━━━━━ 28.8% 55/192 cores   queries 15 · 4 ✕     
+  REDASH  16 waiting        █ · oldest 2m04s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale              [2] queue  
+                                                                                                                        
+   ◂ DATA-2647 · Client account balances as a daily warehouse table (private/business, EUR buckets)          esc back   
+                                                                                                                        
+    DE - Client account balances as a daily warehouse table (private/business, EUR buckets)                             
+    In Review · Task · ASAP · on Sam Example · from Jurgita Petrova · made Sep 27 · updated 3d ago                      
+    due 2026-10-02 (overdue 2d) · 7h12m logged                                                                          
+                                                                                                                        
+  ─ DESCRIPTION ──────────────────────────────────────────────────────────────────────────────────────────────────────  
+    Request from the reporting team: client account balances as a daily warehouse table (private/business, eur          
+    buckets).                                                                                                           
+                                                                                                                        
+    Asked for                                                                                                           
+                                                                                                                        
+    • one row per day and currency, aggregated only                                                                     
+    • the EUR equivalent beside every total                                                                             
+      • at the ECB rate of that day                                                                                     
+                                                                                                                        
+    Source                                                                                                              
+                                                                                                                        
+    The balances are in final.internal_account; its history is rebuilt from the ledger:                                 
+                                                                                                                        
+     SELECT toDate(created_at) AS day, currency, sum(amount) AS total                                                   
+     FROM ledger.movements                                                                                              
+     GROUP BY day, currency                                                                                             
+                                                                                                                        
+    See the dashboard (https://redash.example.net/dashboards/42) for the numbers today.                                 
+  ─ DATA-2647 ────────────────────────────────────────────────────────────────────────────────────────────────────────  
+  https://jira.example.net/browse/DATA-2647 · o opens it · y copies it · esc back                                       
+                                                                                                                        
+                                                                                                                        
+   ↑↓ PgUp PgDn  scroll   g G  top · end   esc  back   o  in the browser   y  copy link   r  read again                 

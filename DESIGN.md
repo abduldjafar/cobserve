@@ -857,8 +857,12 @@ or from a slope over the last minutes of it.
   several runs share, a failure shows over a run, a run over a wait, a wait over a success —
   beside Airflow's schedule shortened, the day's runs, the last one's age and length, and the
   next. A run is labelled by when it began, not by its logical date, which for a daily DAG is
-  the day before. `⏎` opens the run's or the DAG's grid in the browser (`open`, `xdg-open`),
-  `y` copies the link, `r` reads again. `AIRFLOW_URL`, `AIRFLOW_USER`, `AIRFLOW_PASSWORD`, or
+  the day before. `⏎` opens a page in the view's place (`src/detail.rs`, `src/ui/detail.rs`): on
+  a run its tasks (`/dags/{d}/dagRuns/{r}/taskInstances`), on a task the log of its last try
+  (`…/logs/{try}`, asked as `text/plain`, its last 3000 lines, opened at the end, errors red),
+  on a DAG its last 50 runs; `esc` goes back a page. A page is read by a task of its own on the
+  source's session, so it never waits for a poll. `o` opens the row or the page in the browser
+  (`open`, `xdg-open`), `y` copies the link, `r` reads again. `AIRFLOW_URL`, `AIRFLOW_USER`, `AIRFLOW_PASSWORD`, or
   `airflow:` in the credential file.
 - **JIRA**, view 6 (`src/jira.rs`, `src/sources/jira.rs`, `src/ui/jira.rs`): the tickets
   assigned to the token's owner, in the board's columns, from Jira Server's REST API
@@ -874,8 +878,15 @@ or from a slope over the last minutes of it.
   summary with the team's tag (`DE -`) faint, the priority (`URGENT`, `ASAP`, `Highest`,
   `Blocker` red), the time in the column, the due date — red when past, amber today and
   tomorrow, nothing once finished — and the time logged. The first line is the flow in counts,
-  with how many open tickets are overdue or due soon. `⏎` opens the ticket, `y` copies its
-  link, `r` reads again. `JIRA_URL`, `JIRA_TOKEN`, `JIRA_STATUSES`, `JIRA_DONE_DAYS`, or `jira:`
+  with how many open tickets are overdue or due soon. Under it, LOGGED: your worklogs of the
+  month on any ticket (`worklogAuthor = currentUser() AND worklogDate >= startOfMonth(-1d)`, each
+  ticket's worklogs read whole when the search cuts them, kept by author), every five minutes
+  and after `r`, sent after the board so the board does not wait for them; a day is the date the
+  time was logged for, as written. The total, its average over the working days so far and
+  today's, and a bar a day, eighths of a cell, up to eight hours or the longest day — counts, so
+  no colour but today's. `⏎` shows the ticket in full in the view's place — fields,
+  description with Jira's wiki markup turned into headings, items, code and text, sub-tasks,
+  links, comments; `o` opens it in Jira, `y` copies its link, `r` reads again. `JIRA_URL`, `JIRA_TOKEN`, `JIRA_STATUSES`, `JIRA_DONE_DAYS`, or `jira:`
   in the credential file. Both views keep what they last read when a read fails, and say so.
 
 ### Departures

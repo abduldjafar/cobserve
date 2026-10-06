@@ -7,6 +7,12 @@
    jira.example.net · Jira 9.12.1 · Sam Example                                                           read 0s ago   
     In progress 4  ›  In Review 4  ›  Feedback 1  ›  Done 8 in 7 days     ✖ 1 overdue  ▲ 1 due soon                     
                                                                                                                         
+    LOGGED · October 2026   16h30m in 2 working days · 8h15m a working day · today 0h                                   
+        8½  8                                                                                                           
+    9h │▇▇ ▆▆                                                                                                           
+       │██ ██                                                                                                           
+         1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31                    
+                                                                                                                        
     KEY        SUMMARY                                                       PRIORITY  IN COLUMN  DUE           LOGGED  
   ─ IN PROGRESS · 4 ──────────────────────────────────────────────────────────────────────────────────────────────────  
     DATA-2207  DE Product metrics integration — PostHog + ClickHouse → por…  High            11d                        
@@ -23,14 +29,8 @@
   ─ DONE · 8 in the last 7 days ──────────────────────────────────────────────────────────────────────────────────────  
     DATA-2638  DE Enrich accounting_monitoring.statement_mismatches with o…  URGENT         ✔ 2h                    2h  
     DATA-2737  DE Google Chat failure alerts for the 10 highest-impact ena…  High           ✔ 2d                    2h  
-    DATA-2650  DE Add all gateway.bank_account columns to the ClickHouse r…  URGENT         ✔ 3d                   30m  
-    DATA-2653  DE Replicate CreditOnline tables to ClickHouse BI             High           ✔ 3d                   30m  
-    DATA-2594  DE Schedule the refresh of the ClickHouse tables the wareho…  High           ✔ 3d                    6h  
-    DATA-2640  DE CBK DAG: immediate alerts with row errors, daily summary   ASAP           ✔ 4d                    3h  
-    DATA-2504  DE Replicate kyc_control_panel case, case_event and staff t…  ASAP           ✔ 4d                    6h  
-    DATA-2490  DE Accounting operations MV for the unmatched-instant dashb…  High           ✔ 5d                    3h  
   ─ DATA-2647 · Task · ASAP · In Review for 4d ───────────────────────────────────────────────────────────────────────  
   DE - Client account balances as a daily warehouse table (private/business, EUR buckets)                               
   from Jurgita Petrova · made Sep 27 · updated 3d ago · due 2026-10-02 (overdue 2d) · 7h12m logged                      
-  https://jira.example.net/browse/DATA-2647 · ⏎ opens it · y copies the link · r reads Jira again                       
-   ↑↓  move   ⏎  open in Jira   y  copy link   r  read now   p  pause   ?  help   q  quit                               
+  https://jira.example.net/browse/DATA-2647 · ⏎ in full here · o in Jira · y copies the link · r reads again            
+   ↑↓  move   ⏎  details   o  open in Jira   y  copy link   r  read now   p  pause   ?  help   q  quit                  

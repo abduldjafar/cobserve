@@ -51,6 +51,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let selected = app.jira_selection();
 
     let mut lines: Vec<Line<'static>> = vec![title_line(app, theme, width), flow_line(board, &columns, today, theme, width), Line::from("")];
+    // The month's time, as a chart, when there is height for it and the columns under it.
+    if board.worklogs_read && height >= 16 {
+        let bars = if height >= 30 { 3 } else { 2 };
+        lines.extend(month_chart(board, now, app.time.offset_s(now), bars, theme, width));
+        lines.push(Line::from(""));
+    }
     lines.push(header(&cells, theme, width));
     let mut rows: Vec<usize> = Vec::new();
     let mut selected_line = None;
@@ -314,6 +320,114 @@ fn ticket_line(ticket: &Ticket, finished: bool, selected: bool, w: &Widths, now:
     cells.line(width, if selected { theme.selected() } else { Style::default() })
 }
 
+/// The month's time logged, as a chart: a line of totals, the hours over each day, a bar a day
+/// (eighths of a cell, up to a full day of eight hours or the longest day if longer), and the
+/// days under them — weekends faint, today lit.
+///
+/// ```text
+/// LOGGED · October 2026   23h30m in 4 working days · 5h52m a day · today 2h
+///     4½ 7  8  7½ ·  ·  2
+///  8h ▅▅ ▇▇ ██ ▇▇
+///     ██ ██ ██ ██       ▂▂
+///      1  2  3  4  5  6  7  8 …
+/// ```
+fn month_chart(board: &Board, now: i64, offset_s: i64, bars: usize, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let month = jira::Month::of(now, offset_s);
+    let days = month.per_day(&board.worklogs);
+    let total: u64 = days.iter().sum();
+    let today = days.get(month.today as usize - 1).copied().unwrap_or(0);
+    let worked = month.working_days_so_far().max(1);
+
+    let mut head = Cells::new();
+    head.push("  ", Style::default());
+    head.push("LOGGED", theme.section());
+    head.push(format!(" · {}   ", month.name), theme.muted());
+    head.push(jira::hours(total), theme.strong());
+    head.push(format!(" in {}", fmt::plural(worked as usize, "working day", "working days")), theme.muted());
+    head.push(" · ", theme.faint());
+    head.push(jira::hours(total / u64::from(worked)), theme.text2());
+    head.push(" a working day", theme.muted());
+    head.push(" · today ", theme.faint());
+    head.push(jira::hours(today), if today > 0 { theme.accent().add_modifier(Modifier::BOLD) } else { theme.muted() });
+    let mut lines = vec![head.line(width, Style::default())];
+
+    // A column a day, as wide as the width allows; the bar a cell narrower, for the gap.
+    const AXIS: usize = 6;
+    let column = (width.saturating_sub(AXIS + 2) / days.len().max(1)).clamp(2, 5);
+    let bar = column.saturating_sub(1).max(1);
+    let day_s: u64 = 8 * 3600;
+    // Whole hours at the top, so its label fits the axis: `8h`, `11h`.
+    let top = days.iter().copied().max().unwrap_or(0).max(day_s).div_ceil(3600) * 3600;
+    let eighths = |seconds: u64| ((seconds as f64 / top as f64) * (bars * 8) as f64).round() as usize;
+    let future = |day: u32| day > month.today;
+
+    // The hours over each day: `7½`, `8`, `·` for a working day with nothing logged.
+    let mut values = Cells::new();
+    values.push(" ".repeat(AXIS), Style::default());
+    for (i, seconds) in days.iter().enumerate() {
+        let day = i as u32 + 1;
+        let text = match *seconds {
+            0 if future(day) || month.is_weekend(day) => String::new(),
+            0 => "·".to_string(),
+            s => half_hours(s),
+        };
+        let style = if day == month.today { theme.accent().add_modifier(Modifier::BOLD) } else { theme.text2() };
+        values.cell_right(&text, bar, style);
+        values.gap(column - bar);
+    }
+    lines.push(values.line(width, Style::default()));
+
+    const BLOCKS: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+    for row in 0..bars {
+        let mut cells = Cells::new();
+        let label = if row == 0 { format!("{:>4} ", format!("{}h", top / 3600)) } else { " ".repeat(AXIS - 1) };
+        cells.push(label, theme.faint());
+        cells.push("│", theme.rule());
+        for (i, seconds) in days.iter().enumerate() {
+            let day = i as u32 + 1;
+            let level = eighths(*seconds).saturating_sub((bars - 1 - row) * 8).min(8);
+            let fill = if day == month.today { theme.accent() } else { Style::default().fg(theme.bar_fill(Severity::None)) };
+            cells.push(BLOCKS[level].repeat(bar), fill);
+            cells.gap(column - bar);
+        }
+        lines.push(cells.line(width, Style::default()));
+    }
+
+    let mut labels = Cells::new();
+    labels.push(" ".repeat(AXIS), Style::default());
+    for (i, seconds) in days.iter().enumerate() {
+        let day = i as u32 + 1;
+        let style = if day == month.today {
+            theme.accent().add_modifier(Modifier::BOLD)
+        } else if month.is_weekend(day) || future(day) {
+            theme.faint()
+        } else if *seconds == 0 {
+            theme.muted()
+        } else {
+            theme.text2()
+        };
+        labels.cell_right(&day.to_string(), bar, style);
+        labels.gap(column - bar);
+    }
+    lines.push(labels.line(width, Style::default()));
+    lines
+}
+
+/// Hours to the half hour, in two cells: `7½`, `8`, `½`, `12`.
+fn half_hours(seconds: u64) -> String {
+    // Ten hours and more have no room for the half: whole hours.
+    if seconds >= 10 * 3600 {
+        return ((seconds + 1800) / 3600).to_string();
+    }
+    let halves = (seconds + 900) / 1800;
+    match (halves / 2, halves % 2) {
+        (0, 0) => "·".to_string(),
+        (0, _) => "½".to_string(),
+        (h, 0) => h.to_string(),
+        (h, _) => format!("{h}½"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +441,14 @@ mod tests {
         let narrow = Widths::of(&board, today, 76);
         assert_eq!((narrow.due, narrow.logged), (0, 0), "{narrow:?}");
         assert!(narrow.summary >= SUMMARY_MIN);
+    }
+
+    #[test]
+    fn hours_go_to_the_half_hour_in_two_cells() {
+        assert_eq!(half_hours(7 * 3600 + 1800), "7½");
+        assert_eq!(half_hours(8 * 3600), "8");
+        assert_eq!(half_hours(1700), "½");
+        assert_eq!(half_hours(600), "·");
+        assert_eq!(half_hours(12 * 3600 + 1000), "12");
     }
 }

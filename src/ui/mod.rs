@@ -29,6 +29,7 @@ mod band;
 mod claude;
 mod console;
 mod day;
+mod detail;
 mod drawer;
 mod jira;
 mod map;
@@ -247,6 +248,12 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         View::Queue => queue::draw(frame, app, theme, a.body),
         View::Map => map::draw(frame, app, theme, a.body),
         View::Tape => tape::draw(frame, app, theme, a.body),
+        // A page open on view 5 or 6 takes the view's place until `esc`.
+        View::Airflow | View::Jira if app.page().is_some() => {
+            if let Some(page) = app.page() {
+                detail::draw(frame, app, theme, a.body, page);
+            }
+        }
         View::Airflow => airflow::draw(frame, app, theme, a.body),
         View::Jira => jira::draw(frame, app, theme, a.body),
         View::Claude => claude::draw(frame, app, theme, a.well, margin),
@@ -510,10 +517,16 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("?", "help"),
             ("q", "quit"),
         ],
+        View::Airflow | View::Jira if app.page().is_some() => match app.page().map(|p| &p.ask) {
+            Some(crate::detail::Ask::Runs(_)) => &[("↑↓", "move"), ("⏎", "its tasks"), ("esc", "back"), ("o", "in the browser"), ("y", "copy link"), ("r", "read again")],
+            Some(crate::detail::Ask::Tasks { .. }) => &[("↑↓", "move"), ("⏎", "its log"), ("esc", "back"), ("o", "in the browser"), ("y", "copy link"), ("r", "read again")],
+            _ => &[("↑↓ PgUp PgDn", "scroll"), ("g G", "top · end"), ("esc", "back"), ("o", "in the browser"), ("y", "copy link"), ("r", "read again")],
+        },
         View::Airflow if !app.airflow.reachable => &[("r", "read now"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
         View::Airflow => &[
             ("↑↓", "move"),
-            ("⏎", "open in Airflow"),
+            ("⏎", "details"),
+            ("o", "open in Airflow"),
             ("y", "copy link"),
             ("r", "read now"),
             ("p", "pause"),
@@ -523,7 +536,8 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         View::Jira if !app.jira.reachable => &[("r", "read now"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
         View::Jira => &[
             ("↑↓", "move"),
-            ("⏎", "open in Jira"),
+            ("⏎", "details"),
+            ("o", "open in Jira"),
             ("y", "copy link"),
             ("r", "read now"),
             ("p", "pause"),
@@ -667,8 +681,8 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
 /// `?` — the keymap of §3 and what every glyph on screen means.
 const HELP_KEYS: &[(&str, &str)] = &[
     ("↑ ↓  j k", "move the cursor · PgUp PgDn Home End jump"),
-    ("⏎", "open / close · on an insight, a job, a tile, a tape line: go there · a run, a ticket: its page"),
-    ("y  r", "on airflow and jira: copy the link of the row · read again now"),
+    ("⏎", "open / close · on an insight, a job, a tile, a tape line: go there · a run, a ticket: its detail"),
+    ("o  y  r", "on airflow and jira: open in the browser · copy the link · read again · esc leaves a detail"),
     ("← →  h l", "collapse / expand, vim-style"),
     ("J K  ⇧↑↓", "scroll the SQL under the selected query or Redash job"),
     ("tab", "move between the tree and the insights"),

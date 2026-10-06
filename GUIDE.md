@@ -412,7 +412,9 @@ What Airflow's DAGs did over the last 24 hours, read every 15 seconds:
   Beside it the schedule, the day's runs, when it last ran, how long that took and when it runs
   next.
 
-`⏎` opens the run or the DAG's grid in your browser, `y` copies its link, `r` reads again now.
+`⏎` on a run lists its tasks, and `⏎` on a task opens its log at its end, where a failure says
+why; `⏎` on a DAG lists its latest runs. `esc` goes back. `o` opens it in Airflow instead, `y`
+copies its link, `r` reads again now.
 The first read shows what runs within seconds and the day a dozen seconds later.
 
 ![Airflow](docs/screenshots/120x36-airflow.png)
@@ -424,7 +426,10 @@ line is the flow — `In progress 4 › In Review 4 › Feedback 1 › Done 16 i
 many open tickets are overdue or due soon. Under it, a block per column, ranked as the board
 ranks it: the key, the summary, the priority, how long the ticket has been in the column, its
 due date (red when overdue, amber today and tomorrow) and the time logged on it. The drawer has
-the rest and the link; `⏎` opens it, `y` copies it, `r` reads again.
+the rest and the link. `⏎` shows the ticket in full here — description, sub-tasks, links,
+comments — `esc` goes back, `o` opens it in Jira, `y` copies the link, `r` reads again. Over
+the columns, **LOGGED** charts the hours you logged this month, a bar a day, with the total and
+the average per working day.
 
 ![Jira](docs/screenshots/120x36-jira.png)
 

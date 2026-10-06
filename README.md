@@ -144,11 +144,19 @@ a wrong password cannot lock the account. Everything after the login is GET.
   when it runs next — and from 150 columns its owner.
 
 The first read comes in two: what runs now in a few seconds, the day a dozen more after it.
-`⏎` opens the run, or the DAG's grid, in your browser; `y` copies its link; `r` reads it all
-again now. Set `AIRFLOW_URL`, `AIRFLOW_USER` and `AIRFLOW_PASSWORD` (the login of its web UI), or
+
+**Detail, here, not in the browser.** `⏎` on a run lists its tasks — state, when each started,
+how long it took, its try, operator and worker — and `⏎` on a task opens its log, at its end,
+where a failure says why, the traceback in red. `⏎` on a DAG lists its latest runs, and `⏎` on
+one of them its tasks. `esc` goes back a page. `o` opens what is under the cursor in Airflow
+itself, `y` copies its link, `r` reads the page (or the view) again. Set `AIRFLOW_URL`, `AIRFLOW_USER` and `AIRFLOW_PASSWORD` (the login of its web UI), or
 an `airflow:` section in the credential file.
 
 ![Airflow](docs/screenshots/120x36-airflow.png)
+
+![A failed run's tasks](docs/screenshots/120x36-airflow-tasks.png)
+
+![The failed task's log, at its end](docs/screenshots/120x36-airflow-log.png)
 
 ### Jira: your tickets
 
@@ -174,14 +182,29 @@ every minute, GET only.
   drawn faint), the priority (`URGENT` and `ASAP` red), how long it has been in the column —
   from its history, read again only when the ticket changes — its due date and the time logged.
 - The drawer has the rest: the whole summary, who reported it, when it was made and updated, its
-  parent and labels, and its link. `⏎` opens it in your browser, `y` copies the link, `r` reads
-  again.
+  parent and labels, and its link.
+- **`⏎` shows the ticket in full, here**: its fields, its description — Jira's markup made
+  readable, headings, lists and code blocks drawn as such — its sub-tasks and links, and every
+  comment. `esc` goes back, `o` opens it in Jira, `y` copies the link, `r` reads again.
+- **The month's time**, over the columns: the hours you logged this month on any ticket, in
+  total and per working day, and a bar for every day of the month — the hours over it, weekends
+  faint, today lit — read every five minutes from your worklogs.
+
+```text
+    LOGGED · October 2026   17h10m in 4 working days · 4h17m a working day · today 0h
+         14   3           ·   ·
+   15h │▇▇▇
+       │███ ▅▅▅
+          1   2   3   4   5   6   7   8   9  10 …
+```
 
 Set `JIRA_URL` and `JIRA_TOKEN` (in Jira: Profile → Personal Access Tokens), or a `jira:` section
 in the credential file. For another board, `JIRA_STATUSES` names its columns, left to right
 (the last is where finished tickets go), and `JIRA_DONE_DAYS` how far back that one reaches.
 
 ![Jira](docs/screenshots/120x36-jira.png)
+
+![A ticket in full](docs/screenshots/120x36-jira-ticket.png)
 
 ### The day, and prayer times
 
@@ -481,7 +504,7 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | Key | |
 |---|---|
 | `↑ ↓` `j k` | move · `PgUp PgDn Home End` jump |
-| `⏎` | open / close a node or user · on an insight, a queue job, a tile or a tape line: go there · on a run, a DAG or a ticket: its page in the browser |
+| `⏎` | open / close a node or user · on an insight, a queue job, a tile or a tape line: go there · on a run, a DAG or a ticket: its detail here — tasks, a log, the ticket in full · `esc` back |
 | `← →` `h l` | collapse / expand |
 | `J K` `shift ↑↓` | scroll the SQL of the selected query or Redash job (it opens right under its row) |
 | `tab` | move between the tree and the insights |
@@ -491,7 +514,7 @@ otherwise, the 16 ANSI colours (no painted background) on anything older.
 | `s` | sort: pressure, memory, CPU, name |
 | `/` | filter by node, user, person, SQL or query id · `esc` clears |
 | `x` then `y` | view 2: cancel the Redash job under the cursor — any other key keeps it |
-| `y` · `r` | views 5 and 6: copy the link of the row under the cursor · read Airflow or Jira again now |
+| `o` · `y` · `r` | views 5 and 6: open the row (or the page) in the browser · copy its link · read it again now |
 | `1`…`6` | views: nodes, queue, map, tape, airflow, jira · `7`…`9` the sessions |
 | `F1`…`F9` | the same, from anywhere — Claude's screen too |
 | `ctrl+\` | the sessions (view 7); there, the key before a number — see *Claude, OpenCode and a terminal in the monitor* |

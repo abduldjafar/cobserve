@@ -93,6 +93,9 @@ pub struct Board {
     pub statuses: Vec<String>,
     pub done_days: u32,
     pub tickets: Vec<Ticket>,
+    /// Your worklogs of the month, on any ticket; read every few minutes.
+    pub worklogs: Vec<Worklog>,
+    pub worklogs_read: bool,
     pub taken_at: SystemTime,
 }
 
@@ -116,6 +119,8 @@ impl Board {
             statuses: DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
             done_days: DEFAULT_DONE_DAYS,
             tickets: Vec::new(),
+            worklogs: Vec::new(),
+            worklogs_read: false,
             taken_at: SystemTime::now(),
         }
     }
@@ -296,6 +301,248 @@ pub fn age(seconds: i64) -> String {
     }
 }
 
+// -- time logged this month ----------------------------------------------------------------
+
+/// A worklog of yours: on which ticket, on which day as it was logged, how long.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worklog {
+    pub key: String,
+    /// Days since the epoch: the date part of `started` as Jira wrote it, which is the day the
+    /// time was logged for — not that moment moved into another zone.
+    pub day: i64,
+    pub seconds: u64,
+}
+
+/// The month around now, in the zone shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Month {
+    /// Its first day, as days since the epoch.
+    pub first: i64,
+    pub days: u32,
+    /// `October 2026`.
+    pub name: String,
+    /// Today's place in it, from 1.
+    pub today: u32,
+}
+
+impl Month {
+    pub fn of(now: i64, offset_s: i64) -> Month {
+        use chrono::Datelike;
+        let today = today(now, offset_s);
+        let date = date_of(today);
+        let first = chrono::NaiveDate::from_ymd_opt(date.year(), date.month(), 1).unwrap_or(date);
+        let next = if date.month() == 12 {
+            chrono::NaiveDate::from_ymd_opt(date.year() + 1, 1, 1)
+        } else {
+            chrono::NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1)
+        }
+        .unwrap_or(date);
+        Month {
+            first: today - i64::from(date.day0()),
+            days: (next - first).num_days() as u32,
+            name: date.format("%B %Y").to_string(),
+            today: date.day(),
+        }
+    }
+
+    /// Seconds logged on each day of the month, the 1st first.
+    pub fn per_day(&self, worklogs: &[Worklog]) -> Vec<u64> {
+        let mut days = vec![0u64; self.days as usize];
+        for w in worklogs {
+            let at = w.day - self.first;
+            if (0..i64::from(self.days)).contains(&at) {
+                days[at as usize] += w.seconds;
+            }
+        }
+        days
+    }
+
+    /// Saturday or Sunday.
+    pub fn is_weekend(&self, day: u32) -> bool {
+        use chrono::Datelike;
+        date_of(self.first + i64::from(day) - 1).weekday().number_from_monday() >= 6
+    }
+
+    /// The working days (Monday to Friday) from the 1st to today.
+    pub fn working_days_so_far(&self) -> u32 {
+        (1..=self.today).filter(|d| !self.is_weekend(*d)).count() as u32
+    }
+}
+
+fn date_of(day: i64) -> chrono::NaiveDate {
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
+    epoch.checked_add_signed(chrono::Duration::days(day)).unwrap_or(epoch)
+}
+
+/// Hours as a person says them: `7h`, `7h30m`, `0h`.
+pub fn hours(seconds: u64) -> String {
+    let minutes = seconds / 60;
+    match (minutes / 60, minutes % 60) {
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h{m:02}m"),
+    }
+}
+
+// -- a ticket in full ---------------------------------------------------------------------
+
+/// What ⏎ on a ticket shows: the ticket as Jira has it, read when asked.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct IssueDetail {
+    pub key: String,
+    pub summary: String,
+    pub status: String,
+    pub kind: Option<String>,
+    pub priority: Option<String>,
+    pub assignee: Option<String>,
+    pub reporter: Option<String>,
+    pub created: Option<i64>,
+    pub updated: Option<i64>,
+    pub due: Option<String>,
+    pub labels: Vec<String>,
+    pub parent: Option<String>,
+    pub logged_s: Option<u64>,
+    /// In Jira's wiki markup, as written.
+    pub description: String,
+    pub subtasks: Vec<Linked>,
+    pub links: Vec<Linked>,
+    pub comments: Vec<Comment>,
+}
+
+/// A ticket another one points at: `blocks DATA-12 · summary · status`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Linked {
+    pub how: String,
+    pub key: String,
+    pub summary: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Comment {
+    pub author: String,
+    pub at: Option<i64>,
+    pub body: String,
+}
+
+/// What a line of wiki markup is, for the screen to draw it so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prose {
+    Heading,
+    Bullet,
+    Code,
+    Text,
+    Blank,
+}
+
+/// Jira's wiki markup made readable in a terminal: `h3.` a heading, `*` and `#` items bullets,
+/// `{code}` and `{noformat}` blocks code, `{{x}}` and `*x*` their text, `[text|url]` its text and
+/// where it goes. Each line with what it is; nothing is dropped but the markup.
+pub fn prose(markup: &str) -> Vec<(Prose, String)> {
+    let mut out = Vec::new();
+    let mut in_code = false;
+    for raw in markup.replace("\r\n", "\n").lines() {
+        let line = raw.trim_end();
+        let trimmed = line.trim_start();
+        // A panel's title is a heading; the panel's own markup goes.
+        if let Some(title) = panel_title(trimmed) {
+            out.push((Prose::Heading, title));
+        }
+        let unboxed = strip_macros(trimmed);
+        let trimmed = unboxed.trim();
+        let fence = trimmed.starts_with("{code") || trimmed.starts_with("{noformat");
+        if fence {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            out.push((Prose::Code, line.to_string()));
+            continue;
+        }
+        if trimmed.is_empty() {
+            if !line.trim().is_empty() {
+                // A line that was only markup leaves nothing behind.
+                continue;
+            }
+            if out.last().is_some_and(|(kind, _)| *kind != Prose::Blank) {
+                out.push((Prose::Blank, String::new()));
+            }
+            continue;
+        }
+        let heading = ["h1. ", "h2. ", "h3. ", "h4. ", "h5. ", "h6. "].iter().find_map(|h| trimmed.strip_prefix(h));
+        if let Some(text) = heading {
+            out.push((Prose::Heading, inline(text)));
+            continue;
+        }
+        let marks = trimmed.chars().take_while(|c| *c == '*' || *c == '#' || *c == '-').count();
+        if marks > 0 && trimmed[marks..].starts_with(' ') {
+            let indent = "  ".repeat(marks - 1);
+            out.push((Prose::Bullet, format!("{indent}• {}", inline(trimmed[marks..].trim_start()))));
+            continue;
+        }
+        out.push((Prose::Text, inline(trimmed)));
+    }
+    while out.last().is_some_and(|(kind, _)| *kind == Prose::Blank) {
+        out.pop();
+    }
+    out
+}
+
+/// `{panel:title=At a glance|borderStyle=solid}` → `At a glance`.
+fn panel_title(line: &str) -> Option<String> {
+    static PANEL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = PANEL.get_or_init(|| regex::Regex::new(r"\{panel:[^}]*?title=([^|}]+)[^}]*\}").expect("a valid pattern"));
+    re.captures(line).map(|c| c[1].trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// The block macros that only box or colour text — `{panel}`, `{quote}`, `{color:red}`, `{info}` —
+/// and the empty braces Jira puts between a word and its markup (`{}`, `{_}`), taken out.
+fn strip_macros(line: &str) -> String {
+    static MACRO: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = MACRO.get_or_init(|| {
+        regex::Regex::new(r"\{(?:panel|quote|color|expand|info|note|warning|tip|section|column)(?::[^}]*)?\}|\{[_*+\-^~?]?\}").expect("a valid pattern")
+    });
+    re.replace_all(line, "").into_owned()
+}
+
+/// The markup inside a line: `{{x}}` → `x`, `*x*` and `_x_` → `x`, `[text|url]` → `text (url)`,
+/// `[url]` → `url`, and the emoticons a terminal can draw as a mark.
+fn inline(text: &str) -> String {
+    let mut out = text.replace("{{", "").replace("}}", "");
+    for (face, mark) in [("(/)", "✔"), ("(x)", "✖"), ("(!)", "!"), ("(i)", "ⓘ"), ("(?)", "?"), ("(y)", "+"), ("(n)", "−"), ("(on)", "●"), ("(off)", "○")] {
+        out = out.replace(face, mark);
+    }
+    // Links.
+    let mut done = String::new();
+    while let Some(open) = out.find('[') {
+        let Some(close) = out[open..].find(']').map(|c| open + c) else {
+            break;
+        };
+        done.push_str(&out[..open]);
+        let inside = &out[open + 1..close];
+        match inside.split_once('|') {
+            Some((label, url)) => done.push_str(&format!("{label} ({url})")),
+            None => done.push_str(inside.trim_start_matches('~')),
+        }
+        out = out[close + 1..].to_string();
+    }
+    done.push_str(&out);
+    // Bold: `*word*` at word edges.
+    let chars: Vec<char> = done.chars().collect();
+    let mut plain = String::with_capacity(done.len());
+    for (i, c) in chars.iter().enumerate() {
+        let before = i.checked_sub(1).map(|j| chars[j]);
+        let after = chars.get(i + 1);
+        let mark = *c == '*' || *c == '_';
+        let opens = mark && before.is_none_or(|b| !b.is_alphanumeric()) && after.is_some_and(|a| !a.is_whitespace() && *a != *c);
+        let closes = mark && before.is_some_and(|b| !b.is_whitespace() && b != *c) && after.is_none_or(|a| !a.is_alphanumeric());
+        if !(opens || closes) {
+            plain.push(*c);
+        }
+    }
+    plain
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,5 +654,38 @@ mod tests {
         let mut b = board(Vec::new());
         b.base_url = Some("https://jira.example.net/".into());
         assert_eq!(b.link("DATA-12647").as_deref(), Some("https://jira.example.net/browse/DATA-12647"));
+    }
+
+    #[test]
+    fn the_month_is_counted_day_by_day_in_the_zone_shown() {
+        // 2026-10-04 15:52 in Jakarta: the 4th of October, a Sunday.
+        let month = Month::of(1_791_103_927, 7 * 3600);
+        assert_eq!((month.days, month.today, month.name.as_str()), (31, 4, "October 2026"));
+        assert_eq!(month.first, day_number("2026-10-01").unwrap());
+        assert!(month.is_weekend(4) && month.is_weekend(3) && !month.is_weekend(2));
+        assert_eq!(month.working_days_so_far(), 2, "Thursday the 1st and Friday the 2nd");
+        let log = |date: &str, h: u64| Worklog { key: "DATA-1".into(), day: day_number(date).unwrap(), seconds: h * 3600 };
+        let days = month.per_day(&[log("2026-10-01", 4), log("2026-10-01", 2), log("2026-10-02", 3), log("2026-09-30", 8)]);
+        assert_eq!((days[0], days[1], days[2]), (6 * 3600, 3 * 3600, 0), "September's is not October's");
+        assert_eq!(hours(27_000), "7h30m");
+        assert_eq!(hours(0), "0h");
+    }
+
+    #[test]
+    fn wiki_markup_reads_as_text() {
+        let lines = prose("Asked by *Ana*, like {{clickhouse_transfers_daily}}.\n\nh3. Asked for\n\n* split by [client type|https://x.example/a]\n** savings apart\n{code:sql}\nSELECT 1\n{code}\n\n");
+        let kinds: Vec<Prose> = lines.iter().map(|(k, _)| *k).collect();
+        assert_eq!(kinds, [Prose::Text, Prose::Blank, Prose::Heading, Prose::Blank, Prose::Bullet, Prose::Bullet, Prose::Code]);
+        assert_eq!(lines[0].1, "Asked by Ana, like clickhouse_transfers_daily.");
+        assert_eq!(lines[2].1, "Asked for");
+        assert_eq!(lines[4].1, "• split by client type (https://x.example/a)");
+        assert_eq!(lines[5].1, "  • savings apart");
+        assert_eq!(lines[6].1, "SELECT 1");
+        assert_eq!(prose("2 * 3 = 6")[0].1, "2 * 3 = 6", "a lone star is not bold");
+        let real = prose("{panel:title=At a glance|borderStyle=solid|bgColor=#ffffff}\n* Target: by 25 Sep ({_}confirm{_})\n* (i) _Reporter to be changed later._{panel}\nOn the {}Atomic Portal{} via gateway_bank_account.");
+        assert_eq!(real[0], (Prose::Heading, "At a glance".to_string()));
+        assert_eq!(real[1].1, "• Target: by 25 Sep (confirm)");
+        assert_eq!(real[2].1, "• ⓘ Reporter to be changed later.");
+        assert_eq!(real[3].1, "On the Atomic Portal via gateway_bank_account.", "snake_case is not italic");
     }
 }
