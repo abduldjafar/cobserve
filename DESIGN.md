@@ -929,6 +929,16 @@ or from a slope over the last minutes of it.
   sits on, the body 14:1. The desktop app takes the same colours for its terminal and chrome and
   ships Recursive (Rec Mono Semicasual in the terminal, Recursive in the header); the mark is a
   kawung, batik's four-petalled motif (`❖` on screen).
+- **The board and the loom** (`src/ui/board.rs`, `src/ui/loom.rs`): from 140 columns views 6
+  and 5 leave the table. Jira is a board — its columns as lanes side by side, each ticket a block:
+  the key and its priority, the summary in two lines, then how long in the column, the due date
+  coloured by how near, the time logged (a finished one when it was finished); a lane's title
+  counts what is overdue; `← →` cross the lanes, `↑ ↓` walk them. Airflow is the day woven:
+  above, the runs under way and the day's failures told as knots, two lines each, side by side —
+  how long a stuck one has gone and what its task waits for, how far a running one is, where a
+  failed one failed; below, a thread per DAG across the 24 hours (quarter-hour cells on a wide
+  terminal) under the clock's hours, its rhythm and next run after it. Same rows, order, keys and
+  drawer as the narrow views, which stay below 140 columns.
 - **Cards** (`src/ui/cards.rs`): from 150 columns and 30 rows the band's lines become a card
   each — ClickHouse, Redash and this machine side by side in rounded frames, in the rows the
   shelf's padding took. The numbers are the lines' own (§5 and the LOCAL arithmetic above), set

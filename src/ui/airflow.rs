@@ -47,6 +47,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         return;
     }
 
+    // Wide: the day woven, what needs a look told above it (`loom.rs`).
+    if width >= super::loom::FROM_WIDTH {
+        super::loom::draw(frame, app, theme, area);
+        return;
+    }
     let now = app.now();
     let offset_s = app.time.offset_s(now);
     let sections = activity.sections(now);
@@ -147,7 +152,7 @@ impl Out {
 }
 
 /// `airflow.example.net · Airflow 2.10.2 · scheduler ● 2s · triggerer ● 4s        read 4s ago`
-fn title_line(app: &App, now: i64, theme: &Theme, width: usize) -> Line<'static> {
+pub(super) fn title_line(app: &App, now: i64, theme: &Theme, width: usize) -> Line<'static> {
     let activity = &app.airflow;
     let mut cells = Cells::new();
     cells.push(" ", Style::default());
@@ -186,7 +191,7 @@ fn title_line(app: &App, now: i64, theme: &Theme, width: usize) -> Line<'static>
 }
 
 /// `last 24 h  631 runs  ✔ 628  ✖ 3     ▸ 3 running  ◌ 1 queued  ↻ 1 retrying     13 of 16 DAGs ran · 3 paused`
-fn day_line(activity: &Activity, now: i64, theme: &Theme, width: usize) -> Line<'static> {
+pub(super) fn day_line(activity: &Activity, now: i64, theme: &Theme, width: usize) -> Line<'static> {
     let c = activity.counts(now);
     let mut cells = Cells::new();
     cells.push("  last 24 h   ", theme.faint());
@@ -528,13 +533,13 @@ fn dag_line(line: &DagLine<'_>, grid: &Grid, axis: &Axis, now: i64, selected: bo
 }
 
 /// How long until, in the fewest characters: `12m`, `5h`, `6d`.
-fn short(seconds: i64) -> String {
+pub(super) fn short(seconds: i64) -> String {
     crate::jira::age(seconds)
 }
 
 /// The day's cells: a success a calm square, a failure a red cross, a run going on an arrow, a
 /// wait a ring; a run that went on past its cell a line through the cells it filled.
-fn timeline_spans(cells: &[Cell], theme: &Theme) -> Vec<Span<'static>> {
+pub(super) fn timeline_spans(cells: &[Cell], theme: &Theme) -> Vec<Span<'static>> {
     let calm = Style::default().fg(theme.bar_fill(Severity::None));
     let crit = theme.sev(Severity::Crit).add_modifier(Modifier::BOLD);
     let run = theme.accent().add_modifier(Modifier::BOLD);
