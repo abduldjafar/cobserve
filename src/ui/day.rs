@@ -178,7 +178,7 @@ fn banner(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, alert: Alert)
     let now = app.now();
     let (sev, mark, what) = match alert {
         Alert::Soon { left, .. } => (Severity::Warn, "◷", format!("{} in {}", moment.name(), fmt::countdown(left))),
-        Alert::Now { .. } => (Severity::Ok, "◆", format!("Time for {}", moment.name())),
+        Alert::Now { .. } => (Severity::Ok, "❖", format!("Time for {}", moment.name())),
     };
     let tint = theme.tint(sev);
     let place = app.prayers.place.as_ref().map(|p| p.name.clone()).unwrap_or_default();

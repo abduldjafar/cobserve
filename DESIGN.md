@@ -922,6 +922,13 @@ or from a slope over the last minutes of it.
   line, `LOCAL`, on every view, and the desktop app has a chip for it. Read-only: nothing here
   signals a process. With `FAKE=1` the machine is made up too, so screenshots carry no real
   process.
+- **Tarum** (`src/theme.rs`), cobserve's own palette, after the dyes of hand-made batik: a
+  soga brown-black ground, mori cream text, tarum indigo for the accent, the selection and a
+  bar's ordinary fill; mengkudu red, kunyit yellow and leaf green for §7's severities and
+  nothing else. Light is the cloth before the dye. Text is at least 4.4:1 on every surface it
+  sits on, the body 14:1. The desktop app takes the same colours for its terminal and chrome and
+  ships Recursive (Rec Mono Semicasual in the terminal, Recursive in the header); the mark is a
+  kawung, batik's four-petalled motif (`❖` on screen).
 - **Cards** (`src/ui/cards.rs`): from 150 columns and 30 rows the band's lines become a card
   each — ClickHouse, Redash and this machine side by side in rounded frames, in the rows the
   shelf's padding took. The numbers are the lines' own (§5 and the LOCAL arithmetic above), set

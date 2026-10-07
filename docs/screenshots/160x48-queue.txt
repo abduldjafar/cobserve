@@ -1,8 +1,10 @@
-  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions                    ● live 2s   15:52:07 WIB  
+  ❖ cobserve   ✖ critical                1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions   0 local               ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━━━━━━━━ Terbit 05:33 ━━━━━━━━━━ Dzuhur 11:45 ━━━━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
-                                                                                                                                                                
-  FLEET   9 nodes · 1 hot   mem ━━━━╸━━━━━━━ 36.4% 280/768 GiB ▄▄▄▅▅▅▅▅▄▄   cpu ━━━╸━━━━━━━━ 28.7% 55/192 cores ▅▄▄▄▄▅▅▄▄▄   queries 15 · 4 ✕                   
-  REDASH  16 waiting    ▇████ · oldest 3m43s ✖ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue  
+  ╭ ClickHouse ──────────────────────────────────────── ✖ 4 runaway · ▲ 1 hot ╮  ╭ Redash ─────────────────────────────────────────────────── oldest 3m43s ✖ ╮  
+  │ mem ━━━━━━━━╸━━━━━━━━━━━━━━━  36.4% 280/768 GiB ▄▄▅▅▅▅▅▄                  │  │ 16 waiting                                                  ▇██▇▅▇██▇▅▇██ │  
+  │ cpu ━━━━━━━╺━━━━━━━━━━━━━━━━  28.7% 55/192 cores ▅▄▄▄▅▄▄▄                 │  │ ●●●●●●○ 6/7 workers busy                                                  │  
+  │ 9 nodes · queries 15 · 4 ✕                                      [1] nodes │  │ 6 running · 3 stale                                             [2] queue │  
+  ╰───────────────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────────────────────────────╯  
                                                                                                                                                                 
    redash.example.net · Redash 10.1.0 · 7 workers, 6 busy                                                                                                       
                                                                                                                                                                 
@@ -39,8 +41,6 @@
   ─ STALE · 3 in RQ's started list that no worker runs · queries ─────────────────────────────────────────────────────────────────────────────────────────────  
     AGE        WHO             QUERY                                                                                        SOURCE          WHY                 
      41d02h    j.petrova       #6302 Ledger export · full                                                                   clickhouse-bi   over a day old      
-      3d01h    a.vaitkus       #6301 Card margin · by day                                                                   payments-mysql  cancelled           
-     14m25s    d.zaleckas      #162 Replica health check                                                                    Query Results   no worker holds it  
   ─ job · queries · j.petrova ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  
   6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is full                                       
   running 5m38s → clickhouse-bi · c3e59c27 ✕ runaway · ⏎ jumps to the query on view 1                                                                           

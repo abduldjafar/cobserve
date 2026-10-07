@@ -1,8 +1,10 @@
-  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions                    ● live 2s   15:52:07 WIB  
+  ❖ cobserve   ✖ critical                1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions   0 local               ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━━━━━━━━ Terbit 05:33 ━━━━━━━━━━ Dzuhur 11:45 ━━━━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
-                                                                                                                                                                
-  FLEET   9 nodes · 2 hot   mem ━━━━╸━━━━━━━ 36.3% 279/768 GiB         ▅▄   cpu ━━━╸━━━━━━━━ 28.8% 55/192 cores         ▅▄   queries 15 · 4 ✕                   
-  REDASH  16 waiting        █ · oldest 2m04s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue  
+  ╭ ClickHouse ──────────────────────────────────────── ✖ 4 runaway · ▲ 2 hot ╮  ╭ Redash ─────────────────────────────────────────────────── oldest 2m04s ▲ ╮  
+  │ mem ━━━━━━━━╸━━━━━━━━━━━━━━━  36.3% 279/768 GiB       ▅▄                  │  │ 16 waiting                                                            ▇██ │  
+  │ cpu ━━━━━━━╺━━━━━━━━━━━━━━━━  28.8% 55/192 cores       ▅▄                 │  │ ●●●●●●○ 6/7 workers busy                                                  │  
+  │ 9 nodes · queries 15 · 4 ✕                                      [1] nodes │  │ 6 running · 3 stale                                             [2] queue │  
+  ╰───────────────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────────────────────────────╯  
                                                                                                                                                                 
    airflow.example.net · Airflow 2.10.2 · scheduler ● 2s · triggerer ● 4s                                                                         read 0s ago   
     last 24 h   217 runs  ✔ 211  ✖ 3     ▸ 2 running  ◌ 1 queued  ↻ 1 retrying     13 of 13 DAGs ran · 3 paused                                                 
@@ -34,8 +36,6 @@
     accounting_statement_daily_agg     data-platform  03:00              1  ····································▪━··········     5h ago   37m48s   in 18h       
     dbt_daily_models                   tomas.r        1 day              1  ································▪━━━············     7h ago    1h57m   in 16h       
     test_clickhouse_connection         airflow        triggered          1  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━    running        —        —       
-                                                                                                                                                                
-                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

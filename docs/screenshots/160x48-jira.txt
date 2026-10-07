@@ -1,8 +1,10 @@
-  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions                    ● live 2s   15:52:07 WIB  
+  ❖ cobserve   ✖ critical                1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions   0 local               ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:21 ━━━━━━━━━━━ Terbit 05:33 ━━━━━━━━━━ Dzuhur 11:45 ━━━━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
-                                                                                                                                                                
-  FLEET   9 nodes · 2 hot   mem ━━━━╸━━━━━━━ 36.3% 279/768 GiB         ▅▄   cpu ━━━╸━━━━━━━━ 28.8% 55/192 cores         ▅▄   queries 15 · 4 ✕                   
-  REDASH  16 waiting        █ · oldest 2m04s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue  
+  ╭ ClickHouse ──────────────────────────────────────── ✖ 4 runaway · ▲ 2 hot ╮  ╭ Redash ─────────────────────────────────────────────────── oldest 2m04s ▲ ╮  
+  │ mem ━━━━━━━━╸━━━━━━━━━━━━━━━  36.3% 279/768 GiB       ▅▄                  │  │ 16 waiting                                                            ▇██ │  
+  │ cpu ━━━━━━━╺━━━━━━━━━━━━━━━━  28.8% 55/192 cores       ▅▄                 │  │ ●●●●●●○ 6/7 workers busy                                                  │  
+  │ 9 nodes · queries 15 · 4 ✕                                      [1] nodes │  │ 6 running · 3 stale                                             [2] queue │  
+  ╰───────────────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────────────────────────────╯  
                                                                                                                                                                 
    jira.example.net · Jira 9.12.1 · Sam Example                                                                                                   read 0s ago   
     In progress 4  ›  In Review 4  ›  Feedback 1  ›  Done 8 in 7 days     ✖ 1 overdue  ▲ 1 due soon                                                             
@@ -36,8 +38,6 @@
     DATA-2640  DE CBK DAG: immediate alerts with row errors, daily summary                                           ASAP           ✔ 4d                    3h  
     DATA-2504  DE Replicate kyc_control_panel case, case_event and staff tables                                      ASAP           ✔ 4d                    6h  
     DATA-2490  DE Accounting operations MV for the unmatched-instant dashboards                                      High           ✔ 5d                    3h  
-                                                                                                                                                                
-                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

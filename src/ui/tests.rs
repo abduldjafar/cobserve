@@ -67,7 +67,7 @@ fn the_screen_renders_at_the_target_size() {
     let lines: Vec<&str> = screen.lines().collect();
 
     // The masthead: the name, how the fleet is, the tabs, how fresh and the clock.
-    assert!(lines[0].starts_with("  ◆ cobserve"), "{}", lines[0]);
+    assert!(lines[0].starts_with("  ❖ cobserve"), "{}", lines[0]);
     assert!(lines[0].contains("● live") || lines[0].contains("○ paused"));
     assert!(lines[0].contains("1 nodes") && lines[0].contains("5 airflow") && lines[0].contains("6 jira") && lines[0].contains("7 sessions") && lines[0].contains("0 local"), "the tabs: {}", lines[0]);
     assert!(lines[0].contains(" ✖ "), "the fake fleet is in trouble: {}", lines[0]);

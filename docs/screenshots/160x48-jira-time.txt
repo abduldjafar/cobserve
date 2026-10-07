@@ -1,8 +1,10 @@
-  ◆ cobserve   ✖ critical                     1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions                    ● live 2s   15:52:07 WIB  
+  ❖ cobserve   ✖ critical                1 nodes   2 queue   3 map   4 tape   5 airflow   6 jira   7 sessions   0 local               ● live 2s   15:52:07 WIB  
   ━━ Subuh 04:12 ━━━━━━━━━━━ Terbit 05:26 ━━━━━━━━━━ Dzuhur 11:41 ━━━━━━━━━━ Ashar 14:50 ━━━●┄┄┄┄┄┄ Maghrib 17:49 · in 1h57m ┄┄┄┄┄┄┄┄┄┄ Isya 18:59 ┄┄  Jakarta  
-                                                                                                                                                                
-  FLEET   8 nodes · 2 hot   mem ━━━━╸━━━━━━━ 37.0% 260/704 GiB          ▅   cpu ━━━╸━━━━━━━━ 29.0% 51/176 cores          ▅   queries 15 · 5 ✕                   
-  REDASH  19 waiting        █ · oldest 1m49s ▲ · 6 running · ●●●●●●○ 6/7 workers busy · 3 stale                                                      [2] queue  
+  ╭ ClickHouse ──────────────────────────────────────── ✖ 5 runaway · ▲ 2 hot ╮  ╭ Redash ─────────────────────────────────────────────────── oldest 1m49s ▲ ╮  
+  │ mem ━━━━━━━━━╺━━━━━━━━━━━━━━  37.0% 260/704 GiB        ▅                  │  │ 19 waiting                                                              █ │  
+  │ cpu ━━━━━━━╺━━━━━━━━━━━━━━━━  29.0% 51/176 cores        ▅                 │  │ ●●●●●●○ 6/7 workers busy                                                  │  
+  │ 8 nodes · queries 15 · 5 ✕                                      [1] nodes │  │ 6 running · 3 stale                                             [2] queue │  
+  ╰───────────────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────────────────────────────╯  
                                                                                                                                                                 
    ◂ Time logged · October 2026   120h in 16 working days · 7h30m a working day · 6 tickets                                                          esc back   
                                                                                                                                                                 
@@ -25,8 +27,6 @@
     DATA-2849   5h30m  ━━━━━━━━━━━━━╺━━━━━━  65%  airflow-dags: extract duplicated Google auth and parsing helpers into utils (MR !809)                         
     DATA-2207      2h  ━━━━╸━━━━━━━━━━━━━━━  24%  Product metrics integration — PostHog + ClickHouse → portal (PoC)                                             
     DATA-2638      1h  ━━╸━━━━━━━━━━━━━━━━━  12%  Enrich accounting_monitoring.statement_mismatches with operation details                                      
-                                                                                                                                                                
-                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
