@@ -63,7 +63,7 @@ const DARK: Palette = Palette {
     bg: (15, 18, 25),
     panel: (24, 29, 39),
     raised: (33, 39, 53),
-    selection: (35, 48, 74),
+    selection: (40, 60, 98),
     border: (70, 82, 104),
     rule: (50, 59, 76),
     fg: (222, 228, 237),
@@ -90,7 +90,7 @@ const LIGHT: Palette = Palette {
     bg: (250, 251, 253),
     panel: (238, 241, 246),
     raised: (226, 231, 239),
-    selection: (214, 228, 252),
+    selection: (204, 222, 252),
     border: (200, 207, 218),
     rule: (222, 227, 234),
     fg: (30, 35, 42),
@@ -411,9 +411,11 @@ impl Theme {
         }
     }
 
+    /// The row under the cursor: a band of the selection's colour, its text in bold, so it
+    /// reads at a glance among rows that are all alike.
     pub fn selected(&self) -> Style {
         match self.depth {
-            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.selection),
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.selection).add_modifier(Modifier::BOLD),
             _ => Style::default().add_modifier(Modifier::REVERSED),
         }
     }
