@@ -506,7 +506,8 @@ fn every_node_has_a_card_under_the_band_and_a_click_opens_one() {
     let mut app = app_with_claude(b"one\r\n");
     let screen = render(&app, 160, 48);
     let lines: Vec<&str> = screen.lines().collect();
-    let (names, mem, cpu) = (lines[6], lines[7], lines[8]);
+    let row = lines.iter().position(|l| l.contains("✖ clickhouse3 ")).expect("the fleet's cards");
+    let (names, mem, cpu) = (lines[row], lines[row + 1], lines[row + 2]);
     // The worst first, marked; each with its memory and its CPU, a bar and a share.
     assert!(names.starts_with("        ✖ clickhouse3 "), "{names}");
     assert!(mem.starts_with("   mem  ━") && cpu.starts_with("   cpu  ━"), "{mem}\n{cpu}");
@@ -521,7 +522,7 @@ fn every_node_has_a_card_under_the_band_and_a_click_opens_one() {
     let fleet = app.snapshot().unwrap().nodes.len();
     assert!(names.contains(&format!("+{} more", fleet - cards)), "how many did not fit: {names}");
     assert!(mem.contains("≤ ") && cpu.contains("≤ "), "and how high they go: {mem}");
-    assert!(lines[9].trim().is_empty() && lines[11].contains("SESSIONS"), "the sessions under the shelf: {screen}");
+    assert!(lines[row + 3].trim().is_empty() && lines[row + 5].contains("SESSIONS"), "the sessions under the shelf: {screen}");
     assert!(!screen.lines().any(|l| l.trim_start().starts_with("NODES")), "the list beside is the sessions' alone: {screen}");
 
     // A node that does not answer says why.
@@ -531,8 +532,8 @@ fn every_node_has_a_card_under_the_band_and_a_click_opens_one() {
     app.update(Event::Snapshot(Box::new(down)));
     let screen = render(&app, 160, 48);
     let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[6].contains(&format!("✖ {name}")), "{}", lines[6]);
-    assert!(lines[7].contains("↯ unreachable") && lines[8].contains("connection refused"), "{}\n{}", lines[7], lines[8]);
+    assert!(lines[row].contains(&format!("✖ {name}")), "{}", lines[row]);
+    assert!(lines[row + 1].contains("↯ unreachable") && lines[row + 2].contains("connection refused"), "{}\n{}", lines[row + 1], lines[row + 2]);
 
     // A click anywhere on a card opens its node on view 1; the session goes on where it was.
     let index = app.viewport.listed_nodes.borrow().iter().position(|n| n == &name).expect("listed");
@@ -550,7 +551,7 @@ fn every_node_has_a_card_under_the_band_and_a_click_opens_one() {
     // The card for the rest opens view 1 too.
     app.update(key(KeyCode::Char('7')));
     render(&app, 160, 48);
-    let more = app.viewport.hits.borrow().iter().find(|(r, h)| *h == Hit::View(View::Nodes) && r.y == 6).map(|(r, _)| *r);
+    let more = app.viewport.hits.borrow().iter().find(|(r, h)| *h == Hit::View(View::Nodes) && r.y == row as u16).map(|(r, _)| *r);
     let more = more.expect("the card for the rest");
     app.update(Event::Mouse(crossterm::event::MouseEvent {
         kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
@@ -2400,9 +2401,10 @@ fn this_machine_has_a_band_line_and_view_zero() {
     let band = lines.iter().find(|l| l.contains("LOCAL ")).expect("the band's third line");
     assert!(band.contains("cpu ━") && band.contains("/10 cores") && band.contains("mem ━") && band.contains("26.6/32.0 GiB"), "{band}");
     assert!(band.contains("pressure normal") && band.ends_with("[0] local  "), "{band}");
+    // Wide and tall: a card of its own beside the fleet's and Redash's.
     let wide = render(&app, 200, 40);
-    let band = wide.lines().find(|l| l.contains("LOCAL ")).unwrap();
-    assert!(band.contains(" · swap 2.2 GiB   top WindowServer 0."), "with the room, the swap and the busiest: {band}");
+    assert!(wide.contains("╭ This Mac ") && wide.contains("pressure normal ╮"), "{wide}");
+    assert!(wide.contains("top WindowServer 0.") && wide.contains(" · swap 2.2 GiB") && wide.contains("[0] local │"), "{wide}");
     // Short terminals keep the two lines they had.
     assert!(!render(&app, 140, 18).contains("LOCAL "), "no room for a third line");
 
@@ -2428,6 +2430,13 @@ fn this_machine_has_a_band_line_and_view_zero() {
     for (w, h) in [(40, 12), (60, 20), (80, 24), (200, 60), (10, 4)] {
         render(&app, w, h);
     }
+}
+
+#[test]
+#[ignore]
+fn dump_cards() {
+    let app = app_with_local();
+    println!("{}", render(&app, 180, 44));
 }
 
 #[test]

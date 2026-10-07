@@ -286,7 +286,7 @@ fn header(w: &Widths, cores: u32, total: Option<u64>, theme: &Theme, width: usiz
     if w.time > 0 {
         cells.gap(GAP).cell_right("CPU TIME", w.time, style);
     }
-    cells.line(width, Style::default())
+    cells.line(width, theme.table_head())
 }
 
 fn row_line(row: &Row, selected: bool, cores: u32, total: Option<u64>, w: &Widths, theme: &Theme, width: usize) -> Line<'static> {

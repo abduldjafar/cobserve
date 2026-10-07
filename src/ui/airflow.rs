@@ -468,7 +468,7 @@ fn activity_header(grid: &Grid, axis: &Axis, offset_s: i64, theme: &Theme, width
         cells.gap(GAP);
         cells.cell_right("NEXT", grid.next, theme.section());
     }
-    cells.line(width, Style::default())
+    cells.line(width, theme.table_head())
 }
 
 /// One DAG's day: `clickhouse_replication_check  every 15m  96  ▪▪▪▪▪▪▪▪▪▪▪  3m ago  1m35s  in 12m`

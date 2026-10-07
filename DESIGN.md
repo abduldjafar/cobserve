@@ -922,6 +922,14 @@ or from a slope over the last minutes of it.
   line, `LOCAL`, on every view, and the desktop app has a chip for it. Read-only: nothing here
   signals a process. With `FAKE=1` the machine is made up too, so screenshots carry no real
   process.
+- **Cards** (`src/ui/cards.rs`): from 150 columns and 30 rows the band's lines become a card
+  each — ClickHouse, Redash and this machine side by side in rounded frames, in the rows the
+  shelf's padding took. The numbers are the lines' own (§5 and the LOCAL arithmetic above), set
+  out with room: memory and CPU as bars with their denominators and sparklines, the queue's
+  waiting with its history, workers and running, the machine's busiest process and swap. A
+  frame takes its card's severity — red for a node down or a runaway, amber for a hot node or a
+  wait past its line, the memory pressure for the machine — and its title says why, worst first.
+  A click on a card opens its view.
 
 ### Departures
 

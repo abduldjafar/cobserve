@@ -220,7 +220,7 @@ fn queue_table(app: &App, theme: &Theme, width: usize, lines: &mut Vec<Line<'sta
         header.gap(3);
         header.push("WAITING · last 4 min", theme.section());
     }
-    lines.push(header.line(width, Style::default()));
+    lines.push(header.line(width, theme.table_head()));
 
     for row in shown {
         let saturated = row.saturated();
@@ -373,7 +373,7 @@ fn section_head(
             cells.cell(text, cells_wide, theme.section());
         }
     }
-    lines.push(cells.line(width, Style::default()));
+    lines.push(cells.line(width, theme.table_head()));
 }
 
 /// The columns every job row shares: WHO, QUEUE when there are several, QUERY, SOURCE.

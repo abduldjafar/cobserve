@@ -55,6 +55,13 @@ on top of it and are listed in `DESIGN.md` §13.
 
 ![Query detail](docs/screenshots/140x40-query.png)
 
+### The shelf
+
+Above every view: the fleet, the Redash queue and this machine. On a terminal of 150 columns and
+30 rows they are three cards side by side, each framed in its severity's colour with a word on why
+(`✖ 5 runaway · ▲ 2 hot`, `oldest 1m49s ▲`, `pressure normal`) and a click away from its view;
+narrower or shorter, the same numbers are a line each.
+
 ### Insights
 
 One short line for each thing in trouble, worst first: a node, the Redash queue, a Redash

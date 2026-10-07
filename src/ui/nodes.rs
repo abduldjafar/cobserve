@@ -462,7 +462,7 @@ fn header_line(app: &App, theme: &Theme, grid: &Grid, width: usize) -> Line<'sta
         cells.pad_to(grid.longest_start());
         cells.cell_right("LONGEST", LONGEST_W - 2, style);
     }
-    cells.line(width, Style::default())
+    cells.line(width, theme.table_head())
 }
 
 #[allow(clippy::too_many_arguments)]

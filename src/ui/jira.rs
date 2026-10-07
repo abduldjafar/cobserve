@@ -236,7 +236,7 @@ fn header(w: &Widths, theme: &Theme, width: usize) -> Line<'static> {
         cells.gap(GAP);
         cells.cell_right("LOGGED", w.logged, theme.section());
     }
-    cells.line(width, Style::default())
+    cells.line(width, theme.table_head())
 }
 
 /// `─ IN REVIEW · 4 ────`, `─ DONE · 16 in the last 7 days ────`, `─ FEEDBACK · none ────`
