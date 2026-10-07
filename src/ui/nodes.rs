@@ -388,8 +388,25 @@ fn sql_block(
         .collect();
     let room = (body_height * 45 / 100).clamp(1, 14);
     let scroll = app.sql_scroll_for(&stat.query.query_id);
-    let (lines, max_scroll) = code_block(&stat.query.sql, &format!(" {trunk}"), scroll, room, width, theme);
+    let (code, max_scroll) = code_block(&stat.query.sql, &format!(" {trunk}"), scroll, room, width, theme);
     app.viewport.sql_max.set(max_scroll);
+    // Its id first, whole — what system.query_log knows it by — and how to copy it.
+    let band = theme.code();
+    let lead = format!(" {trunk}");
+    let mut id = Cells::new();
+    id.push(lead.clone(), theme.faint());
+    id.push("▎", band.patch(theme.accent()));
+    id.push(" query_id ", band.patch(theme.muted()));
+    id.push(stat.query.query_id.clone(), band.patch(theme.strong()));
+    if let Some(redash) = stat.query.redash_query_id {
+        id.push(format!(" · Redash #{redash}"), band.patch(theme.muted()));
+    }
+    id.push("   y copies it", band.patch(theme.faint()));
+    // The block's own width: its gutter, the text and the room its scrollbar takes.
+    let fill = width.saturating_sub(1).saturating_sub(id.width());
+    id.push(" ".repeat(fill), band);
+    let mut lines = vec![id.line(width, Style::default())];
+    lines.extend(code);
     lines
 }
 
