@@ -45,6 +45,9 @@ pub struct ClickHouseConfig {
     pub default_login: Option<Credentials>,
     /// The HTTP port assumed for discovered hosts that no seed covers.
     pub http_port: u16,
+    /// How long a node has to answer one request: §6's 1.5 s, or `CH_TIMEOUT_MS` — a fleet
+    /// reached over a VPN can need longer.
+    pub timeout: Duration,
 }
 
 #[derive(Clone, Default)]
@@ -611,6 +614,7 @@ impl Config {
                 cluster: String::new(),
                 default_login: None,
                 http_port: 8123,
+                timeout: Duration::from_millis(1500),
             }
         } else {
             let http_port = env.number("CH_HTTP_PORT", 8123u16)?;
@@ -659,6 +663,7 @@ impl Config {
                 cluster,
                 default_login,
                 http_port,
+                timeout: Duration::from_millis(env.number("CH_TIMEOUT_MS", 1500u64)?.clamp(200, 30_000)),
             }
         };
 

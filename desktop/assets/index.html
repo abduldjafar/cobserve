@@ -123,7 +123,9 @@
   };
   const saved = Number(store.get("fontSize"));
   const term = new Terminal({
-    fontFamily: `"${look.font}", "Rec Mono Semicasual", ui-monospace, "SF Mono", Menlo, monospace`,
+    // Rec Mono for the letters; the icons a prompt draws (Starship, powerline) from a Nerd Font
+    // on the machine, which Rec Mono does not carry.
+    fontFamily: `"${look.font}", "Rec Mono Semicasual", "Symbols Nerd Font Mono", "JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", ui-monospace, "SF Mono", Menlo, monospace`,
     fontSize: saved >= 9 && saved <= 28 ? saved : look.size,
     lineHeight: 1.0,
     letterSpacing: 0,
