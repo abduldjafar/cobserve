@@ -845,6 +845,7 @@ pub fn schema() -> crate::complete::Schema {
         name: name.into(),
         engine: engine.into(),
         columns: columns.iter().map(|(n, t)| (n.to_string(), t.to_string())).collect(),
+        ..Default::default()
     };
     let tables = vec![
         table("accounting", "raw", "ReplicatedMergeTree", &[("event_time", "DateTime"), ("event_date", "Date"), ("user", "String"), ("amount", "Decimal(18, 2)")]),

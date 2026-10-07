@@ -399,8 +399,12 @@ switches it to any other server of the fleet, each with the login the monitor ha
   Claude Code answers signed in with your Pro or Max plan (`claude -p`, no tools, no API key,
   nothing saved), OpenCode as you signed it in (`opencode run`, every permission denied); both
   run in an empty folder of their own, without the monitor's secrets. They get the server's name
-  and version, your text, the tables its words point at with their columns and the names of
-  the others — no rows, no logins. On a query that failed, `ctrl+k` sends what the server said,
+  and version, today's date (so *last week* means something), your text, the tables its words
+  point at with their columns — words of another language too: *transaksi* points at
+  transactions, transfers and payments — and every other table of the server by name, with
+  about how many rows it holds and its comment. When those are not the right ones it answers
+  `-- need: db.table, …` instead, and is asked again with their columns: a second round you see
+  only as a longer *writing…*. Metadata only — never a row of a table, never a login. On a query that failed, `ctrl+k` sends what the server said,
   to put it right. What comes back takes the text's place (or the selected part's) — read it,
   then `⏎` runs it; `ctrl+z` puts back what was there. `ctrl+t` or a click on the chip switches between Claude
   and OpenCode; `ASSISTANT=opencode` starts with OpenCode.
