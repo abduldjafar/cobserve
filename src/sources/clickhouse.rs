@@ -17,6 +17,13 @@ use std::time::{Duration, SystemTime};
 /// §6: 1.5 s per request. The poll interval is longer, so one slow node misses a poll instead
 /// of delaying everybody else's.
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// The time limit in force: §6's, or the one `CH_TIMEOUT_MS` set when the source was made.
+static TIMEOUT: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+
+fn request_timeout() -> Duration {
+    TIMEOUT.get().copied().unwrap_or(REQUEST_TIMEOUT)
+}
 /// §6.1: query settings on every request.
 const SETTINGS: &str = "readonly=1&max_execution_time=2&max_threads=2&max_memory_usage=6000000000";
 /// What is left when a server refuses to change those settings — which a read-only user
@@ -319,8 +326,9 @@ pub struct ClickHouseSource {
 
 impl ClickHouseSource {
     pub fn new(config: &ClickHouseConfig) -> Result<Self, String> {
+        let _ = TIMEOUT.set(config.timeout);
         let client = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(config.timeout)
             .build()
             .map_err(|e| format!("http client: {e}"))?;
 
@@ -702,7 +710,7 @@ fn describe(error: reqwest::Error) -> String {
 /// The cause behind a transport error, from the text of its source chain — in the words every
 /// source uses (`sources::reason`).
 fn reason(chain: &str, timeout: bool, connect: bool) -> Option<String> {
-    super::reason(chain, timeout.then_some(REQUEST_TIMEOUT), connect)
+    super::reason(chain, timeout.then_some(request_timeout()), connect)
 }
 
 fn quote(value: &str) -> String {
@@ -1414,6 +1422,34 @@ mod tests {
         }
     }
 
+    /// `cargo test live_poll_times -- --ignored --nocapture`: three polls of your fleet with a
+    /// 10 s limit, and how long each node took — to choose `CH_TIMEOUT_MS`. Names and times only.
+    /// The file is `COBSERVE_CREDENTIAL`, else `~/.config/cobserve/credentials.yaml`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_poll_times() {
+        let path = std::env::var("COBSERVE_CREDENTIAL")
+            .unwrap_or_else(|_| format!("{}/.config/cobserve/credentials.yaml", std::env::var("HOME").unwrap_or_default()));
+        let args = crate::config::Args::parse(["--credential".to_string(), path]).expect("args");
+        let mut config = crate::config::Config::load(&args).expect("config").clickhouse;
+        config.timeout = Duration::from_secs(10);
+        let mut source = ClickHouseSource::new(&config).expect("source");
+        for error in source.discover().await {
+            println!("discovery: {error}");
+        }
+        for round in 1..=3 {
+            let started = std::time::Instant::now();
+            let snapshot = source.poll().await;
+            println!("poll {round}: {} ms", started.elapsed().as_millis());
+            for node in &snapshot.nodes {
+                match (&node.poll_ms, &node.unreachable_reason) {
+                    (Some(ms), _) => println!("  {:<24} {ms:>6} ms", node.name),
+                    (None, why) => println!("  {:<24} ↯ {}", node.name, why.as_deref().unwrap_or("?")),
+                }
+            }
+        }
+    }
+
     fn config(seeds: &[&str], login: Option<(&str, &str)>) -> ClickHouseConfig {
         ClickHouseConfig {
             seeds: seeds
@@ -1426,6 +1462,7 @@ mod tests {
                 password: password.into(),
             }),
             http_port: 8123,
+            timeout: REQUEST_TIMEOUT,
         }
     }
 

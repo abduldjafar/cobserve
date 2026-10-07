@@ -950,6 +950,9 @@ or from a slope over the last minutes of it.
 
 ### Departures
 
+- **§6 the timeout**: 1.5 s per request is the default, and `CH_TIMEOUT_MS` changes it (200 ms
+  to 30 s). From a laptop over the VPN the nodes answer in 0.6–5 s a poll (measured with
+  `cargo test live_poll_times -- --ignored --nocapture`), so 1.5 s marks live nodes unreachable.
 - **§3 the tabs**: the monitor has six views, so the sessions are numbered on from 7, and a
   digit picks the first three of them (`ctrl+\` and the arrows, or `/`, reach the rest). This
   machine is `0` (and F10), the last key of the row, drawn after the sessions, so they keep 7–9.

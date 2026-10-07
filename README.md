@@ -519,6 +519,7 @@ have a user the other one does not know.
 | `SHELL_CMD` | what a terminal session runs | `$SHELL`, else `/bin/sh` |
 | `MOUSE` | `0` leaves the mouse to the terminal: no clicks, but selection without a modifier | on |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
+| `CH_TIMEOUT_MS` | how long a node has to answer one request before it reads `↯ unreachable` — over a VPN, `5000` | `1500` |
 | `THEME` | `dark`, `light` or `mono` | `dark` |
 | `NO_COLOR` | any value: no colour at all (glyphs still carry severity) | unset |
 
