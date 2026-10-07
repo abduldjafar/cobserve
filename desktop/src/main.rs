@@ -37,6 +37,8 @@ enum Message {
     Title(String),
     /// What the program printed.
     Output(Vec<u8>),
+    /// Files dropped on the window: their paths go in as a paste, as a terminal's do.
+    Dropped(Vec<PathBuf>),
     /// The title strip was pressed (the window moves with the mouse), or double-clicked.
     Drag,
     Zoom,
@@ -253,17 +255,46 @@ fn env_file(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// A path as a shell reads it, the way a terminal types a dropped file: spaces, quotes and the
+/// rest of a shell's own characters each behind a backslash.
+fn shell_escaped(path: &std::path::Path) -> String {
+    let mut out = String::new();
+    for c in path.to_string_lossy().chars() {
+        if c.is_whitespace() || "\\'\"`$&|;<>()[]{}*?!#~^".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The folders installers put programs in for one user — OpenCode's, Claude Code's, bun's,
+/// cargo's — that a terminal finds because `.zshrc` puts them on the `PATH`. The app cannot read
+/// `.zshrc` (see `command`), so those that exist go first on the `PATH` it starts with.
+fn user_bins(home: &std::path::Path) -> Vec<PathBuf> {
+    [".opencode/bin", ".claude/local", ".local/bin", ".bun/bin", ".cargo/bin", ".npm-global/bin", "go/bin", ".deno/bin"]
+        .iter()
+        .map(|dir| home.join(dir))
+        .chain(["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"].iter().map(PathBuf::from))
+        .filter(|dir| dir.is_dir())
+        .collect()
+}
+
 /// cobserve, through the login shell so it has your `PATH`, with the app's own environment.
 fn command() -> CommandBuilder {
     let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/zsh".to_string());
     let mut command = CommandBuilder::new(&shell);
-    // `exec "$0" "$@"`: the shell gives way to cobserve, its arguments passed as they are.
-    command.args(["-l", "-c", "exec \"$0\" \"$@\""]);
+    // `exec "$0" "$@"`: the shell gives way to cobserve, its arguments passed as they are — after
+    // the user's own bin folders go on the `PATH` the profile made, which may have set it anew.
+    command.args(["-l", "-c", "[ -n \"$COBSERVE_BINS\" ] && PATH=\"$COBSERVE_BINS:$PATH\"; exec \"$0\" \"$@\""]);
     command.arg(cobserve_bin());
     for arg in cobserve_args() {
         command.arg(arg);
     }
     command.cwd(home());
+    if let Ok(bins) = std::env::join_paths(user_bins(&home())) {
+        command.env("COBSERVE_BINS", bins);
+    }
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "cobserve-desktop");
@@ -384,6 +415,17 @@ fn main() {
         .with_html(page(&look))
         .with_background_color(rgb(&look.background))
         .with_devtools(cfg!(debug_assertions))
+        .with_drag_drop_handler({
+            let proxy = proxy.clone();
+            move |event| match event {
+                wry::DragDropEvent::Drop { paths, .. } if !paths.is_empty() => {
+                    let _ = proxy.send_event(Message::Dropped(paths));
+                    true
+                }
+                // Nothing dragged over the window may open in it as a page.
+                _ => true,
+            }
+        })
         .with_ipc_handler(move |request| {
             let Ok(message) = serde_json::from_str::<FromPage>(request.body()) else {
                 return;
@@ -448,6 +490,10 @@ fn main() {
                 Message::Title(title) => {
                     let title = title.trim();
                     window.set_title(if title.is_empty() { "cobserve" } else { title });
+                }
+                Message::Dropped(paths) => {
+                    let text = paths.iter().map(|p| shell_escaped(p)).collect::<Vec<_>>().join(" ") + " ";
+                    let _ = webview.evaluate_script(&format!("window.dropped({})", serde_json::Value::String(text)));
                 }
                 Message::Drag => {
                     let _ = window.drag_window();
@@ -514,6 +560,22 @@ mod tests {
                 ("PRAYER_CITY".to_string(), "Bandung".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn a_dropped_path_is_typed_as_a_shell_reads_it() {
+        assert_eq!(shell_escaped(std::path::Path::new("/Users/me/Screen Shot (2).png")), "/Users/me/Screen\\ Shot\\ \\(2\\).png");
+        assert_eq!(shell_escaped(std::path::Path::new("/tmp/plain.txt")), "/tmp/plain.txt");
+    }
+
+    #[test]
+    fn the_user_s_own_bins_are_found_when_they_exist() {
+        let home = std::env::temp_dir().join(format!("cobserve-bins-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".opencode/bin")).unwrap();
+        let bins = user_bins(&home);
+        assert_eq!(bins.first(), Some(&home.join(".opencode/bin")), "{bins:?}");
+        assert!(!bins.contains(&home.join(".bun/bin")), "only those there");
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]

@@ -114,6 +114,9 @@
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     term.write(bytes);
   };
+  // Files dropped on the window, their paths escaped: in as a paste — bracketed when the program
+  // asked for that, so Claude Code takes a picture's path as the picture.
+  window.dropped = (text) => { term.focus(); term.paste(text); };
   // The program ended: what it said stays on screen, the window closes behind it.
   window.ended = (why) => term.write(`\r\n\x1b[2m${why}\x1b[0m\r\n`);
 
