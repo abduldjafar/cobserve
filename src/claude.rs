@@ -411,6 +411,12 @@ impl Session {
     }
 
     /// The last part of its directory: `cobserve` for `~/work/cobserve`.
+    /// What the session belongs to in the list: its folder's name, or `servers` for a query
+    /// session — sessions on one project sit together under it.
+    pub fn project(&self) -> String {
+        if self.kind == Kind::Query { "servers".to_string() } else { self.dir_label() }
+    }
+
     pub fn dir_label(&self) -> String {
         let trimmed = self.dir.trim_end_matches('/');
         trimmed.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(trimmed).to_string()
@@ -1009,10 +1015,43 @@ impl Sessions {
     }
 
     /// The next or the previous session, round the bar.
+    /// The sessions by project, the projects in the order their first session was opened, each
+    /// one's sessions in the order they were: what the list draws when it groups them. A project
+    /// with one session is no group: those go together under `other`, at the end — and with no
+    /// project of two, there is one group, every session in it.
+    pub fn groups(&self) -> Vec<(String, Vec<usize>)> {
+        let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+        for (index, session) in self.list.iter().enumerate() {
+            let project = session.project();
+            match groups.iter_mut().find(|(name, _)| *name == project) {
+                Some((_, members)) => members.push(index),
+                None => groups.push((project, vec![index])),
+            }
+        }
+        let (mut many, lone): (Vec<_>, Vec<_>) = groups.into_iter().partition(|(_, members)| members.len() > 1);
+        let mut other: Vec<usize> = lone.into_iter().flat_map(|(_, members)| members).collect();
+        other.sort_unstable();
+        if many.is_empty() {
+            return vec![("other".to_string(), other)];
+        }
+        if !other.is_empty() {
+            many.push(("other".to_string(), other));
+        }
+        many
+    }
+
+    /// Every session in the order the list shows them: by project.
+    pub fn order(&self) -> Vec<usize> {
+        self.groups().into_iter().flat_map(|(_, members)| members).collect()
+    }
+
+    /// The next or the previous session as the list shows them, round it.
     pub fn step(&mut self, forward: bool) {
-        let len = self.list.len();
+        let order = self.order();
+        let len = order.len();
         if len > 0 {
-            self.select(if forward { (self.active + 1) % len } else { (self.active + len - 1) % len });
+            let at = order.iter().position(|&i| i == self.active).unwrap_or(0);
+            self.select(order[if forward { (at + 1) % len } else { (at + len - 1) % len }]);
         }
     }
 

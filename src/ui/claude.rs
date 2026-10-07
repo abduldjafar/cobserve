@@ -224,6 +224,15 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         None => {}
     }
     lines.push(title.line(width, Style::default()));
+    // Many sessions on several projects: grouped by project, a line each (`grouped_rows`).
+    let grouped = finding.is_none() && sessions.list.len() >= GROUPED_FROM && sessions.groups().len() >= 2;
+    if grouped {
+        let mut find = Cells::new();
+        find.push("⌕ ", theme.accent());
+        find.push("find one", theme.muted());
+        find.push("  ctrl+\\ /", theme.faint());
+        lines.push(find.line(width, Style::default()));
+    }
     lines.push(Line::from(""));
 
     // The card that is lit: the one a search is on, the new one being opened, the one on screen.
@@ -260,12 +269,19 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     };
     sessions.list_scroll.set(first);
 
-    if first > 0 {
+    if grouped {
+        let top = area.y + lines.len() as u16;
+        let (rows, hits) = grouped_rows(app, theme, area, top, room, lit_card, lit);
+        lines.extend(rows);
+        clickable.extend(hits);
+        lines.push(Line::from(""));
+    }
+    if !grouped && first > 0 {
         let y = area.y + lines.len() as u16;
         lines.push(Line::from(Span::styled(format!("   ↑ {} more", first), theme.faint())));
         clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Session(listed[first - 1])));
     }
-    for &index in listed.iter().skip(first).take(shown) {
+    for &index in listed.iter().skip(first).take(if grouped { 0 } else { shown }) {
         let session = &sessions.list[index];
         let y = area.y + lines.len() as u16;
         let on_screen = lit_card == Some(index);
@@ -321,12 +337,12 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         }
         clickable.push((Rect::new(area.x, y, area.width, 1 + u16::from(two_lines)), Hit::Session(index)));
     }
-    if first + shown < count {
+    if !grouped && first + shown < count {
         let y = area.y + lines.len() as u16;
         lines.push(Line::from(Span::styled(format!("   ↓ {} more", count - first - shown), theme.faint())));
         clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Session(listed[first + shown])));
     }
-    if density != Density::Full && count > 0 {
+    if !grouped && density != Density::Full && count > 0 {
         lines.push(Line::from(""));
     }
 
@@ -368,6 +384,123 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let bottom = area.y + area.height;
     app.viewport.hits.borrow_mut().extend(clickable.into_iter().filter(|(rect, _)| rect.y < bottom));
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// From this many sessions, on more than one project, the list groups them.
+const GROUPED_FROM: usize = 6;
+
+/// The sessions grouped by project: a project's name over its sessions — its branch with it when
+/// they share one, and how many rang — then a line a session: what it runs, its name, its mark and
+/// its number; the one on screen also says where it works. More than fit: a window that follows
+/// the lit one, a line at each end for how many are past it.
+#[allow(clippy::too_many_arguments)]
+fn grouped_rows(app: &App, theme: &Theme, area: Rect, top: u16, room: usize, lit_card: Option<usize>, asking: bool) -> (Vec<Line<'static>>, Vec<(Rect, Hit)>) {
+    let sessions = &app.claude;
+    let width = area.width as usize;
+    let inner = width.saturating_sub(4);
+    // Every line, and the session it is of, before the window is cut.
+    let mut all: Vec<(Line<'static>, Option<usize>)> = Vec::new();
+    for (g, (project, members)) in sessions.groups().into_iter().enumerate() {
+        if g > 0 {
+            all.push((Line::from(""), None));
+        }
+        let mut head = Cells::new();
+        head.push("  ", Style::default());
+        head.push(project, theme.section());
+        head.push(format!(" {}", members.len()), theme.faint());
+        // Who rang first — the branch is the first to go when the list is narrow.
+        let calling = members.iter().filter(|&&i| sessions.list[i].pane.attention).count();
+        if calling > 0 {
+            head.push(format!("  ● {calling}"), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        }
+        let branches: Vec<Option<&str>> = members.iter().map(|&i| sessions.list[i].branch.as_deref()).collect();
+        let shared = branches.first().copied().flatten().filter(|b| branches.iter().all(|x| *x == Some(*b)));
+        if let Some(branch) = shared {
+            head.push(format!("  ⎇ {branch}"), theme.faint());
+        }
+        all.push((head.line(width, Style::default()), None));
+        for index in members {
+            let session = &sessions.list[index];
+            let on_screen = lit_card == Some(index);
+            let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
+            let mut right = Cells::new();
+            match mark(session) {
+                "●" => right.push("● ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
+                "✕" => right.push("✕ ", theme.faint()),
+                "↻" => right.push("↻ ", theme.accent()),
+                _ => &mut right,
+            };
+            let number = Sessions::number_of(index);
+            if asking && index < KEYED {
+                right.push(format!(" {number} "), theme.keycap());
+            } else {
+                right.push(number.to_string(), theme.faint());
+            }
+            let mut line = Cells::new();
+            line.push(format!("{}  ", session.kind.glyph()), if ended { theme.faint() } else { kind_style(session.kind, theme) });
+            let name_room = inner.saturating_sub(line.width() + right.width() + 1);
+            match &sessions.mode {
+                Mode::Naming(name) if index == sessions.active => {
+                    line.push(format!("{}▏", fmt::truncate(name, name_room)), theme.keycap());
+                }
+                _ => {
+                    let style = if on_screen { theme.strong() } else if ended || session.waiting() { theme.muted() } else { theme.text() };
+                    line.push(fmt::truncate(&session.label(), name_room), style);
+                }
+            }
+            line.pad_to(inner.saturating_sub(right.width()));
+            line.spans(right.into_spans());
+            all.push((card_row(line, width, on_screen, theme), Some(index)));
+            if on_screen {
+                let mut second = Cells::new();
+                second.push("  ", Style::default());
+                if index == sessions.active && sessions.closing {
+                    second.push("x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+                } else if let Some(console) = &session.console {
+                    console_line(&mut second, console, theme);
+                } else {
+                    place(&mut second, &session.dir, session.branch.as_deref(), inner, theme);
+                }
+                all.push((card_row(second, width, true, theme), Some(index)));
+            }
+        }
+    }
+
+    // The window: everything when it fits, else what follows the lit session.
+    let lit_at = lit_card.and_then(|card| all.iter().rposition(|(_, i)| *i == Some(card)));
+    let (first, shown) = if all.len() > room {
+        let window = room.saturating_sub(2).max(1);
+        (crate::app::scroll_into_view(sessions.list_scroll.get(), lit_at, window, all.len()), window)
+    } else {
+        (0, all.len())
+    };
+    sessions.list_scroll.set(first);
+    let count = |range: &[(Line<'static>, Option<usize>)]| range.iter().filter_map(|(_, i)| *i).collect::<std::collections::BTreeSet<usize>>().len();
+    let mut lines = Vec::new();
+    let mut hits = Vec::new();
+    let mut y = top;
+    if first > 0 {
+        lines.push(Line::from(Span::styled(format!("   ↑ {} more", count(&all[..first])), theme.faint())));
+        if let Some(index) = all[..first].iter().rev().find_map(|(_, i)| *i) {
+            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Session(index)));
+        }
+        y += 1;
+    }
+    let end = (first + shown).min(all.len());
+    for (line, index) in all[first..end].iter().cloned() {
+        if let Some(index) = index {
+            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Session(index)));
+        }
+        lines.push(line);
+        y += 1;
+    }
+    if end < all.len() {
+        lines.push(Line::from(Span::styled(format!("   ↓ {} more", count(&all[end..])), theme.faint())));
+        if let Some(index) = all[end..].iter().find_map(|(_, i)| *i) {
+            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Session(index)));
+        }
+    }
+    (lines, hits)
 }
 
 /// A line of a card: on a raised surface with a bar of the accent at its left, for the card on

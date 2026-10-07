@@ -2537,3 +2537,56 @@ fn wide_airflow_tells_its_knots_and_weaves_the_day() {
         assert_eq!(render(&app, w, h).lines().count(), h as usize);
     }
 }
+
+#[test]
+fn many_sessions_sit_by_project_a_line_each_with_the_way_to_find_one() {
+    use crate::claude::Kind;
+    let mut app = app_after(5);
+    app.update(key(KeyCode::Char('7')));
+    let sessions = [
+        ("~/work/airflow-dags", Kind::OpenCode, "airflow-agent"),
+        ("~/work/airflow-dags", Kind::Claude, "MetricsAtomic"),
+        ("~/code/apitap-lib", Kind::OpenCode, "apitap-opencode"),
+        ("~/work/airflow-dags", Kind::Claude, "airflow-dq"),
+        ("~/code/apitap-lib", Kind::Claude, "apitap-lib-qa"),
+        ("~/code/cobserve", Kind::Claude, "integrate-jira-api"),
+        ("~/code/apitap-lib", Kind::Terminal, "shell"),
+    ];
+    for (dir, kind, name) in sessions {
+        app.claude.open_new(dir, kind);
+        let session = app.claude.current_mut().unwrap();
+        session.name = Some(name.into());
+        session.branch = Some(if dir.ends_with("dags") { "docs-move".into() } else { "main".into() });
+    }
+    // The first, 7, opened with the view.
+    app.claude.list[4].pane.attention = true;
+    app.claude.select(6);
+    let screen = render(&app, 160, 48);
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
+    assert!(row("SESSIONS").contains("8") && screen.contains("⌕ find one  ctrl+\\ /"), "{screen}");
+    // Projects with more than one session are groups, their shared branch and who rang with them.
+    assert!(row("airflow-dags 3").contains("● 1  ⎇ docs"), "who rang, then the shared branch: {screen}");
+    assert!(row("apitap-lib 3").contains("⎇ main"), "{screen}");
+    // The lone ones together at the end; the one on screen lit, where it works under it.
+    assert!(!row("other 2").is_empty(), "{screen}");
+    let lit = row("integrate-jira-api");
+    assert!(lit.contains('▎'), "{lit}");
+    let lines: Vec<&str> = screen.lines().collect();
+    let at = lines.iter().position(|l| l.contains("integrate-jira-api")).unwrap();
+    assert!(lines[at + 1].contains("~/code/cobserve"), "{screen}");
+    // A line each: the airflow ones sit together although opened apart.
+    let dq = lines.iter().position(|l| l.contains("airflow-dq")).unwrap();
+    let agent = lines.iter().position(|l| l.contains("airflow-agent")).unwrap();
+    assert_eq!(dq - agent, 2, "{screen}");
+
+    // ctrl+\ then ↓ walks them as they are shown: by project.
+    app.claude.select(1);
+    app.update(ctrl('\\'));
+    app.update(key(KeyCode::Down));
+    assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("MetricsAtomic"));
+    app.update(key(KeyCode::Down));
+    assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("airflow-dq"), "the next airflow one, not the next opened");
+    for (w, h) in [(100, 20), (160, 14), (250, 60)] {
+        assert_eq!(render(&app, w, h).lines().count(), h as usize);
+    }
+}
