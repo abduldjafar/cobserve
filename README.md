@@ -298,6 +298,12 @@ sessions — a digit picks the first three, `ctrl+\` then `↑` `↓` walks thro
 closer the list packs them — a line each for many, the one on screen keeping its folder — and it
 follows the one on screen, with how many more are above and below it.
 
+From six sessions on more than one project the list sorts them **by project**: a project with
+two or more sessions is a group under its folder's name, with how many there are, `● n` when some
+rang, and its branch when they share one; the rest sit under `other`. A session is a line, the one
+on screen keeping where it works, and `ctrl+\` `↑` `↓` walk them in that order. `⌕ find one ctrl+\ /`
+over the list is the way to the one you want by name, folder, kind, server or number.
+
 The fleet stays in sight above the sessions, a card for every node — the worst first, marked
 `✖` or `▲` (a quiet one `●`), with its lag when it is behind — and on every card its memory and
 its CPU, a thin bar and the share each:
