@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2232"/>
+      <stop offset="1" stop-color="#0c0f16"/>
+    </linearGradient>
+    <linearGradient id="gem" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9ccbff"/>
+      <stop offset="1" stop-color="#3f8fe6"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS's squircle-ish tile, inset as Big Sur icons are -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="184" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <!-- the masthead's diamond -->
+  <path d="M512 232 L652 372 L512 512 L372 372 Z" fill="url(#gem)"/>
+  <!-- three of cobserve's thin bars: a share, its track -->
+  <g stroke-linecap="round" stroke-width="34">
+    <line x1="262" y1="610" x2="762" y2="610" stroke="#323b4c"/>
+    <line x1="262" y1="610" x2="622" y2="610" stroke="#6eb6ff"/>
+    <line x1="262" y1="690" x2="762" y2="690" stroke="#323b4c"/>
+    <line x1="262" y1="690" x2="482" y2="690" stroke="#58c780"/>
+    <line x1="262" y1="770" x2="762" y2="770" stroke="#323b4c"/>
+    <line x1="262" y1="770" x2="702" y2="770" stroke="#ecb740"/>
+  </g>
+</svg>

@@ -31,6 +31,11 @@ FAKE=1 cobserve                        # a generated fleet: look around, ? for k
 cobserve --credential ~/.config/cobserve/credentials.yaml    # your fleet (GUIDE.md §5)
 ```
 
+**On a Mac, as an app of its own**: `./desktop/bundle.sh --install` puts **Cobserve.app** in
+`/Applications` — a window with its own icon and menu, a terminal inside it that runs cobserve,
+so it opens from the Dock or Spotlight and needs no terminal of yours. See
+[the desktop app](#the-desktop-app).
+
 It reads ClickHouse directly over HTTP, read-only, so it keeps working when the web app is
 down. `DESIGN.md` is the contract for every number on screen (§5); the additions here sit
 on top of it and are listed in `DESIGN.md` §13.
@@ -536,12 +541,45 @@ own profile carries its caps otherwise). A query session's queries are `readonly
 The only request that changes anything goes to Redash, and only after `x` and `y` on view 2:
 the cancel of that one job.
 
+## The desktop app
+
+`desktop/` is cobserve in a window of its own: a window (`tao`) with a web view (`wry`) holding a
+terminal (xterm.js, vendored — nothing is fetched), and in it `cobserve` itself in a
+pseudo-terminal: the same program, keys, mouse, colours and sessions included. Block and box
+glyphs are drawn to the cell, so bars and rules have no seams.
+
+```sh
+./desktop/bundle.sh             # dist/Cobserve.app
+./desktop/bundle.sh --install   # and copy it to /Applications
+```
+
+An app opened from the Dock has none of your terminal's environment, so:
+
+- cobserve runs through your **login shell** (`$SHELL -l -c`) for your `PATH` — not an
+  interactive one, whose `.zshrc` may wait for a terminal that is not there;
+- **`~/.config/cobserve/credentials.yaml`** is passed as `--credential` when it exists: put the
+  servers there, and the `redash:`, `airflow:` and `jira:` sections;
+- **`~/.config/cobserve/env`** sets anything else, one `KEY=value` a line, read as written — no
+  shell, so a password with `&` or `$` in it is fine:
+
+```sh
+PRAYER_CITY=Jakarta
+JIRA_URL=https://jira.example.net
+JIRA_TOKEN=personal-access-token
+```
+
+`⌘C` `⌘V` copy and paste, `⌘+` `⌘−` `⌘0` change the type's size (kept for next time), `⌥` and a
+drag selects text while cobserve has the mouse, and the window's title is cobserve's. `q` closes
+the window; if cobserve stops with an error, the window stays and says why. `chmod 600` both
+files: they hold logins.
+
 ## Developing
 
 ```sh
 cargo test                            # model, insights, tape, history, every view at every size
 cargo clippy --all-targets -- -D warnings
 ./dev/screenshots.sh                  # docs/screenshots/: text for every view, PNGs for these
+cargo test -p cobserve-desktop        # the desktop app's own tests
 cargo test live_airflow_and_jira -- --ignored --nocapture   # views 5 and 6 against your own
                                       # Airflow and Jira, read once and drawn (AIRFLOW_*, JIRA_* set)
 ```

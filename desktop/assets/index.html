@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>cobserve</title>
+<style>/*XTERM_CSS*/</style>
+<style>
+  /* The profile's background round the screen, as iTerm2 draws its margins. */
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  /* The title bar's strip: the window moves by it; the traffic lights sit on its left. */
+  #bar { position: absolute; top: 0; left: 0; right: 0; height: 28px; }
+  #screen { position: absolute; inset: 28px 6px 6px 10px; }
+  .xterm .xterm-viewport { background: var(--bg) !important; overflow-y: hidden !important; }
+  .xterm { font-feature-settings: "liga" 0, "calt" 0; -webkit-font-smoothing: antialiased; }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="screen"></div>
+<script>/*XTERM_JS*/</script>
+<script>/*FIT_JS*/</script>
+<script>/*UNICODE11_JS*/</script>
+<script>/*WEBGL_JS*/</script>
+<script>
+(() => {
+  const post = (message) => window.ipc.postMessage(JSON.stringify(message));
+  // Your iTerm2 profile's font and colours, as the app read them.
+  const look = /*LOOK*/;
+  document.documentElement.style.setProperty("--bg", look.background);
+  const bar = document.getElementById("bar");
+  bar.addEventListener("mousedown", (e) => { if (e.button === 0 && e.detail === 1) post({ t: "drag" }); });
+  bar.addEventListener("dblclick", () => post({ t: "zoom" }));
+  // What goes wrong here is said to the app, which writes it to its standard error.
+  window.addEventListener("error", (e) => post({ t: "log", d: `${e.message} (${e.filename}:${e.lineno})` }));
+  // A page with no origin may keep no storage: the size is then 13 each time.
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  const saved = Number(store.get("fontSize"));
+  const a = look.ansi;
+  const term = new Terminal({
+    fontFamily: `"${look.font}", "JetBrainsMono Nerd Font", "JetBrains Mono", "SF Mono", Menlo, monospace`,
+    fontSize: saved >= 9 && saved <= 28 ? saved : look.size,
+    lineHeight: 1.0,
+    letterSpacing: 0,
+    allowProposedApi: true,
+    // Block and box glyphs drawn to the cell, as cobserve's bars and rules need: no seams.
+    customGlyphs: true,
+    rescaleOverlappingGlyphs: true,
+    cursorBlink: look.cursor_blink,
+    cursorStyle: look.cursor_style,
+    scrollback: 0,
+    macOptionIsMeta: true,
+    // cobserve takes the mouse; ⌥ and a drag selects text anyway.
+    macOptionClickForcesSelection: true,
+    drawBoldTextInBrightColors: false,
+    minimumContrastRatio: 1,
+    theme: {
+      background: look.background, foreground: look.foreground,
+      cursor: look.cursor, cursorAccent: look.cursor_text,
+      selectionBackground: look.selection, selectionForeground: look.selected_text,
+      black: a[0], red: a[1], green: a[2], yellow: a[3], blue: a[4], magenta: a[5], cyan: a[6], white: a[7],
+      brightBlack: a[8], brightRed: a[9], brightGreen: a[10], brightYellow: a[11],
+      brightBlue: a[12], brightMagenta: a[13], brightCyan: a[14], brightWhite: a[15],
+    },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  const unicode = new Unicode11Addon.Unicode11Addon();
+  term.loadAddon(unicode);
+  term.unicode.activeVersion = "11";
+  term.open(document.getElementById("screen"));
+  // The web view's own text by default, drawn by the system as iTerm2's is; WebGL when asked.
+  if (look.renderer === "webgl") {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch (e) {}
+  }
+
+  let size = { cols: 0, rows: 0 };
+  const refit = () => {
+    fit.fit();
+    if (term.cols !== size.cols || term.rows !== size.rows) {
+      size = { cols: term.cols, rows: term.rows };
+      post({ t: "resize", cols: term.cols, rows: term.rows });
+    }
+  };
+  new ResizeObserver(refit).observe(document.getElementById("screen"));
+
+  term.onData((d) => post({ t: "in", d }));
+  // Old-style mouse reports are bytes, not text.
+  term.onBinary((d) => post({ t: "bin", d: Array.from(d, (c) => c.charCodeAt(0) & 255) }));
+  term.onTitleChange((d) => post({ t: "title", d }));
+
+  // ⌘+ ⌘− ⌘0: the type's size, kept for the next start.
+  window.addEventListener("keydown", (e) => {
+    if (!e.metaKey || e.ctrlKey || e.altKey) return;
+    const step = { "=": 1, "+": 1, "-": -1, "0": 0 }[e.key];
+    if (step === undefined) return;
+    e.preventDefault();
+    const next = step === 0 ? look.size : Math.min(28, Math.max(9, term.options.fontSize + step));
+    term.options.fontSize = next;
+    store.set("fontSize", String(next));
+    refit();
+  }, true);
+
+  // What the program printed, base64, from the app.
+  window.out = (b64) => {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    term.write(bytes);
+  };
+  // The program ended: what it said stays on screen, the window closes behind it.
+  window.ended = (why) => term.write(`\r\n\x1b[2m${why}\x1b[0m\r\n`);
+
+  // Fonts first, so the first size is the right one; then cobserve is started at it.
+  document.fonts.ready.then(() => {
+    fit.fit();
+    size = { cols: term.cols, rows: term.rows };
+    term.focus();
+    post({ t: "ready", cols: term.cols, rows: term.rows });
+  });
+  window.addEventListener("focus", () => term.focus());
+})();
+</script>
+</body>
+</html>

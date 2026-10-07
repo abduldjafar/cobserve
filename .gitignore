@@ -15,3 +15,4 @@ credentials.yaml
 # local only
 CLAUDE.md
 AGENTS.md
+/dist

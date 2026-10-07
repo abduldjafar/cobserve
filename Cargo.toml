@@ -1,3 +1,8 @@
+[workspace]
+# The desktop app (`desktop/`): cobserve in a window of its own. `cargo build` and `cargo test`
+# here stay on cobserve itself; `-p cobserve-desktop` builds the app.
+members = ["desktop"]
+
 [package]
 name = "cobserve"
 version = "0.1.0"
