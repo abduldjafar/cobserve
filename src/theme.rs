@@ -379,6 +379,15 @@ impl Theme {
         }
     }
 
+    /// A table's header row: the chrome's surface across the well, edge to edge, so the columns'
+    /// names read as a band above the rows. Underlined where backgrounds are not painted.
+    pub fn table_head(&self) -> Style {
+        match self.depth {
+            Depth::TrueColor | Depth::Ansi256 => Style::default().bg(self.panel),
+            _ => Style::default().add_modifier(Modifier::UNDERLINED),
+        }
+    }
+
     /// A surface on the surface: the session on screen.
     pub fn raised(&self) -> Style {
         match self.depth {

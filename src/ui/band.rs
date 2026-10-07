@@ -17,6 +17,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     if area.height == 0 {
         return;
     }
+    // Room for a card each: the same numbers, set out (`cards.rs`).
+    if area.height >= super::cards::HEIGHT {
+        super::cards::draw(frame, app, theme, area);
+        return;
+    }
     let width = area.width as usize;
     let totals = app.with_view(fleet_totals);
     let fleet = fleet_line(app, totals.as_ref(), theme, width);
@@ -32,7 +37,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 }
 
 /// The width of the labels at the start of both lines, so what follows them lines up.
-const LABEL: usize = 8;
+pub(super) const LABEL: usize = 8;
 
 /// `FLEET   8 nodes · 2 hot   mem ━━━━━━━━╺━━━━━ 58.1% 372/640 GiB ▁▂▃▅   cpu …   queries 14 · 3 ✕`
 ///

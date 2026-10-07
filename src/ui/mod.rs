@@ -26,6 +26,7 @@
 
 mod airflow;
 mod band;
+mod cards;
 mod claude;
 mod console;
 mod day;
@@ -147,9 +148,21 @@ fn areas(screen: Rect, view: View, insights_len: usize, body_need: usize, masthe
 
     let shelf_top = top;
     let padded = h >= SHELF_PADDED_FROM;
-    top += u16::from(padded);
+    // Wide and tall: the band as cards, whose frames take the rows the padding would.
+    let cards = padded && screen.width >= cards::FROM_WIDTH;
+    top += u16::from(padded && !cards);
     // The fleet and Redash, and from 20 rows this machine under them.
-    let band_height = if h >= LOCAL_LINE_FROM && local { 3 } else if h >= 14 { 2 } else if h >= 8 { 1 } else { 0 };
+    let band_height = if cards {
+        cards::HEIGHT
+    } else if h >= LOCAL_LINE_FROM && local {
+        3
+    } else if h >= 14 {
+        2
+    } else if h >= 8 {
+        1
+    } else {
+        0
+    };
     let band = inset(full(top, band_height));
     top += band_height;
     let fleet_height = match view {
