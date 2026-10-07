@@ -1,4 +1,4 @@
-  ◆ cobserve   ✖ critical    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions   ● live 2s   15:52:07 WIB  
+  ❖ cobserve   ✖    1 nodes  2 queue  3 map  4 tape  5 airflow  6 jira  7 sessions  0 local      ● live   15:52:07 WIB  
   ━━ Subuh 04:12 ━━━━ Terbit 05:26 ━━━━ Dzuhur 11:41 ━━━━ Ashar 14:50 ━●┄┄ Maghrib 17:49 · in 1h57m ┄┄┄┄ Isya 18:59 ┄┄  
                                                                                                                         
   FLEET   8 nodes · 2 hot   mem ━━━╸━━━━━━ 37.0% 260/704 GiB   cpu ━━━╺━━━━━━ 29.0% 51/176 cores   queries 15 · 5 ✕     

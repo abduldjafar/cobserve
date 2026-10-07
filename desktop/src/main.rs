@@ -58,8 +58,9 @@ struct FromPage {
     rows: u16,
 }
 
-/// How the terminal looks: your iTerm2 profile's font and colours when there is one, else these
-/// — the "Data Engineer" profile's own (Tokyo Night, JetBrains Mono 13).
+/// How the terminal looks: cobserve's own — Tarum, the colours of hand-dyed batik (soga ground,
+/// mori text, tarum indigo; src/theme.rs has the story) in Rec Mono Semicasual, which ships with
+/// the app — or, when `COBSERVE_ITERM_PROFILE` names one, an iTerm2 profile's font and colours.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 struct Look {
     font: String,
@@ -81,19 +82,20 @@ struct Look {
 
 impl Default for Look {
     fn default() -> Look {
+        // Black, mengkudu, leaf, kunyit, tarum, secang, jalawe, mori — then each a shade lighter.
         let ansi = [
-            "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6", "#414868", "#f7768e", "#9ece6a",
-            "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
+            "#2a231d", "#f66e5a", "#8abe6c", "#f0b438", "#9e9cec", "#d6a0ce", "#7eb4a6", "#d8ccb6", "#6e6356", "#ff8a72", "#a6d488",
+            "#ffcc5c", "#b8b6ff", "#e8bce2", "#9cd0c2", "#f6eee0",
         ];
         Look {
-            font: "JetBrainsMonoNF-Regular".into(),
-            size: 13.0,
-            background: "#1a1b26".into(),
-            foreground: "#c0caf5".into(),
-            cursor: "#c0caf5".into(),
-            cursor_text: "#1a1b26".into(),
-            selection: "#283457".into(),
-            selected_text: "#c0caf5".into(),
+            font: "Rec Mono Semicasual".into(),
+            size: 13.5,
+            background: "#16120f".into(),
+            foreground: "#eee4d2".into(),
+            cursor: "#9e9cec".into(),
+            cursor_text: "#16120f".into(),
+            selection: "#383452".into(),
+            selected_text: "#eee4d2".into(),
             cursor_style: "bar".into(),
             cursor_blink: true,
             ansi: ansi.iter().map(|c| c.to_string()).collect(),
@@ -162,12 +164,12 @@ fn iterm_profile(name: &str) -> Option<serde_json::Value> {
     })
 }
 
-/// The look: the iTerm2 profile `COBSERVE_ITERM_PROFILE` names ("Data Engineer" when nothing
-/// does), and `COBSERVE_RENDERER`.
+/// The look: cobserve's own, or the iTerm2 profile `COBSERVE_ITERM_PROFILE` names; and
+/// `COBSERVE_RENDERER`.
 fn look(env: &[(String, String)]) -> Look {
     let get = |key: &str| env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).or_else(|| std::env::var(key).ok());
-    let name = get("COBSERVE_ITERM_PROFILE").unwrap_or_else(|| "Data Engineer".to_string());
-    let mut look = match iterm_profile(&name) {
+    let profile = get("COBSERVE_ITERM_PROFILE").filter(|n| !n.trim().is_empty());
+    let mut look = match profile.as_deref().and_then(iterm_profile) {
         Some(profile) => look_of(&profile, Look::default()),
         None => Look::default(),
     };
@@ -187,11 +189,29 @@ fn app_env() -> Vec<(String, String)> {
 fn page(look: &Look) -> String {
     include_str!("../assets/index.html")
         .replace("/*LOOK*/", &serde_json::to_string(look).unwrap_or_else(|_| "{}".into()))
+        .replace("/*FONTS*/", &fonts())
         .replace("/*XTERM_CSS*/", include_str!("../assets/vendor/xterm.css"))
         .replace("/*XTERM_JS*/", include_str!("../assets/vendor/xterm.js"))
         .replace("/*FIT_JS*/", include_str!("../assets/vendor/addon-fit.js"))
         .replace("/*UNICODE11_JS*/", include_str!("../assets/vendor/addon-unicode11.js"))
         .replace("/*WEBGL_JS*/", include_str!("../assets/vendor/addon-webgl.js"))
+}
+
+/// The type that ships with the app (desktop/assets/fonts, SIL Open Font License): Rec Mono
+/// Semicasual for the terminal, Recursive for the header and the chips — as `@font-face` rules
+/// with the files in them, so nothing is fetched and nothing needs installing.
+fn fonts() -> String {
+    use base64::Engine as _;
+    let face = |family: &str, weight: &str, format: &str, mime: &str, bytes: &[u8]| {
+        let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+        format!("@font-face {{ font-family: \"{family}\"; font-weight: {weight}; font-style: normal; font-display: block; src: url(data:{mime};base64,{data}) format(\"{format}\"); }}\n")
+    };
+    [
+        face("Rec Mono Semicasual", "400", "truetype", "font/ttf", include_bytes!("../assets/fonts/RecMonoSemicasual-Regular.ttf")),
+        face("Rec Mono Semicasual", "700", "truetype", "font/ttf", include_bytes!("../assets/fonts/RecMonoSemicasual-Bold.ttf")),
+        face("Recursive", "300 1000", "woff2", "font/woff2", include_bytes!("../assets/fonts/Recursive-latin.woff2")),
+    ]
+    .concat()
 }
 
 /// The `cobserve` to run: `COBSERVE_BIN`, else the one beside this program, else the `PATH`'s.
@@ -547,8 +567,10 @@ mod tests {
     #[test]
     fn the_page_carries_the_terminal_and_fetches_nothing() {
         let page = page(&Look::default());
-        assert!(page.contains("\"font\":\"JetBrainsMonoNF-Regular\""), "the look put in");
-        assert!(!page.contains("/*XTERM_JS*/") && !page.contains("/*WEBGL_JS*/"), "every part put in");
+        assert!(page.contains("\"font\":\"Rec Mono Semicasual\""), "the look put in");
+        assert!(!page.contains("/*XTERM_JS*/") && !page.contains("/*WEBGL_JS*/") && !page.contains("/*FONTS*/"), "every part put in");
+        assert_eq!(page.matches("@font-face").count(), 3, "the type ships in the page");
+        assert!(page.contains("url(data:font/ttf;base64,") && page.contains("url(data:font/woff2;base64,"));
         assert!(page.contains("FitAddon") && page.contains("Unicode11Addon") && page.contains("WebglAddon"));
         assert!(!page.contains("src=\"http"), "nothing from the network");
     }

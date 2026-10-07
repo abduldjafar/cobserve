@@ -517,6 +517,12 @@ have a user the other one does not know.
 Colour depth follows the terminal: 24-bit when `COLORTERM` says so, the 256-colour palette
 otherwise, the 16 ANSI colours (no painted background) on anything older.
 
+The palette is cobserve's own, **Tarum**, after the dyes of hand-made batik: the dark ground is
+cloth dyed in soga, the bark's brown-black, the text the cream of mori, the undyed cotton, and
+the accent the indigo of tarum leaves. Severity keeps to the dyes that mean it — mengkudu red,
+kunyit yellow, the green of a young leaf — and nothing else is coloured. `THEME=light` is the
+same cloth before the dye: a mori ground, soga ink, a deep tarum.
+
 ![Light theme](docs/screenshots/120x36-light.png)
 
 ## Keys
@@ -555,6 +561,12 @@ the cancel of that one job.
 terminal (xterm.js, vendored — nothing is fetched), and in it `cobserve` itself in a
 pseudo-terminal: the same program, keys, mouse, colours and sessions included. Block and box
 glyphs are drawn to the cell, so bars and rules have no seams.
+
+It looks like cobserve: Tarum for the terminal's colours, the header and the chips, and
+**Recursive** for the type — Rec Mono Semicasual in the terminal, Recursive in the header, a
+touch casual, like a line drawn with a canting. Both ship inside the app (SIL Open Font License,
+`desktop/assets/fonts`). `COBSERVE_ITERM_PROFILE=<name>` takes an iTerm2 profile's font and
+colours instead.
 
 ```sh
 ./desktop/bundle.sh             # dist/Cobserve.app
