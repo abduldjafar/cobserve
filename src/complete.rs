@@ -22,6 +22,10 @@ pub struct Table {
     pub engine: String,
     /// Each column's name and type, in the table's order.
     pub columns: Vec<(String, String)>,
+    /// About how many rows it holds, as the server counts them (`total_rows`), when it does.
+    pub rows: Option<u64>,
+    /// What its makers wrote about it, if anything.
+    pub comment: String,
 }
 
 impl Table {
@@ -562,7 +566,7 @@ impl Schema {
             databases: vec!["default".into(), "system".into()],
             tables: SYSTEM_TABLES
                 .iter()
-                .map(|name| Table { database: "system".into(), name: name.to_string(), engine: "System".into(), columns: Vec::new() })
+                .map(|name| Table { database: "system".into(), name: name.to_string(), engine: "System".into(), columns: Vec::new(), ..Default::default() })
                 .collect(),
             functions: FUNCTIONS.iter().map(|(name, aggregate)| (name.to_string(), *aggregate)).collect(),
         }
@@ -583,20 +587,23 @@ mod tests {
                     name: "processes".into(),
                     engine: "SystemProcesses".into(),
                     columns: columns(&[("query_id", "String"), ("user", "String"), ("elapsed", "Float64"), ("memory_usage", "Int64"), ("query", "String")]),
+                    ..Default::default()
                 },
                 Table {
                     database: "system".into(),
                     name: "query_log".into(),
                     engine: "MergeTree".into(),
                     columns: columns(&[("event_time", "DateTime"), ("query_duration_ms", "UInt64"), ("user", "String")]),
+                    ..Default::default()
                 },
                 Table {
                     database: "wallet".into(),
                     name: "ledger".into(),
                     engine: "ReplicatedMergeTree".into(),
                     columns: columns(&[("merchant_id", "UInt64"), ("amount", "Decimal(18, 2)"), ("month", "UInt8")]),
+                    ..Default::default()
                 },
-                Table { database: "default".into(), name: "events".into(), engine: "MergeTree".into(), columns: columns(&[("ts", "DateTime")]) },
+                Table { database: "default".into(), name: "events".into(), engine: "MergeTree".into(), columns: columns(&[("ts", "DateTime")]), ..Default::default() },
             ],
             functions: vec![("count".into(), true), ("countIf".into(), true), ("toStartOfHour".into(), false), ("formatReadableSize".into(), false)],
         }

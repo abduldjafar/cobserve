@@ -18,8 +18,14 @@ saying (an explanation, an answer to a question) goes in short -- comment lines 
 - One statement that only reads: SELECT (WITH … SELECT too), SHOW, DESCRIBE, EXISTS or EXPLAIN. \
 It runs with readonly=1 and a 30 second limit, and only its first 1000 rows come back.
 - Keep the request's -- comment lines at the top as they are.
+- The question may be in any language — Indonesian, Lithuanian, English…: read it for what it \
+means and find the tables by meaning, not by its words (transaksi is a transaction, a transfer or a \
+payment; saldo a balance; minggu terakhir the last week). Dates are as of today, given below.
 - Use the tables and columns you are given and ClickHouse's own functions; never make a name up. \
-When the question cannot be answered from them, answer with one -- comment line that says why.
+Every table of the server is listed by name; some are told with their columns. When the ones told \
+with their columns are not the ones the question needs, answer with one line and nothing else: \
+-- need: db.table, db.table — up to eight, from the list — and their columns will be given to \
+you. When even the list has nothing for it, answer with one -- comment line that says why.
 - Prefer what is cheap: a LIMIT where many rows could come back.
 - When asked about a part of the text, answer with what should take that part's place, and \
 nothing else of the text.
@@ -46,8 +52,9 @@ pub fn dir() -> std::path::PathBuf {
 /// The most of the server's tables told in full, and of their columns each.
 const TABLES_IN_FULL: usize = 10;
 const COLUMNS_EACH: usize = 120;
-/// The most of the other tables named.
-const OTHERS_NAMED: usize = 300;
+/// The most tables named in the list of every table, and the most a helper may ask for.
+const OTHERS_NAMED: usize = 5000;
+const NEEDED_MAX: usize = 8;
 
 /// The command that asks `assistant`, after `program` (its command as the sessions run it): the
 /// question goes on its standard input.
@@ -77,39 +84,55 @@ pub fn command(assistant: Assistant, program: &[String], dir: &str) -> Vec<Strin
     command
 }
 
-/// What is asked: for OpenCode, which has no system prompt here, the rules first.
-pub fn prompt(ask: &Ask, schema: Option<&Schema>, version: Option<&str>) -> String {
+/// What is asked: for OpenCode, which has no system prompt here, the rules first. `today` is the
+/// date on the clock (`Wednesday 2026-10-07, UTC+7`); `needed`, the tables a first answer asked
+/// for with `-- need:`, told with their columns before any other — and asked for no more.
+pub fn prompt(ask: &Ask, schema: Option<&Schema>, version: Option<&str>, today: &str, needed: Option<&[String]>) -> String {
     let mut out = String::new();
     if ask.assistant == Assistant::OpenCode {
         out.push_str(RULES);
         out.push_str("\n\n");
     }
     match (&ask.node, version.filter(|v| !v.is_empty())) {
-        (Some(node), Some(version)) => out.push_str(&format!("Server: {node}, ClickHouse {version}.\n\n")),
-        (Some(node), None) => out.push_str(&format!("Server: {node}.\n\n")),
+        (Some(node), Some(version)) => out.push_str(&format!("Server: {node}, ClickHouse {version}.\n")),
+        (Some(node), None) => out.push_str(&format!("Server: {node}.\n")),
         _ => {}
     }
+    if !today.is_empty() {
+        out.push_str(&format!("Today: {today}.\n"));
+    }
+    out.push('\n');
     if let Some(schema) = schema {
-        let chosen = tables_for(&ask.sql, schema);
+        let mut chosen: Vec<&Table> = Vec::new();
+        for name in needed.unwrap_or_default() {
+            let (db, table) = name.split_once('.').map_or((None, name.as_str()), |(d, t)| (Some(d), t));
+            if let Some(table) = schema.table(db, table)
+                && !chosen.iter().any(|c| std::ptr::eq(*c, table))
+            {
+                chosen.push(table);
+            }
+        }
+        for table in tables_for(&format!("{}\n{}", ask.sql, ask.instruction), schema) {
+            if chosen.len() < TABLES_IN_FULL + NEEDED_MAX && !chosen.iter().any(|c| std::ptr::eq(*c, table)) {
+                chosen.push(table);
+            }
+        }
         if !chosen.is_empty() {
             out.push_str("Tables, with their columns:\n");
             for table in &chosen {
                 let columns: Vec<String> = table.columns.iter().take(COLUMNS_EACH).map(|(name, kind)| format!("{name} {kind}")).collect();
                 let more = table.columns.len().saturating_sub(COLUMNS_EACH);
                 let more = if more > 0 { format!(", … {more} more") } else { String::new() };
-                out.push_str(&format!("{}.{} ({}): {}{more}\n", table.database, table.name, table.engine, columns.join(", ")));
+                out.push_str(&format!("{}.{} ({}{}): {}{more}\n", table.database, table.name, table.engine, about(table), columns.join(", ")));
             }
             out.push('\n');
         }
-        let others: Vec<String> = schema
-            .tables
-            .iter()
-            .filter(|t| t.database != "system" && !chosen.iter().any(|c| std::ptr::eq(*c, *t)))
-            .take(OTHERS_NAMED)
-            .map(|t| format!("{}.{}", t.database, t.name))
-            .collect();
+        // Every other table, by database: what a `-- need:` picks from.
+        let others = catalog(schema, &chosen);
         if !others.is_empty() {
-            out.push_str(&format!("Other tables: {}.\n\n", others.join(", ")));
+            out.push_str("Every other table, by database (≈rows, and what was written about it):\n");
+            out.push_str(&others);
+            out.push('\n');
         }
     }
     out.push_str("The console's text:\n-----\n");
@@ -125,6 +148,9 @@ pub fn prompt(ask: &Ask, schema: Option<&Schema>, version: Option<&str>) -> Stri
         out.push_str(error);
         out.push_str("\n\n");
     }
+    if needed.is_some() {
+        out.push_str("The tables you asked for are told above with their columns. Ask for no more: answer now.\n");
+    }
     let asked = ask.instruction.trim();
     match (&ask.selected, asked.is_empty(), &ask.error) {
         (Some(_), false, _) => out.push_str(&format!("Asked, of the selected part: {asked}\nAnswer with what should take that part's place.")),
@@ -136,6 +162,93 @@ pub fn prompt(ask: &Ask, schema: Option<&Schema>, version: Option<&str>) -> Stri
     }
     out
 }
+
+/// ` · ≈1.2M rows · Daily client balances`, what tells a table that matters from one that does not.
+fn about(table: &Table) -> String {
+    let mut out = String::new();
+    if let Some(rows) = table.rows {
+        out.push_str(&format!(" · ≈{} rows", crate::fmt::rows(rows)));
+    }
+    if !table.comment.is_empty() {
+        out.push_str(&format!(" · {}", table.comment.chars().take(80).collect::<String>()));
+    }
+    out
+}
+
+/// Every table not told in full, a line a database: `gateway: transfers ≈2.1G, refunds, …`.
+fn catalog(schema: &Schema, chosen: &[&Table]) -> String {
+    let mut out = String::new();
+    let mut line: Option<(String, Vec<String>)> = None;
+    let others = schema.tables.iter().filter(|t| t.database != "system" && !chosen.iter().any(|c| std::ptr::eq(*c, *t)));
+    for table in others.take(OTHERS_NAMED) {
+        let mut entry = table.name.clone();
+        if let Some(rows) = table.rows {
+            entry.push_str(&format!(" ≈{}", crate::fmt::rows(rows)));
+        }
+        if !table.comment.is_empty() {
+            entry.push_str(&format!(" ({})", table.comment.chars().take(60).collect::<String>()));
+        }
+        match &mut line {
+            Some((db, entries)) if *db == table.database => entries.push(entry),
+            _ => {
+                if let Some((db, entries)) = line.take() {
+                    out.push_str(&format!("{db}: {}\n", entries.join(", ")));
+                }
+                line = Some((table.database.clone(), vec![entry]));
+            }
+        }
+    }
+    if let Some((db, entries)) = line {
+        out.push_str(&format!("{db}: {}\n", entries.join(", ")));
+    }
+    out
+}
+
+/// The tables a helper asked for instead of answering — its `-- need: db.table, …` line — if
+/// that is what it said.
+pub fn needed(answer: &str) -> Option<Vec<String>> {
+    let plain = strip_ansi(answer);
+    let line = plain.lines().map(str::trim).find(|l| l.to_lowercase().starts_with("-- need:"))?;
+    let names: Vec<String> = line["-- need:".len()..]
+        .split([',', ' '])
+        .map(|n| n.trim().trim_matches(|c| c == '`' || c == '"' || c == '.' || c == ';').to_string())
+        .filter(|n| !n.is_empty())
+        .take(NEEDED_MAX)
+        .collect();
+    (!names.is_empty()).then_some(names)
+}
+
+/// Words of other languages a data question is often asked in, and the English a table's name
+/// would have — Indonesian first, as its owner asks.
+const SYNONYMS: &[(&str, &[&str])] = &[
+    ("transaksi", &["transaction", "transfer", "payment"]),
+    ("pembayaran", &["payment", "transfer"]),
+    ("transfer", &["transfer", "transaction"]),
+    ("saldo", &["balance"]),
+    ("akun", &["account"]),
+    ("rekening", &["account", "iban"]),
+    ("nasabah", &["client", "customer"]),
+    ("pelanggan", &["client", "customer"]),
+    ("pengguna", &["user"]),
+    ("tagihan", &["invoice", "bill"]),
+    ("biaya", &["fee", "commission"]),
+    ("komisi", &["commission", "fee"]),
+    ("kartu", &["card"]),
+    ("pedagang", &["merchant"]),
+    ("dompet", &["wallet"]),
+    ("pengembalian", &["refund"]),
+    ("laporan", &["report", "statement"]),
+    ("mutasi", &["statement", "operation"]),
+    ("operasi", &["operation"]),
+    ("kurs", &["rate", "currency"]),
+    ("mata", &["currency"]),
+    ("perusahaan", &["company", "business"]),
+    ("karyawan", &["employee"]),
+    ("pesanan", &["order"]),
+    ("mokėjimai", &["payment"]),
+    ("pervedimai", &["transfer"]),
+    ("sąskaita", &["account", "invoice"]),
+];
 
 /// The tables told in full: those the text names, then those its words point at, else the
 /// system tables a question about the server is likeliest to need.
@@ -160,7 +273,15 @@ fn tables_for<'a>(sql: &str, schema: &'a Schema) -> Vec<&'a Table> {
     // Pointed at: a word of four letters or more in a table's name, or in its columns'.
     let telling: Vec<&str> = words.iter().copied().filter(|w| w.len() >= 4 && !w.contains('.') && !STOP_WORDS.contains(w)).collect();
     let stem = |w: &str| w.strip_suffix('s').filter(|s| s.len() >= 4).unwrap_or(w).to_string();
-    let telling: Vec<String> = telling.iter().map(|w| stem(w)).collect();
+    let mut telling: Vec<String> = telling.iter().map(|w| stem(w)).collect();
+    // A word of another language points where its English would.
+    for word in words.iter() {
+        if let Some((_, english)) = SYNONYMS.iter().find(|(w, _)| w == word) {
+            telling.extend(english.iter().map(|e| e.to_string()));
+        }
+    }
+    telling.sort();
+    telling.dedup();
     let mut scored: Vec<(usize, &Table)> = schema
         .tables
         .iter()
@@ -197,7 +318,10 @@ const STOP_WORDS: &[&str] = &[
     "select", "from", "where", "group", "order", "limit", "with", "that", "this", "what", "which", "show", "list", "give", "find",
     "most", "many", "much", "each", "every", "last", "first", "than", "more", "less", "over", "into", "only", "have", "their",
     "them", "they", "about", "right", "today", "query", "queries", "table", "tables", "count", "number", "top", "biggest",
-    "largest", "using", "used", "uses", "per", "the", "and", "for",
+    "largest", "using", "used", "uses", "per", "the", "and", "for", "data", "info", "records", "rows",
+    // Indonesian: what asks, not what is asked about.
+    "yang", "untuk", "dari", "dengan", "dalam", "pada", "semua", "cari", "carikan", "tampilkan", "lihat", "berapa", "jumlah",
+    "minggu", "terakhir", "hari", "bulan", "tahun", "kemarin", "lalu", "sekarang", "tolong", "buat", "buatkan", "saja",
 ];
 
 /// What a helper answered, as SQL for the session: what was between fences when it fenced it,
@@ -296,6 +420,7 @@ mod tests {
             name: name.into(),
             engine: "MergeTree".into(),
             columns: columns.iter().map(|c| (c.to_string(), "String".to_string())).collect(),
+            ..Default::default()
         };
         Schema {
             databases: vec!["system".into(), "wallet".into(), "gateway".into()],
@@ -317,15 +442,15 @@ mod tests {
 
     #[test]
     fn the_question_has_the_server_the_tables_it_points_at_and_what_failed() {
-        let text = prompt(&ask("-- failed transfers per hour today", None, Assistant::Claude), Some(&schema()), Some("24.11.1"));
-        assert!(text.starts_with("Server: clickhouse3, ClickHouse 24.11.1."), "{text}");
+        let text = prompt(&ask("-- failed transfers per hour today", None, Assistant::Claude), Some(&schema()), Some("24.11.1"), "", None);
+        assert!(text.starts_with("Server: clickhouse3, ClickHouse 24.11.1.\n"), "{text}");
         assert!(text.contains("gateway.transfers (MergeTree): ts String, status String, amount String"), "{text}");
-        assert!(text.contains("Other tables: wallet.ledger."), "named, not told in full: {text}");
+        assert!(text.contains("Every other table, by database") && text.contains("wallet: ledger\n"), "named, not told in full: {text}");
         assert!(text.contains("-----\n-- failed transfers per hour today\n-----"));
         assert!(text.ends_with("the SQL that is there."));
         assert!(!text.contains(RULES), "Claude has them with its system prompt");
 
-        let fix = prompt(&ask("SELECT usr FROM system.processes", Some("Code 47 · Unknown identifier usr"), Assistant::OpenCode), Some(&schema()), None);
+        let fix = prompt(&ask("SELECT usr FROM system.processes", Some("Code 47 · Unknown identifier usr"), Assistant::OpenCode), Some(&schema()), None, "", None);
         assert!(fix.starts_with(RULES), "OpenCode has them first");
         assert!(fix.contains("system.processes (MergeTree): query_id String, user String"));
         assert!(fix.contains("the server said:\nCode 47 · Unknown identifier usr\n\nPut it right."));
@@ -333,16 +458,41 @@ mod tests {
         let mut part = ask("SELECT user FROM system.processes WHERE elapsed > 10", None, Assistant::Claude);
         part.instruction = "only queries over a minute".into();
         part.selected = Some("WHERE elapsed > 10".into());
-        let text = prompt(&part, Some(&schema()), None);
+        let text = prompt(&part, Some(&schema()), None, "", None);
         assert!(text.contains("The part of it selected:\n-----\nWHERE elapsed > 10\n-----"), "{text}");
         assert!(text.ends_with("Asked, of the selected part: only queries over a minute\nAnswer with what should take that part's place."), "{text}");
         let mut asked = ask("", None, Assistant::Claude);
         asked.instruction = "top 10 users by memory".into();
-        assert!(prompt(&asked, Some(&schema()), None).ends_with("Asked: top 10 users by memory"));
+        assert!(prompt(&asked, Some(&schema()), None, "", None).ends_with("Asked: top 10 users by memory"));
         // Nothing points anywhere: the server's own tables.
         let schema = schema();
         let vague = tables_for("-- how is it doing", &schema);
         assert_eq!(vague.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["processes", "query_log", "parts", "tables"]);
+    }
+
+    #[test]
+    fn a_question_in_indonesian_finds_its_tables_and_may_ask_for_more() {
+        let mut schema = schema();
+        schema.tables[5].rows = Some(2_100_000);
+        schema.tables[5].comment = "Gateway transfers, one row each".into();
+        // "the transaction data of the last week": transaksi points at transfers; data and minggu do not point.
+        let mut asked = ask("", None, Assistant::Claude);
+        asked.instruction = "cari data transaksi minggu terakhir".into();
+        let text = prompt(&asked, Some(&schema), None, "Wednesday 2026-10-07 17:40, UTC+7", None);
+        assert!(text.contains("Today: Wednesday 2026-10-07 17:40, UTC+7."), "{text}");
+        assert!(text.contains("gateway.transfers (MergeTree · ≈2.1M rows · Gateway transfers, one row each): ts String"), "{text}");
+        assert!(!text.contains("wallet.ledger (MergeTree"), "data points at nothing: {text}");
+        assert!(text.contains("wallet: ledger\n"), "but every table is named: {text}");
+
+        // It may ask for tables by name instead of answering; they come with their columns next.
+        assert_eq!(needed("-- need: wallet.ledger, gateway.transfers"), Some(vec!["wallet.ledger".to_string(), "gateway.transfers".to_string()]));
+        assert_eq!(needed("\x1b[1m-- NEED: `wallet.ledger`;\x1b[0m"), Some(vec!["wallet.ledger".to_string()]));
+        assert_eq!(needed("-- the ledger has it\nSELECT 1;"), None);
+        let again = prompt(&asked, Some(&schema), None, "", Some(&["wallet.ledger".to_string()]));
+        assert!(again.contains("wallet.ledger (MergeTree): merchant_id String, amount String"), "{again}");
+        assert!(again.find("wallet.ledger (").unwrap() < again.find("gateway.transfers (").unwrap(), "asked for, first: {again}");
+        assert!(again.contains("Ask for no more: answer now."), "{again}");
+        assert!(RULES.contains("-- need: db.table") && RULES.contains("Indonesian"));
     }
 
     #[test]

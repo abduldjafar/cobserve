@@ -434,15 +434,16 @@ fn drive_consoles(app: &mut App, consoles: &mut Consoles, tx: &mpsc::UnboundedSe
             })
         } else {
             let version = ask.node.as_deref().and_then(|node| app.snapshot()?.nodes.iter().find(|n| n.name == node)).map(|n| n.version.clone());
-            let prompt = assist::prompt(&ask, app.schema_of(ask.node.as_deref()), version.as_deref());
+            let schema = app.schema_of(ask.node.as_deref()).cloned();
+            let now = app.now();
+            let today = format!("{}, {}", app.time.format(now, "%A %Y-%m-%d %H:%M"), app.time.label(now));
             let program = match ask.assistant {
                 console::Assistant::Claude => app.claude.commands.claude.clone(),
                 console::Assistant::OpenCode => app.claude.commands.opencode.clone(),
             };
             let dir = consoles.assist_dir.clone();
-            let whole = ask.selected.is_none();
             tokio::spawn(async move {
-                let answer = run_assistant(ask.assistant, &program, prompt, &dir, whole).await;
+                let answer = ask_helper(&ask, &program, schema.as_ref(), version.as_deref(), &today, &dir).await;
                 let _ = tx.send(Event::Assisted(id, asked, answer));
             })
         };
@@ -467,11 +468,39 @@ fn drive_consoles(app: &mut App, consoles: &mut Consoles, tx: &mpsc::UnboundedSe
     }
 }
 
+/// What a helper writes for `ask`: asked once with every table of the server named and those the
+/// text points at told with their columns — and, when it answers with `-- need: db.table, …`
+/// instead, asked again with those tables' columns. Only names, columns and row counts go to it:
+/// never a row of a table.
+async fn ask_helper(
+    ask: &console::Ask,
+    program: &[String],
+    schema: Option<&complete::Schema>,
+    version: Option<&str>,
+    today: &str,
+    dir: &std::path::Path,
+) -> Result<String, String> {
+    let whole = ask.selected.is_none();
+    let first = assist::prompt(ask, schema, version, today, None);
+    let said = run_assistant(ask.assistant, program, first, dir).await?;
+    match (schema, assist::needed(&said)) {
+        (Some(schema), Some(names)) => {
+            let second = assist::prompt(ask, Some(schema), version, today, Some(&names));
+            let said = run_assistant(ask.assistant, program, second, dir).await?;
+            if assist::needed(&said).is_some() {
+                return Ok(format!("-- {} could not tell which tables answer it: looked at {}", ask.assistant.name(), names.join(", ")));
+            }
+            assist::clean(&said, whole)
+        }
+        _ => assist::clean(&said, whole),
+    }
+}
+
 /// A helper's program, asked once: the question on its standard input, the answer on its
 /// standard output — in a folder of its own, without the monitor's secrets (Claude Code then
 /// signs in with the Pro or Max plan, as in a terminal), for at most `assist::TIME_LIMIT_S`.
 /// Dropped — `ctrl+c` — the program is killed.
-async fn run_assistant(assistant: console::Assistant, program: &[String], prompt: String, dir: &std::path::Path, whole: bool) -> Result<String, String> {
+async fn run_assistant(assistant: console::Assistant, program: &[String], prompt: String, dir: &std::path::Path) -> Result<String, String> {
     use tokio::io::AsyncWriteExt;
     let name = assistant.name();
     let argv = assist::command(assistant, program, &dir.to_string_lossy());
@@ -514,7 +543,7 @@ async fn run_assistant(assistant: console::Assistant, program: &[String], prompt
         .map_err(|e| format!("{name}: {e}"))?;
     let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     if output.status.success() {
-        assist::clean(&stdout, whole)
+        Ok(stdout.into_owned())
     } else {
         Err(assist::failure(assistant, output.status.code(), &stderr, &stdout))
     }

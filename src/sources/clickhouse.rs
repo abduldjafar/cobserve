@@ -1154,6 +1154,11 @@ const SCHEMA_DATABASES: &str = "SELECT name FROM system.databases ORDER BY name 
 const SCHEMA_TABLES: &str = "SELECT database, name, engine FROM system.tables \
 WHERE database NOT IN ('INFORMATION_SCHEMA', 'information_schema') AND NOT is_temporary \
 ORDER BY database, name LIMIT 20000 FORMAT TabSeparated";
+/// The same with how many rows each holds and what was written about it, for the helper to tell
+/// the tables that matter; a server without those columns gets the list above.
+const SCHEMA_TABLES_FULL: &str = "SELECT database, name, engine, ifNull(total_rows, 0), replaceRegexpAll(comment, '[\\t\\n]', ' ') FROM system.tables \
+WHERE database NOT IN ('INFORMATION_SCHEMA', 'information_schema') AND NOT is_temporary \
+ORDER BY database, name LIMIT 20000 FORMAT TabSeparated";
 const SCHEMA_COLUMNS: &str = "SELECT database, table, name, type FROM system.columns \
 WHERE database NOT IN ('INFORMATION_SCHEMA', 'information_schema') \
 ORDER BY database, table, position LIMIT 200000 FORMAT TabSeparated";
@@ -1165,7 +1170,10 @@ const SCHEMA_FUNCTIONS: &str = "SELECT name, is_aggregate FROM system.functions 
 pub async fn console_schema(client: &reqwest::Client, target: &ConsoleTarget) -> Result<crate::complete::Schema, String> {
     use crate::complete::{Schema, Table};
     let databases = schema_rows(client, target, SCHEMA_DATABASES).await?;
-    let tables = schema_rows(client, target, SCHEMA_TABLES).await?;
+    let tables = match schema_rows(client, target, SCHEMA_TABLES_FULL).await {
+        Ok(rows) => rows,
+        Err(_) => schema_rows(client, target, SCHEMA_TABLES).await?,
+    };
     let columns = schema_rows(client, target, SCHEMA_COLUMNS).await.unwrap_or_default();
     let functions = schema_rows(client, target, SCHEMA_FUNCTIONS).await.unwrap_or_default();
     let mut schema = Schema {
@@ -1173,7 +1181,14 @@ pub async fn console_schema(client: &reqwest::Client, target: &ConsoleTarget) ->
         tables: tables
             .into_iter()
             .filter(|row| row.len() >= 3)
-            .map(|row| Table { database: row[0].clone(), name: row[1].clone(), engine: row[2].clone(), columns: Vec::new() })
+            .map(|row| Table {
+                database: row[0].clone(),
+                name: row[1].clone(),
+                engine: row[2].clone(),
+                columns: Vec::new(),
+                rows: row.get(3).and_then(|n| n.parse().ok()).filter(|n| *n > 0),
+                comment: row.get(4).map(|c| c.trim().to_string()).unwrap_or_default(),
+            })
             .collect(),
         functions: functions.into_iter().filter(|row| row.len() >= 2).map(|row| (row[0].clone(), row[1] == "1")).collect(),
     };
