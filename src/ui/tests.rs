@@ -69,8 +69,10 @@ fn the_screen_renders_at_the_target_size() {
     // The masthead: the name, how the fleet is, the tabs, how fresh and the clock.
     assert!(lines[0].starts_with("  ◆ cobserve"), "{}", lines[0]);
     assert!(lines[0].contains("● live") || lines[0].contains("○ paused"));
-    assert!(lines[0].contains("1 nodes") && lines[0].contains("5 airflow") && lines[0].contains("6 jira") && lines[0].contains("7 sessions"), "the tabs: {}", lines[0]);
-    assert!(lines[0].contains("✖ critical"), "the fake fleet is in trouble: {}", lines[0]);
+    assert!(lines[0].contains("1 nodes") && lines[0].contains("5 airflow") && lines[0].contains("6 jira") && lines[0].contains("7 sessions") && lines[0].contains("0 local"), "the tabs: {}", lines[0]);
+    assert!(lines[0].contains(" ✖ "), "the fake fleet is in trouble: {}", lines[0]);
+    let wide = render(&app, 140, 36);
+    assert!(wide.lines().next().unwrap().contains("✖ critical"), "with the room, in a word too: {wide}");
     // The day line — no place known here — then the shelf, a row of air either side.
     assert!(lines[1].contains("PRAYER_CITY"), "how to say where: {}", lines[1]);
     assert!(lines[2].trim().is_empty() && lines[5].trim().is_empty(), "{screen}");
@@ -2379,4 +2381,61 @@ fn export_screens() {
     let ansi = crate::theme::Theme::new(crate::theme::Depth::Ansi16, crate::theme::Variant::Dark);
     let buf = buffer_with(&fleet, 120, 36, &ansi);
     std::fs::write(format!("{dir}/120x36-ansi16.html"), html_with(&buf, "ansi16", &ansi)).expect("write html");
+}
+
+fn app_with_local() -> App {
+    let mut app = app_after(20);
+    let at = crate::history::secs(app.clock);
+    for step in 1..=6 {
+        app.update(Event::Local(Box::new(crate::fake::local(step, at - 12.0 + 2.0 * step as f64))));
+    }
+    app
+}
+
+#[test]
+fn this_machine_has_a_band_line_and_view_zero() {
+    let mut app = app_with_local();
+    let screen = render(&app, 140, 40);
+    let lines: Vec<&str> = screen.lines().collect();
+    let band = lines.iter().find(|l| l.contains("LOCAL ")).expect("the band's third line");
+    assert!(band.contains("cpu ━") && band.contains("/10 cores") && band.contains("mem ━") && band.contains("26.6/32.0 GiB"), "{band}");
+    assert!(band.contains("pressure normal") && band.ends_with("[0] local  "), "{band}");
+    let wide = render(&app, 200, 40);
+    let band = wide.lines().find(|l| l.contains("LOCAL ")).unwrap();
+    assert!(band.contains(" · swap 2.2 GiB   top WindowServer 0."), "with the room, the swap and the busiest: {band}");
+    // Short terminals keep the two lines they had.
+    assert!(!render(&app, 140, 18).contains("LOCAL "), "no room for a third line");
+
+    app.update(key(KeyCode::Char('0')));
+    assert_eq!(app.view, View::Local);
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("sam-macbook.local · 10 cores · 32.0 GiB · up 31d02h · load 3.21 3.05 2.98"), "{screen}");
+    assert!(screen.contains("PRESSURE  ● normal · the kernel counts 50% of memory free"), "{screen}");
+    assert!(screen.contains("PROCESSES · 14 · by CPU"), "{screen}");
+    let rows: Vec<&str> = screen.lines().skip_while(|l| !l.contains("NAME")).skip(1).collect();
+    assert!(rows[0].starts_with("  ▌ WindowServer") && rows[0].contains("164"), "the busiest first, the cursor on it: {}", rows[0]);
+    let rest = rows.iter().find(|l| l.contains("the rest")).expect("the closing row");
+    assert!(rest.contains("kernel, short-lived"), "{rest}");
+    assert!(screen.contains("of 10 cores (") && screen.contains("resident of 32.0 GiB"), "the drawer: {screen}");
+
+    // Programs: Chrome's processes in one row; by memory, it is first.
+    app.update(key(KeyCode::Char('g')));
+    app.update(key(KeyCode::Char('s')));
+    let screen = render(&app, 140, 40);
+    assert!(screen.contains("PROGRAMS · 9 · by memory"), "{screen}");
+    let rows: Vec<&str> = screen.lines().skip_while(|l| !l.contains("NAME")).skip(1).collect();
+    assert!(rows[0].contains("Google Chrome ×4"), "{}", rows[0]);
+    for (w, h) in [(40, 12), (60, 20), (80, 24), (200, 60), (10, 4)] {
+        render(&app, w, h);
+    }
+}
+
+#[test]
+#[ignore]
+fn dump_local() {
+    let mut app = app_with_local();
+    println!("{}", render(&app, 140, 40));
+    app.update(key(KeyCode::Char('0')));
+    println!("{}", render(&app, 140, 40));
+    println!("{}", render(&app, 80, 24));
 }

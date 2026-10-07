@@ -32,6 +32,7 @@ mod day;
 mod detail;
 mod drawer;
 mod jira;
+mod local;
 mod map;
 mod nodes;
 mod queue;
@@ -86,6 +87,9 @@ pub fn title(app: &App) -> String {
 /// one line says them in a few words each.
 const CARDS_FROM: u16 = 28;
 
+/// The terminal height from which the band says this machine too, on a third line.
+const LOCAL_LINE_FROM: u16 = 20;
+
 /// From this height the shelf has room to breathe: a blank row above and below what is on it.
 const SHELF_PADDED_FROM: u16 = 30;
 
@@ -122,7 +126,7 @@ struct Areas {
     footer: Rect,
 }
 
-fn areas(screen: Rect, view: View, insights_len: usize, body_need: usize) -> Areas {
+fn areas(screen: Rect, view: View, insights_len: usize, body_need: usize, masthead: bool, local: bool) -> Areas {
     let h = screen.height;
     let margin = gutter(screen.width);
     let full = |y: u16, height: u16| Rect::new(screen.x, y, screen.width, height);
@@ -136,7 +140,7 @@ fn areas(screen: Rect, view: View, insights_len: usize, body_need: usize) -> Are
     } else {
         full(bottom, 0)
     };
-    let masthead = full(top, h.min(1));
+    let masthead = full(top, if masthead { h.min(1) } else { 0 });
     top += masthead.height;
     let day = full(top, if h >= 10 { 1 } else { 0 });
     top += day.height;
@@ -144,7 +148,8 @@ fn areas(screen: Rect, view: View, insights_len: usize, body_need: usize) -> Are
     let shelf_top = top;
     let padded = h >= SHELF_PADDED_FROM;
     top += u16::from(padded);
-    let band_height = if h >= 14 { 2 } else if h >= 8 { 1 } else { 0 };
+    // The fleet and Redash, and from 20 rows this machine under them.
+    let band_height = if h >= LOCAL_LINE_FROM && local { 3 } else if h >= 14 { 2 } else if h >= 8 { 1 } else { 0 };
     let band = inset(full(top, band_height));
     top += band_height;
     let fleet_height = match view {
@@ -216,7 +221,7 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         Severity::None
     };
     let body_need = app.with_rows(|_, rows| rows.len() + 1).unwrap_or(2);
-    let a = areas(area, app.view, insights.len(), body_need);
+    let a = areas(area, app.view, insights.len(), body_need, !app.outside_chrome, app.local.latest.is_some());
     let margin = gutter(area.width);
 
     // The chrome's surface: the shelf from the top edge down, and the footer.
@@ -260,6 +265,7 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
             None => jira::draw(frame, app, theme, a.body),
         },
         View::Claude => claude::draw(frame, app, theme, a.well, margin),
+        View::Local => local::draw(frame, app, theme, a.body),
     }
     if a.insights.height > 0 {
         nodes::draw_insights(frame, app, theme, a.insights, &insights);
@@ -362,11 +368,13 @@ fn masthead(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, status: Sev
         (cells, spots)
     };
 
-    // The widest that fits: the tabs' names close up before they go.
+    // The widest that fits: the tabs' names close up before they go, and the status's word goes
+    // before them — its glyph and colour stay.
     let options = [
         (true, true, true, true),
         (true, true, false, true),
         (false, true, false, true),
+        (false, true, false, false),
         (false, false, false, true),
         (false, false, false, false),
     ];
@@ -546,6 +554,14 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("r", "read again"),
         ],
         View::Jira if !app.jira.reachable => &[("r", "read now"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+        View::Local => &[
+            ("↑↓", "move"),
+            ("s", if app.local.sort == crate::local::Sort::Cpu { "by memory" } else { "by CPU" }),
+            ("g", if app.local.grouped { "each process" } else { "by program" }),
+            ("p", "pause"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
         View::Jira => &[
             ("↑↓", "move"),
             ("⏎", "details"),
@@ -704,10 +720,11 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("c", "SQL on the node under the cursor, in a query session: read-only, it suggests"),
     ("s", "sort: pressure, memory, CPU, name"),
     ("/", "filter by node, user, person, SQL or query id · esc clears"),
-    ("1 … 7", "views: nodes · queue · map · tape · airflow · jira · sessions — up to 50, the first on 7-9"),
+    ("1 … 7  0", "views: nodes · queue · map · tape · airflow · jira · sessions — up to 50, the first on 7-9 · 0 this machine"),
     ("ctrl+\\", "the sessions · then 1-6 a view, 7-9 or ↑↓ a session, / one by name, n new (c o t q:"),
     ("", "Claude, OpenCode, a terminal, SQL), p a past conversation, r rename, x close"),
-    ("F1 … F9", "the same tabs from anywhere, a session's screen too · or click them"),
+    ("F1 … F10", "the same tabs from anywhere, a session's screen too · or click them"),
+    ("s  g", "on view 0: sort by CPU ↔ memory · one row per program ↔ per process"),
     ("x  then y", "on view 2: cancel the Redash job under the cursor, as Redash's Cancel does"),
     ("⇧⏎  ctrl+j", "a new line in Claude's or OpenCode's prompt — ctrl+j in any terminal"),
     ("z  d", "the clock: local ↔ UTC (or click it) · d waves a prayer's reminder away · ctrl+\\ first in a session"),

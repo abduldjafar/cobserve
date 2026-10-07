@@ -33,6 +33,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         View::Jira => jira(app, theme, width),
         // View 5 has no drawer (the layout gives it none); nothing to say if asked.
         View::Claude => (title("claude", theme), Vec::new()),
+        View::Local => super::local::drawer(app, theme, width),
     };
     frame.render_widget(
         Paragraph::new(rule(width, title, theme)),

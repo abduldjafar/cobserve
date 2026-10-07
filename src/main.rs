@@ -15,6 +15,7 @@ mod complete;
 mod config;
 mod console;
 mod conversations;
+mod desktop;
 mod detail;
 mod fake;
 mod fmt;
@@ -22,6 +23,7 @@ mod folders;
 mod history;
 mod insight;
 mod jira;
+mod local;
 mod model;
 mod prayer;
 mod saved;
@@ -221,8 +223,23 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     spawn_signal_watch(tx.clone());
 
     let mut shown_title = String::new();
+    // Inside Cobserve.app the header is the app's: cobserve leaves its masthead out and says, after
+    // a frame, what the header shows (`desktop.rs`).
+    let inside_app = desktop::inside_the_app();
+    app.outside_chrome = inside_app;
+    let mut told: Option<desktop::State> = None;
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;
+        if inside_app {
+            let state = desktop::state(&app);
+            if told.as_ref() != Some(&state) {
+                use std::io::Write;
+                let mut out = std::io::stdout();
+                let _ = out.write_all(desktop::sequence(&state).as_bytes());
+                let _ = out.flush();
+                told = Some(state);
+            }
+        }
         let title = ui::title(&app);
         if title != shown_title {
             let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(&title));
@@ -917,6 +934,9 @@ fn spawn_sources(
         return details;
     }
 
+    // This machine, read as often as the fleet: no configuration, nothing on the network.
+    tokio::spawn(sources::local::run(config.poll, tx.clone()));
+
     // Airflow and Jira are optional (§9, like Redash): unconfigured, their views say how.
     match sources::airflow::AirflowSource::new(&config.airflow) {
         Some(airflow) => {
@@ -1019,6 +1039,7 @@ async fn fake_loop(
     mut jira_asks: mpsc::UnboundedReceiver<()>,
 ) {
     let mut fake = fake::FakeSource::new();
+    let mut local_step = 0;
     let mut polling = tokio::time::interval(poll);
     polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // §6.3: the queue moves every 3 s, the fleet every POLL_MS; Airflow is read every 15 s and
@@ -1037,6 +1058,9 @@ async fn fake_loop(
                 if tx.send(Event::Snapshot(Box::new(fake.snapshot()))).is_err() {
                     return;
                 }
+                local_step += 1;
+                let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+                let _ = tx.send(Event::Local(Box::new(fake::local(local_step, at))));
             }
             _ = queue.tick() => {
                 if tx.send(Event::Queue(Box::new(fake.queue()))).is_err() {

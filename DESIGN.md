@@ -893,11 +893,41 @@ or from a slope over the last minutes of it.
   description with Jira's wiki markup turned into headings, items, code and text, sub-tasks,
   links, comments; `o` opens it in Jira, `y` copies its link, `r` reads again. `JIRA_URL`, `JIRA_TOKEN`, `JIRA_STATUSES`, `JIRA_DONE_DAYS`, or `jira:`
   in the credential file. Both views keep what they last read when a read fails, and say so.
+- **LOCAL**, view 0 (`src/local.rs`, `src/sources/local.rs`, `src/ui/local.rs`): the machine
+  cobserve runs on, as Activity Monitor shows it, read every `POLL_MS` with no configuration and
+  nothing on the network — `ps -axo pid,ppid,user,pcpu,rss,time,comm`, `vm_stat`, one `sysctl`
+  call, and the kernel's CPU ticks (`host_statistics(HOST_CPU_LOAD_INFO)`; `/proc` on Linux).
+  The arithmetic, which is this view's §5:
+  - machine CPU `= Δ(user + system + nice) / Δ(all ticks)` of `hw.ncpu` cores; busy cores is
+    that share of them. `ps` cannot be summed for it: `kernel_task` is not in it.
+  - a process's cores `= Δ cpu time / Δ wall` between two reads, the same pid and command — the
+    delta form of §5.2 — and `%cpu / 100` (ps's decaying average) for one seen once.
+  - **the rest** `= busy cores − Σ process cores`, at least 0: the kernel and what started and
+    ended between two reads. It closes the list as §5.3's row closes a node, so the rows add up
+    to the bar.
+  - memory used `= app + wired + compressed`, Activity Monitor's sum, with `app = anonymous −
+    purgeable` and `cached = file-backed + purgeable`, of `hw.memsize`. A process's memory is its
+    RSS — not Activity Monitor's footprint, which counts its compressed pages too, so an app whose
+    memory is compressed shows less here.
+  - memory pressure is the kernel's: `kern.memorystatus_vm_pressure_level` (1 normal, 2 warning,
+    4 critical) is the severity, `kern.memorystatus_level` the share it counts free. A Mac uses
+    most of its memory by design, so the memory bar takes its colour from the pressure, never
+    from the used share; CPU takes §7's 75 and 90.
+  On screen: the machine's name, cores, memory, uptime and load; CPU and memory as bars with
+  their denominators, user and system, app · wired · compressed · cached, four minutes of each;
+  the pressure and the swap; then every process — or every program, `g`, the outermost `.app` it
+  runs from (all of Chrome's helpers are Google Chrome) — by CPU or by memory, `s`, each with its
+  cores of the machine's and its RSS of the machine's. The cursor follows its process while the
+  list re-sorts; the drawer has the rest. With 20 rows, the band says the machine on a third
+  line, `LOCAL`, on every view, and the desktop app has a chip for it. Read-only: nothing here
+  signals a process. With `FAKE=1` the machine is made up too, so screenshots carry no real
+  process.
 
 ### Departures
 
 - **§3 the tabs**: the monitor has six views, so the sessions are numbered on from 7, and a
-  digit picks the first three of them (`ctrl+\` and the arrows, or `/`, reach the rest).
+  digit picks the first three of them (`ctrl+\` and the arrows, or `/`, reach the rest). This
+  machine is `0` (and F10), the last key of the row, drawn after the sessions, so they keep 7–9.
   Airflow and Jira are where they are because a digit there is what makes a glance cheap.
 - **§5.4 runaway by memory** uses the query's own `max_memory_usage` from its `Settings`.
   `system.settings` answers for the monitoring session — 6 GB on the rig, the monitor's own

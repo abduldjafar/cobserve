@@ -392,7 +392,12 @@ fn main() {
     #[cfg(target_os = "macos")]
     let builder = {
         use tao::platform::macos::WindowBuilderExtMacOS;
-        builder.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true)
+        builder
+            .with_titlebar_transparent(true)
+            .with_fullsize_content_view(true)
+            .with_title_hidden(true)
+            // In the middle of the app's own header, 46 points high.
+            .with_traffic_light_inset(tao::dpi::LogicalPosition::new(16.0, 16.0))
     };
     let window = match builder
         .with_theme(Some(tao::window::Theme::Dark))

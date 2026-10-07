@@ -4,6 +4,7 @@
 pub mod airflow;
 pub mod clickhouse;
 pub mod jira;
+pub mod local;
 pub mod redash;
 
 use std::time::{Duration, UNIX_EPOCH};
