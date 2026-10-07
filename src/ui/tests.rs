@@ -1089,17 +1089,22 @@ fn the_selected_query_shows_its_sql_right_under_it() {
     let screen = render(&app, 140, 44);
     let lines: Vec<&str> = screen.lines().collect();
     let row = lines.iter().position(|l| l.contains("▌")).expect("the cursor's row");
-    assert!(lines[row + 1].contains("▎ SELECT region, count() AS ops"), "{screen}");
-    assert!(lines[row + 2].contains("▎ FROM accounting.bank_record"), "a clause a line: {screen}");
-    assert!(lines[row + 3].contains("▎ WHERE day = today()"), "{screen}");
-    assert!(lines[row + 4].contains("▎ GROUP BY region"), "{screen}");
+    assert!(lines[row + 1].contains("▎ query_id q-long") && lines[row + 1].contains("y copies it"), "its id, to look it up: {screen}");
+    assert!(lines[row + 2].contains("▎ SELECT region, count() AS ops"), "{screen}");
+    assert!(lines[row + 3].contains("▎ FROM accounting.bank_record"), "a clause a line: {screen}");
+    assert!(lines[row + 4].contains("▎ WHERE day = today()"), "{screen}");
+    assert!(lines[row + 5].contains("▎ GROUP BY region"), "{screen}");
+    // y copies the id, whole.
+    let mut app = app;
+    app.update(key(KeyCode::Char('y')));
+    assert_eq!(app.take_clipboard(), ["q-long"]);
+    assert!(app.notice().is_some_and(|n| n.contains("copied query id q-long")));
     assert!(!screen.contains("Username"), "Redash's comment is not part of what to read: {screen}");
     assert!(!screen.contains("lines 1–"), "four lines fit: no scrolling\n{screen}");
     let drawer: String = lines[lines.len() - 6..].join("\n");
     assert!(!drawer.contains("bank_record"), "the drawer no longer repeats the SQL:\n{drawer}");
 
     // With the cursor in the insights, the tree closes the SQL again.
-    let mut app = app;
     app.update(key(KeyCode::Tab));
     assert!(!render(&app, 140, 44).contains("▎ SELECT region"));
 }

@@ -2488,6 +2488,13 @@ impl App {
             KeyCode::Char('K') => self.scroll_sql(-1),
             KeyCode::Char('J') => self.scroll_sql(1),
             KeyCode::Char('s') => self.tree.sort = self.tree.sort.next(),
+            // A query's id, to look it up in system.query_log.
+            KeyCode::Char('y') => {
+                if let Some(crate::tree::RowId::Query { query_id, .. }) = self.selected().cloned() {
+                    self.notice = Some((format!("copied query id {query_id}"), SystemTime::now()));
+                    self.clipboard.push(query_id);
+                }
+            }
             // SQL on the node under the cursor, in a query session of its own.
             KeyCode::Char('c') => {
                 let node = self.node_at_cursor();
