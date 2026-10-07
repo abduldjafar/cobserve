@@ -125,6 +125,8 @@ pub struct Viewport {
     pub queue: Cell<usize>,
     pub airflow: Cell<usize>,
     pub jira: Cell<usize>,
+    /// Whether view 6 was drawn as a board, so `← →` cross its lanes.
+    pub jira_board: Cell<bool>,
     pub local: Cell<usize>,
     pub tape: Cell<usize>,
     /// The first row shown of a page's list on view 5 or 6.
@@ -737,6 +739,30 @@ impl App {
         self.airflow_selected = rows.get(next).cloned();
     }
 
+    /// On the board: to the next lane with tickets that way, as far down it as the cursor was.
+    fn cross_lane(&mut self, step: isize) {
+        let lanes: Vec<Vec<String>> =
+            crate::ui::board_lanes(&self.jira).into_iter().map(|l| l.into_iter().map(|t| t.key.clone()).collect()).collect();
+        let Some(key) = self.jira_selected.clone() else {
+            return self.move_jira(0);
+        };
+        let Some((lane, at)) = lanes.iter().enumerate().find_map(|(l, keys)| keys.iter().position(|k| *k == key).map(|i| (l, i))) else {
+            return;
+        };
+        let mut next = lane as isize + step;
+        while next >= 0 && (next as usize) < lanes.len() {
+            let keys = &lanes[next as usize];
+            if let Some(key) = keys.get(at.min(keys.len().saturating_sub(1))) {
+                self.jira_selected = Some(key.clone());
+                if let Some(index) = self.jira.rows().iter().position(|t| t.key == *key) {
+                    self.jira_index = index;
+                }
+                return;
+            }
+            next += step;
+        }
+    }
+
     fn move_jira(&mut self, delta: isize) {
         let keys: Vec<String> = self.jira.rows().iter().map(|t| t.key.clone()).collect();
         if keys.is_empty() {
@@ -856,6 +882,8 @@ impl App {
             return;
         }
         match code {
+            KeyCode::Left | KeyCode::Char('h') if self.viewport.jira_board.get() => self.cross_lane(-1),
+            KeyCode::Right | KeyCode::Char('l') if self.viewport.jira_board.get() => self.cross_lane(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_jira(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_jira(1),
             KeyCode::PageUp => self.move_jira(-10),

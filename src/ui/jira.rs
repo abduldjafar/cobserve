@@ -44,6 +44,18 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     }
 
     let now = app.now();
+    // Wide: the board, its lanes side by side, under the title and the month's time.
+    app.viewport.jira_board.set(width >= super::board::FROM_WIDTH);
+    if width >= super::board::FROM_WIDTH {
+        let mut head = vec![title_line(app, theme, width), Line::from("")];
+        if board.worklogs_read && height >= 26 {
+            let bars = if height >= 40 { 3 } else { 2 };
+            head.extend(month_chart(board, now, app.time.offset_s(now), bars, theme, width));
+            head.push(Line::from(""));
+        }
+        super::board::draw(frame, app, theme, area, head);
+        return;
+    }
     let today = jira::today(now, app.time.offset_s(now));
     let columns = board.columns();
     let others = board.others();

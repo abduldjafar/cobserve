@@ -26,6 +26,7 @@
 
 mod airflow;
 mod band;
+mod board;
 mod cards;
 mod claude;
 mod console;
@@ -34,6 +35,7 @@ mod detail;
 mod drawer;
 mod jira;
 mod local;
+mod loom;
 mod map;
 mod nodes;
 mod queue;
@@ -93,6 +95,11 @@ const LOCAL_LINE_FROM: u16 = 20;
 
 /// From this height the shelf has room to breathe: a blank row above and below what is on it.
 const SHELF_PADDED_FROM: u16 = 30;
+
+/// View 6's board lanes, each its tickets in the order drawn — what `← →` cross.
+pub fn board_lanes(board: &crate::jira::Board) -> Vec<Vec<&crate::jira::Ticket>> {
+    board::lanes(board).into_iter().map(|l| l.tickets).collect()
+}
 
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_with(frame, app, theme::current());
@@ -567,6 +574,18 @@ fn footer_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
             ("r", "read again"),
         ],
         View::Jira if !app.jira.reachable => &[("r", "read now"), ("1", "nodes"), ("?", "help"), ("q", "quit")],
+        View::Jira if app.viewport.jira_board.get() => &[
+            ("↑↓", "move"),
+            ("←→", "lane"),
+            ("⏎", "details"),
+            ("t", "time by ticket"),
+            ("o", "open in Jira"),
+            ("y", "copy link"),
+            ("r", "read now"),
+            ("p", "pause"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
         View::Local => &[
             ("↑↓", "move"),
             ("s", if app.local.sort == crate::local::Sort::Cpu { "by memory" } else { "by CPU" }),

@@ -55,6 +55,14 @@ on top of it and are listed in `DESIGN.md` §13.
 
 ![Query detail](docs/screenshots/140x40-query.png)
 
+### Jira and Airflow, wide
+
+From 140 columns, view 6 is a **board**: your board's columns as lanes side by side, each ticket a
+block with its priority, its summary in two lines, how long it has been there, its due date and the
+time logged — `← →` cross the lanes. View 5 is the **day woven**: the runs under way and the day's
+failures told in two lines each at the top, then a thread per DAG across the last 24 hours with
+its rhythm and next run beside it. Narrower, both are the lists described above.
+
 ### The shelf
 
 Above every view: the fleet, the Redash queue and this machine. On a terminal of 150 columns and

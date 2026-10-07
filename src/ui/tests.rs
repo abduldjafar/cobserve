@@ -2434,6 +2434,18 @@ fn this_machine_has_a_band_line_and_view_zero() {
 
 #[test]
 #[ignore]
+fn dump_board() {
+    let mut app = app_on('6');
+    println!("{}", render(&app, 172, 48));
+    app.update(key(KeyCode::Right));
+    app.update(key(KeyCode::Down));
+    println!("{}", render(&app, 172, 48));
+    let app = app_on('5');
+    println!("{}", render(&app, 172, 48));
+}
+
+#[test]
+#[ignore]
 fn dump_cards() {
     let app = app_with_local();
     println!("{}", render(&app, 180, 44));
@@ -2447,4 +2459,76 @@ fn dump_local() {
     app.update(key(KeyCode::Char('0')));
     println!("{}", render(&app, 140, 40));
     println!("{}", render(&app, 80, 24));
+}
+
+#[test]
+fn wide_jira_is_a_board_of_lanes_and_the_arrows_cross_them() {
+    let mut app = app_on('6');
+    let screen = render(&app, 172, 48);
+    let titles = screen.lines().find(|l| l.contains("in progress 4")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(titles.contains("in review 4  ✖ 1 overdue") && titles.contains("feedback 1") && titles.contains("done 8 in 7 days"), "{titles}");
+    // The first ticket's block: its key and priority, its summary in two lines, its age.
+    let first = screen.lines().find(|l| l.contains("▌ DATA-2207")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(first.contains("High") && first.contains("DATA-2647") && first.contains("ASAP"), "lane beside lane: {first}");
+    assert!(screen.contains("4d · overdue 2d · 7h12m logged") && screen.contains("12h · due tomorrow"), "{screen}");
+    assert!(screen.contains("✔ 2h"), "a finished one says when: {screen}");
+    assert!(screen.lines().last().unwrap().contains("←→  lane"), "{screen}");
+
+    // → to the next lane at the same height, ↓ down it, ← back.
+    app.update(key(KeyCode::Right));
+    assert_eq!(app.jira_selection(), Some("DATA-2647"));
+    app.update(key(KeyCode::Down));
+    assert_eq!(app.jira_selection(), Some("DATA-1817"));
+    app.update(key(KeyCode::Right));
+    assert_eq!(app.jira_selection(), Some("DATA-1289"), "feedback has one: the cursor takes it");
+    app.update(key(KeyCode::Left));
+    app.update(key(KeyCode::Left));
+    assert_eq!(app.jira_selection(), Some("DATA-2207"));
+    // A click on a block chooses it; ⏎ still opens it.
+    let screen = render(&app, 172, 48);
+    assert!(screen.contains("▌ DATA-2207"), "{screen}");
+    let index = app.jira.rows().iter().position(|t| t.key == "DATA-2737").unwrap();
+    click_on(&mut app, Hit::Ticket(index));
+    assert_eq!(app.jira_selection(), Some("DATA-2737"));
+    // Narrow, the list as before: ← → do not cross lanes there.
+    let narrow = render(&app, 120, 36);
+    assert!(narrow.contains("─ IN REVIEW"), "{narrow}");
+    for (w, h) in [(140, 30), (172, 20), (250, 60)] {
+        assert_eq!(render(&app, w, h).lines().count(), h as usize);
+    }
+}
+
+#[test]
+fn wide_airflow_tells_its_knots_and_weaves_the_day() {
+    let mut app = app_on('5');
+    let screen = render(&app, 172, 48);
+    let now = screen.lines().find(|l| l.contains(" now  ")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(now.contains("2 running · 1 stuck · 1 waiting"), "{now}");
+    // The stuck run, told: how long, and what its task waits for — beside the running one.
+    let stuck = screen.lines().find(|l| l.contains("✖ test_clickhouse_connection")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(stuck.starts_with("  ▌") && stuck.contains("stuck 262d") && stuck.contains("statement_daily_agg_reload") && stuck.contains("4/7"), "{stuck}");
+    assert!(screen.contains("↻ ping_clickhouse to retry"), "{screen}");
+    let failed = screen.lines().find(|l| l.contains("failed today")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(failed.contains('3'), "{failed}");
+    assert!(screen.contains("at check_consistency · 13:08") || screen.contains("at check_consistency ·"), "where it failed: {screen}");
+    // The day: hours over the threads, each thread's rhythm after it.
+    let hours = screen.lines().find(|l| l.contains("now") && l.contains("00") && l.contains("12")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(!hours.contains("SCHEDULE"), "no table header: {hours}");
+    let fifteen = screen.lines().find(|l| l.contains("clickhouse_replication_check")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(fifteen.contains("▪▪▪▪▪▪") && fifteen.contains("every 15m"), "{fifteen}");
+    let cbk = screen.lines().find(|l| l.contains("cbk_accounts_report") && l.contains("every 2h")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(cbk.contains('✖') && cbk.contains("✖1"), "{cbk}");
+
+    // The cursor walks the same rows as the narrow view, and a click on a knot opens its tasks.
+    for _ in 0..3 {
+        app.update(key(KeyCode::Down));
+    }
+    let screen = render(&app, 172, 48);
+    assert!(screen.lines().any(|l| l.contains("▌✖ replication_app_consistency_check")), "{screen}");
+    click_on(&mut app, Hit::AirflowRow(3));
+    assert!(matches!(app.page().map(|p| &p.ask), Some(crate::detail::Ask::Tasks { .. })), "{:?}", app.page());
+    app.update(key(KeyCode::Esc));
+    for (w, h) in [(140, 30), (172, 20), (250, 60)] {
+        assert_eq!(render(&app, w, h).lines().count(), h as usize);
+    }
 }
