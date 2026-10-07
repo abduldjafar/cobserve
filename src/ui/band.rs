@@ -1,5 +1,5 @@
-//! The two lines on the shelf, on every view: the fleet at a glance, and the Redash queue strip
-//! (§1, §6.3).
+//! The lines on the shelf, on every view: the fleet at a glance, the Redash queue strip (§1,
+//! §6.3) and, with the height for it, this machine (`local.rs`, view 0).
 
 use super::widgets::{dots, sparkline, thin_bar, Cells, Scale, PCT_SHAPE};
 use crate::app::App;
@@ -24,6 +24,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     if area.height >= 2 {
         let strip = queue_strip(app, theme, width);
         frame.render_widget(Paragraph::new(strip), Rect::new(area.x, area.y + 1, area.width, 1));
+    }
+    if area.height >= 3 {
+        let local = super::local::band_line(app, theme, LABEL, width);
+        frame.render_widget(Paragraph::new(local), Rect::new(area.x, area.y + 2, area.width, 1));
     }
 }
 

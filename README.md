@@ -31,6 +31,11 @@ FAKE=1 cobserve                        # a generated fleet: look around, ? for k
 cobserve --credential ~/.config/cobserve/credentials.yaml    # your fleet (GUIDE.md §5)
 ```
 
+**On a Mac, as an app of its own**: `./desktop/bundle.sh --install` puts **Cobserve.app** in
+`/Applications` — a window with its own icon and menu, a terminal inside it that runs cobserve,
+so it opens from the Dock or Spotlight and needs no terminal of yours. See
+[the desktop app](#the-desktop-app).
+
 It reads ClickHouse directly over HTTP, read-only, so it keeps working when the web app is
 down. `DESIGN.md` is the contract for every number on screen (§5); the additions here sit
 on top of it and are listed in `DESIGN.md` §13.
@@ -46,6 +51,7 @@ on top of it and are listed in `DESIGN.md` §13.
 | **AIRFLOW** | `5` | Every DAG's last 24 hours: what **runs** now and how far its tasks are — a run going for a day is **stuck**, and says since when — what **waits**, what **failed** and at which task, and a line per DAG with its day on a timeline, an hour a cell, beside its schedule, its runs, when it last ran and when it runs next. |
 | **JIRA** | `6` | Your tickets in your board's columns — **In progress**, **In Review**, **Feedback** and what was **Done** this week — with their priority, how long each has been in its column, its due date against today and the time logged. |
 | **SESSIONS** | `7` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need, while the fleet and the Redash queue stay in sight above them. |
+| **LOCAL** | `0` | This machine, as Activity Monitor shows it: CPU against its cores, memory as app · wired · compressed · cached against all of it, the memory pressure the kernel reports and the swap — then every process, or every program (`g`), by CPU or memory (`s`), closed by *the rest*, so the rows add up to the machine. A line of it sits on every view, under REDASH. |
 
 ![Query detail](docs/screenshots/140x40-query.png)
 
@@ -536,12 +542,61 @@ own profile carries its caps otherwise). A query session's queries are `readonly
 The only request that changes anything goes to Redash, and only after `x` and `y` on view 2:
 the cancel of that one job.
 
+## The desktop app
+
+`desktop/` is cobserve in a window of its own: a window (`tao`) with a web view (`wry`) holding a
+terminal (xterm.js, vendored — nothing is fetched), and in it `cobserve` itself in a
+pseudo-terminal: the same program, keys, mouse, colours and sessions included. Block and box
+glyphs are drawn to the cell, so bars and rules have no seams.
+
+```sh
+./desktop/bundle.sh             # dist/Cobserve.app
+./desktop/bundle.sh --install   # and copy it to /Applications
+```
+
+An app opened from the Dock has none of your terminal's environment, so:
+
+- cobserve runs through your **login shell** (`$SHELL -l -c`) for your `PATH` — not an
+  interactive one, whose `.zshrc` may wait for a terminal that is not there;
+- **`~/.config/cobserve/credentials.yaml`** is passed as `--credential` when it exists: put the
+  servers there, and the `redash:`, `airflow:` and `jira:` sections;
+- **`~/.config/cobserve/env`** sets anything else, one `KEY=value` a line, read as written — no
+  shell, so a password with `&` or `$` in it is fine:
+
+```sh
+PRAYER_CITY=Jakarta
+JIRA_URL=https://jira.example.net
+JIRA_TOKEN=personal-access-token
+```
+
+The window has a header and a status bar of its own, drawn by the app, not in the terminal:
+
+- **the views as tabs** — Nodes to Sessions and Local, `⌘1` … `⌘8` or a click; Sessions shows
+  how many there are, and rings when one calls while out of sight;
+- **the clock and the next prayer** on the right, and the fleet's worst as the dot by the name;
+- **a chip per thing watched** along the bottom — ClickHouse, Redash, Airflow, Jira, the hours
+  logged and this Mac — coloured by severity, a click opens its view.
+
+cobserve tells the app what to show with a private escape sequence (OSC 7700, JSON, only when
+`TERM_PROGRAM` is `cobserve-desktop` and only when it changed), and leaves its own masthead off,
+since the header says it. The numbers are the screen's own (`src/desktop.rs`).
+
+Files dropped on the window are typed in as their paths, quoted for the shell — for Claude Code or
+OpenCode in a session. Programs in `~/.opencode/bin`, `~/.claude/local`, `~/.local/bin`,
+`~/.bun/bin`, `~/.cargo/bin`, Homebrew and the like are found even when only `.zshrc` names them.
+
+`⌘C` `⌘V` copy and paste, `⌘+` `⌘−` `⌘0` change the type's size (kept for next time), `⌥` and a
+drag selects text while cobserve has the mouse, and the window's title is cobserve's. `q` closes
+the window; if cobserve stops with an error, the window stays and says why. `chmod 600` both
+files: they hold logins.
+
 ## Developing
 
 ```sh
 cargo test                            # model, insights, tape, history, every view at every size
 cargo clippy --all-targets -- -D warnings
 ./dev/screenshots.sh                  # docs/screenshots/: text for every view, PNGs for these
+cargo test -p cobserve-desktop        # the desktop app's own tests
 cargo test live_airflow_and_jira -- --ignored --nocapture   # views 5 and 6 against your own
                                       # Airflow and Jira, read once and drawn (AIRFLOW_*, JIRA_* set)
 ```

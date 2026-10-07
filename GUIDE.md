@@ -275,6 +275,13 @@ redash:                                   # optional
 
 ### 5.7 A launcher, so you type one word
 
+On a Mac, the launcher can be an app: `./desktop/bundle.sh --install` makes **Cobserve.app**, with
+its own window and icon. It reads `~/.config/cobserve/credentials.yaml` by itself, and
+`~/.config/cobserve/env` for other variables (`KEY=value` lines) — an app from the Dock has no
+terminal environment. [README.md](README.md#the-desktop-app) has the details.
+
+In a terminal, a script does it:
+
 Put this in `~/bin/cobserve-fleet` and run `chmod +x` on it. The secrets stay in the credential
 file:
 

@@ -58,6 +58,8 @@ pub enum View {
     /// Sessions — Claude Code, OpenCode, a shell — in a pane, the monitor's band above it
     /// (`claude.rs`).
     Claude,
+    /// This machine: its CPU, memory and processes (`local.rs`). Beside the sessions, on `0`.
+    Local,
 }
 
 impl View {
@@ -70,16 +72,18 @@ impl View {
             View::Airflow => "AIRFLOW",
             View::Jira => "JIRA",
             View::Claude => "SESSIONS",
+            View::Local => "LOCAL",
         }
     }
 
-    /// The tab order of §1, which is also the `1` … `7` keymap.
-    pub const ALL: [View; 7] = [View::Nodes, View::Queue, View::Map, View::Tape, View::Airflow, View::Jira, View::Claude];
+    /// The tab order of §1, which is also the `1` … `7`, `0` keymap.
+    pub const ALL: [View; 8] = [View::Nodes, View::Queue, View::Map, View::Tape, View::Airflow, View::Jira, View::Claude, View::Local];
 
     /// The monitor's own views are `1` to `6`; the sessions go on from 7.
     pub const MONITOR: u8 = 6;
 
-    /// `1` … `7`, the number that selects this view.
+    /// `1` … `7`, the number that selects this view — and `0` for this machine, the last key of the
+    /// row, so the sessions keep `7`–`9`.
     pub fn number(self) -> u8 {
         match self {
             View::Nodes => 1,
@@ -89,6 +93,7 @@ impl View {
             View::Airflow => 5,
             View::Jira => 6,
             View::Claude => 7,
+            View::Local => 0,
         }
     }
 
@@ -120,6 +125,7 @@ pub struct Viewport {
     pub queue: Cell<usize>,
     pub airflow: Cell<usize>,
     pub jira: Cell<usize>,
+    pub local: Cell<usize>,
     pub tape: Cell<usize>,
     /// The first row shown of a page's list on view 5 or 6.
     pub page: Cell<usize>,
@@ -197,6 +203,8 @@ pub enum Hit {
     /// A row of view 5 (a run, a DAG) and a ticket of view 6, by their place in the lists.
     AirflowRow(usize),
     Ticket(usize),
+    /// A row of view 0, by its place.
+    Process(usize),
     /// A row of a page open on view 5 — a run, a task — by its place in the page.
     PageRow(usize),
     /// On the month's time: a day's column, and a ticket's row.
@@ -275,6 +283,8 @@ pub enum Event {
     Airflow(Box<crate::airflow::Activity>),
     /// Your Jira tickets (view 6).
     Jira(Box<crate::jira::Board>),
+    /// One read of this machine (view 0).
+    Local(Box<crate::local::Sample>),
     /// What a page of view 5 or 6 asked for, and what came back.
     Detail(crate::detail::Ask, Result<crate::detail::Body, String>),
     Quit,
@@ -378,6 +388,8 @@ pub struct App {
     pub airflow: crate::airflow::Activity,
     /// View 6: your Jira tickets.
     pub jira: crate::jira::Board,
+    /// View 0: this machine.
+    pub local: crate::local::Local,
     /// The row under view 5's cursor, by what it is about — the lists move under it every 15 s —
     /// and its place, for when it is gone.
     airflow_selected: Option<crate::airflow::RowKey>,
@@ -396,6 +408,9 @@ pub struct App {
     pub airflow_pages: Vec<crate::detail::Page>,
     /// What those pages asked for, for the loop to read.
     detail_asks: Vec<crate::detail::Ask>,
+    /// The masthead is drawn outside the terminal — by Cobserve.app's own header — so the screen
+    /// leaves it out.
+    pub outside_chrome: bool,
     /// View 6's page of the month's time by ticket (`t`): the day chosen and the ticket under the
     /// cursor. A ticket opened from it opens over it.
     pub jira_time: Option<TimePage>,
@@ -473,6 +488,7 @@ impl App {
             clipboard: Vec::new(),
             airflow: crate::airflow::Activity::unreachable(crate::airflow::NOT_READ),
             jira: crate::jira::Board::unreachable(crate::jira::NOT_READ),
+            local: crate::local::Local::default(),
             airflow_selected: None,
             airflow_index: 0,
             jira_selected: None,
@@ -484,6 +500,7 @@ impl App {
             airflow_pages: Vec::new(),
             detail_asks: Vec::new(),
             jira_time: None,
+            outside_chrome: false,
         }
     }
 
@@ -1003,6 +1020,11 @@ impl App {
                     self.on_jira(*board)
                 }
             }
+            Event::Local(sample) => {
+                if !self.paused {
+                    self.local.record(*sample)
+                }
+            }
             Event::Detail(ask, result) => self.on_detail(ask, result),
             Event::Notice(message) => {
                 let now = SystemTime::now();
@@ -1479,6 +1501,7 @@ impl App {
                         self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
+                Some(Hit::Process(index)) => self.local.select(index),
                 Some(Hit::Ticket(index)) => {
                     let key = self.jira.rows().get(index).map(|t| t.key.clone());
                     let again = key.is_some() && key == self.jira_selected;
@@ -1544,6 +1567,7 @@ impl App {
                     }
                     View::Airflow => self.move_airflow(delta),
                     View::Jira => self.move_jira(delta),
+                    View::Local => self.move_local(delta),
                     View::Tape => {
                         let last = self.tape.len().saturating_sub(1);
                         self.tape_selection = self.tape_selection.saturating_add_signed(delta).min(last);
@@ -1592,8 +1616,8 @@ impl App {
     fn on_bar_key(&mut self, key: KeyEvent) {
         let closing = std::mem::take(&mut self.claude.closing);
         match key.code {
-            // One numbering for every tab: 1–6 the monitor's views, 7–9 the sessions.
-            KeyCode::Char(c @ '1'..='9') if c as u8 - b'0' <= View::MONITOR => {
+            // One numbering for every tab: 1–6 the monitor's views, 7–9 the sessions, 0 this machine.
+            KeyCode::Char(c @ '0'..='9') if c as u8 - b'0' <= View::MONITOR => {
                 self.claude.mode = Mode::Typing;
                 if let Some(view) = View::from_number(c as u8 - b'0') {
                     self.view = view;
@@ -2280,10 +2304,12 @@ impl App {
         }
 
         let typing_text = matches!(self.claude.mode, Mode::Naming(_) | Mode::Opening(_) | Mode::Finding { .. }) && self.view == View::Claude;
-        // F1–F6 the views, F7–F9 the sessions — from anywhere, Claude's screen too, and with no
-        // key before them: a terminal that keeps ctrl+\ for itself still has these.
-        if let (KeyCode::F(n @ 1..=9), false) = (key.code, typing_text) {
-            if n <= View::MONITOR {
+        // F1–F6 the views, F7–F9 the sessions, F10 this machine — from anywhere, Claude's screen
+        // too, and with no key before them: a terminal that keeps ctrl+\ for itself still has these.
+        if let (KeyCode::F(n @ 1..=10), false) = (key.code, typing_text) {
+            if n == 10 {
+                self.go_to_view(View::Local);
+            } else if n <= View::MONITOR {
                 if let Some(view) = View::from_number(n) {
                     self.go_to_view(view);
                 }
@@ -2374,7 +2400,7 @@ impl App {
                 self.sync_view_state();
                 return;
             }
-            KeyCode::Char(c @ '1'..='9') => {
+            KeyCode::Char(c @ '0'..='9') => {
                 if let Some(view) = View::from_number(c as u8 - b'0') {
                     self.view = view;
                     self.focus = Focus::Tree;
@@ -2415,6 +2441,7 @@ impl App {
             View::Tape => self.on_tape_key(key.code),
             View::Airflow => self.on_airflow_key(key.code),
             View::Jira => self.on_jira_key(key.code),
+            View::Local => self.on_local_key(key.code),
             // Nothing running: ⏎ starts it (above); nothing else to do here.
             View::Claude => {}
         }
@@ -2546,6 +2573,34 @@ impl App {
             }
             _ => current,
         };
+    }
+
+    /// View 0: the cursor, the sort and whether a program is one row.
+    fn on_local_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_local(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_local(1),
+            KeyCode::PageUp => self.move_local(-10),
+            KeyCode::PageDown => self.move_local(10),
+            KeyCode::Home => self.local.select(0),
+            KeyCode::End => self.move_local(isize::MAX / 2),
+            KeyCode::Char('s') => {
+                self.local.sort = match self.local.sort {
+                    crate::local::Sort::Cpu => crate::local::Sort::Memory,
+                    crate::local::Sort::Memory => crate::local::Sort::Cpu,
+                };
+                self.local.select(0);
+            }
+            KeyCode::Char('g') => {
+                self.local.grouped = !self.local.grouped;
+                self.local.select(0);
+            }
+            _ => {}
+        }
+    }
+
+    fn move_local(&mut self, delta: isize) {
+        self.local.select_by(delta);
     }
 
     fn on_tape_key(&mut self, code: KeyCode) {

@@ -1439,6 +1439,67 @@ fn fake_tasks(run: &crate::airflow::Run, now: i64) -> Vec<crate::airflow::TaskRu
         .collect()
 }
 
+/// A made-up laptop for view 0, `step` polls in: the CPU time of each process goes on at its own
+/// pace, so from the second read its cores are the delta form, as on a real one.
+pub fn local(step: u64, at: f64) -> crate::local::Sample {
+    use crate::local::{Memory, Pressure, Process, Sample};
+    const GIB: u64 = 1 << 30;
+    const MIB: u64 = 1 << 20;
+    let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    let renderer = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)";
+    // pid, name, cores it runs at, MiB resident, CPU time it had at the first read
+    let table: [(u32, &str, f64, u64, f64); 14] = [
+        (28932, "/Users/sam/.opencode/bin/opencode", 0.47, 825, 144.0),
+        (28839, "/Users/sam/.opencode/bin/opencode", 0.22, 737, 88.0),
+        (164, "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer", 0.46, 691, 216_253.0),
+        (28807, "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent", 0.19, 432, 50.0),
+        (40112, "/Applications/Cobserve.app/Contents/MacOS/cobserve", 0.07, 48, 25.0),
+        (40110, "/Applications/Cobserve.app/Contents/MacOS/cobserve-desktop", 0.02, 96, 12.0),
+        (343, "/usr/sbin/coreaudiod", 0.04, 38, 34_296.0),
+        (14897, chrome, 0.024, 857, 23_237.0),
+        (15564, renderer, 0.012, 834, 1500.0),
+        (62018, renderer, 0.004, 783, 960.0),
+        (5792, renderer, 0.002, 679, 410.0),
+        (29329, "/Users/sam/.local/bin/claude", 0.07, 387, 9.7),
+        (11989, "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)", 0.007, 728, 1504.0),
+        (37781, "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService", 0.0, 489, 2.0),
+    ];
+    // Each poll is 2 s; a process runs at its cores, give or take a quarter, poll by poll.
+    let wobble = |pid: u32, k: u64| 1.0 + 0.25 * ((k as f64 * 0.7 + f64::from(pid % 7)).sin());
+    let poll = 2.0;
+    let used = |pid: u32, cores: f64| (1..=step).map(|k| cores * wobble(pid, k) * poll).sum::<f64>();
+    let processes = table
+        .iter()
+        .map(|&(pid, command, cores, mib, start)| Process {
+            pid,
+            ppid: if command.contains("Helper") { 14897 } else { 1 },
+            user: if pid < 400 { "_system".into() } else { "sam".into() },
+            pcpu: cores * 100.0,
+            rss: mib * MIB,
+            cpu_time_s: start + used(pid, cores),
+            command: command.into(),
+        })
+        .collect();
+    // 10 cores at 100 ticks a second: what the processes use, and the kernel's 0.9 cores on top —
+    // the rest.
+    let busy_s: f64 = table.iter().map(|t| used(t.0, t.2)).sum::<f64>() + 0.9 * poll * step as f64;
+    let busy = (busy_s * 100.0) as u64;
+    let idle = (10.0 * poll * step as f64 * 100.0) as u64 - busy;
+    Sample {
+        at,
+        host: "sam-macbook.local".into(),
+        cores: 10,
+        ticks: Some([busy * 3 / 4, busy / 4, idle, 0]),
+        memory: Some(Memory { total: 32 * GIB, app: 12_290 * MIB, wired: 2_890 * MIB, compressed: 12_050 * MIB, cached: 3_760 * MIB }),
+        swap: Some((2_230 * MIB, 3 * GIB)),
+        pressure: Some(Pressure { level: 1, free_pct: 50 }),
+        load: Some([3.21, 3.05, 2.98]),
+        uptime_s: Some(31 * 86_400 + 2 * 3600),
+        processes,
+        error: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1615,4 +1676,3 @@ mod tests {
         assert!(sql.starts_with("-- top users by memory\nSELECT user") && sql.ends_with(';'), "{sql}");
     }
 }
-
