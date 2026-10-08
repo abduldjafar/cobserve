@@ -45,6 +45,9 @@ pub struct Reply {
     pub model: String,
     /// The folder's name the session worked in.
     pub project: String,
+    /// The conversation it is of: Claude Code's session id, OpenCode's — what a session of view 7
+    /// knows its own by.
+    pub session: String,
     pub input: u64,
     pub output: u64,
     /// Cache written, for five minutes and for an hour.
@@ -153,6 +156,17 @@ pub struct Summary {
 }
 
 impl Usage {
+    /// Today's tokens and dollars by conversation, for view 7's list.
+    pub fn by_session(&self, now: i64, offset_s: i64) -> std::collections::HashMap<String, Tally> {
+        let day_of = |at: i64| (at + offset_s).div_euclid(86_400);
+        let today = day_of(now);
+        let mut out: std::collections::HashMap<String, Tally> = std::collections::HashMap::new();
+        for reply in self.replies.iter().filter(|r| !r.session.is_empty() && day_of(r.at) == today) {
+            out.entry(reply.session.clone()).or_default().add(reply);
+        }
+        out
+    }
+
     /// The panel's numbers at `now`, days on a clock `offset_s` east of UTC.
     pub fn summary(&self, now: i64, offset_s: i64) -> Summary {
         let day_of = |at: i64| (at + offset_s).div_euclid(86_400);
@@ -252,6 +266,7 @@ pub fn claude_line(line: &str) -> Option<(String, Reply)> {
             at,
             model: model.to_string(),
             project: project_of(cwd),
+            session: value.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string(),
             input: n(usage.get("input_tokens")),
             output: n(usage.get("output_tokens")),
             cache_write_5m: write_5m,
@@ -263,7 +278,7 @@ pub fn claude_line(line: &str) -> Option<(String, Reply)> {
 }
 
 /// One row of OpenCode's replies, as `sources/usage.rs` asks for them (tab-separated): when (ms),
-/// model, cost, input, output, reasoning, cache read, cache write, folder.
+/// model, cost, input, output, reasoning, cache read, cache write, folder, session.
 pub fn opencode_row(row: &str) -> Option<Reply> {
     let f: Vec<&str> = row.split('\t').collect();
     if f.len() < 9 {
@@ -282,6 +297,7 @@ pub fn opencode_row(row: &str) -> Option<Reply> {
         cache_write_5m: n(f[7]),
         cache_write_1h: 0,
         project: project_of(f[8]),
+        session: f.get(9).map(|s| s.trim().to_string()).unwrap_or_default(),
     })
 }
 
@@ -303,9 +319,9 @@ mod tests {
 
     #[test]
     fn a_claude_code_line_reads_and_its_price_is_the_api_s() {
-        let line = r#"{"type":"assistant","requestId":"req_1","timestamp":"2026-10-05T15:09:14.684Z","cwd":"/Users/me/code/cobserve","message":{"id":"msg_1","model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":18033,"cache_read_input_tokens":25653,"output_tokens":371,"cache_creation":{"ephemeral_1h_input_tokens":18033,"ephemeral_5m_input_tokens":0}}}}"#;
+        let line = r#"{"type":"assistant","sessionId":"5f0c","requestId":"req_1","timestamp":"2026-10-05T15:09:14.684Z","cwd":"/Users/me/code/cobserve","message":{"id":"msg_1","model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":18033,"cache_read_input_tokens":25653,"output_tokens":371,"cache_creation":{"ephemeral_1h_input_tokens":18033,"ephemeral_5m_input_tokens":0}}}}"#;
         let (id, r) = claude_line(line).unwrap();
-        assert_eq!(id, "msg_1:req_1");
+        assert_eq!((id.as_str(), r_session(line)), ("msg_1:req_1", "5f0c".to_string()));
         assert_eq!((r.input, r.output, r.cache_write_1h, r.cache_read, r.project.as_str()), (2, 371, 18033, 25653, "cobserve"));
         assert_eq!(r.tokens(), 2 + 371 + 18033 + 25653);
         // $4 in, $20 out, $0.20 cache read, 1h writes at 2× input.
@@ -315,9 +331,14 @@ mod tests {
         assert_eq!(price("deepseek-v4.1-flash"), None);
     }
 
+    fn r_session(line: &str) -> String {
+        claude_line(line).unwrap().1.session
+    }
+
     #[test]
     fn an_opencode_row_keeps_its_own_cost() {
-        let r = opencode_row("1791440645097\tdeepseek-v4.1-flash\t0.002185542\t529\t442\t500\t513664\t0\t/Users/me/code/apitap-lib").unwrap();
+        let r = opencode_row("1791440645097\tdeepseek-v4.1-flash\t0.002185542\t529\t442\t500\t513664\t0\t/Users/me/code/apitap-lib\tses_42").unwrap();
+        assert_eq!(r.session, "ses_42");
         assert_eq!((r.at, r.input, r.output, r.cache_read, r.project.as_str()), (1_791_440_645, 529, 942, 513_664, "apitap-lib"));
         assert_eq!(r.dollars(), Some(0.002185542));
         assert_eq!(opencode_row("short\trow"), None);

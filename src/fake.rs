@@ -1532,6 +1532,7 @@ pub fn usage(now: i64) -> crate::usage::Usage {
                 cache_write_1h: if tool == Tool::Claude { 4_000 + (i as u64 % 4) * 900 } else { 0 },
                 cache_read: 60_000 + (i as u64 % 11) * 9_000,
                 cost: (tool == Tool::OpenCode).then_some(0.0021),
+                session: String::new(),
             });
         }
     }

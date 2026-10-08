@@ -302,7 +302,9 @@ From six sessions on more than one project the list sorts them **by project**: a
 two or more sessions is a group under its folder's name, with how many there are, `● n` when some
 rang, and its branch when they share one; the rest sit under `other`. A session is a line, the one
 on screen keeping where it works, and `ctrl+\` `↑` `↓` walk them in that order. `⌕ find one ctrl+\ /`
-over the list is the way to the one you want by name, folder, kind, server or number.
+over the list is the way to the one you want by name, folder, kind, server or number. Over it
+too, what Claude Code and OpenCode used today (`✻ 287M today · ≈ $191 · 5h 1h26m`), and on each
+session's line, faint, the tokens its own conversation used today — view 0's AI panel has the rest.
 
 The fleet stays in sight above the sessions, a card for every node — the worst first, marked
 `✖` or `▲` (a quiet one `●`), with its lag when it is behind — and on every card its memory and

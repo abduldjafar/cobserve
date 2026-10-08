@@ -128,7 +128,7 @@ fn opencode(now: i64) -> Result<Vec<Reply>, String> {
     let sql = format!(
         "SELECT m.time_created, json_extract(m.data,'$.modelID'), json_extract(m.data,'$.cost'), \
          json_extract(m.data,'$.tokens.input'), json_extract(m.data,'$.tokens.output'), json_extract(m.data,'$.tokens.reasoning'), \
-         json_extract(m.data,'$.tokens.cache.read'), json_extract(m.data,'$.tokens.cache.write'), s.directory \
+         json_extract(m.data,'$.tokens.cache.read'), json_extract(m.data,'$.tokens.cache.write'), s.directory, m.session_id \
          FROM message m JOIN session s ON s.id = m.session_id \
          WHERE m.time_created >= {since_ms} AND json_extract(m.data,'$.role') = 'assistant'"
     );
