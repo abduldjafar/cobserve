@@ -163,6 +163,18 @@ pub fn state(app: &App) -> State {
         chips.insert(at, chip);
     }
 
+    // What Claude Code and OpenCode used today, and the plan's window — view 0's AI panel.
+    if app.usage.read {
+        let summary = app.usage.summary(now, app.time.offset_s(now));
+        let used: u64 = summary.today.values().map(|t| t.tokens).sum();
+        let mut text = format!("today {} tokens", crate::usage::tokens(used));
+        if let Some(w) = summary.window {
+            text.push_str(&format!(" · 5h {} left", crate::fmt::dur((w.end - now).max(0) as f64)));
+        }
+        let at = chips.iter().position(|c| c.id == "logged").unwrap_or(chips.len());
+        chips.insert(at, Chip { id: "ai", view: 0, label: "AI", text, sev: "none" });
+    }
+
     let status = match app.snapshot() {
         Some(_) => match crate::insight::overall(&app.insights()) {
             Severity::Crit => "crit",

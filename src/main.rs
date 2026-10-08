@@ -24,6 +24,7 @@ mod history;
 mod insight;
 mod jira;
 mod local;
+mod usage;
 mod model;
 mod prayer;
 mod saved;
@@ -965,6 +966,8 @@ fn spawn_sources(
 
     // This machine, read as often as the fleet: no configuration, nothing on the network.
     tokio::spawn(sources::local::run(config.poll, tx.clone()));
+    // What Claude Code and OpenCode used, every minute, on a thread of its own.
+    sources::usage::spawn(tx.clone());
 
     // Airflow and Jira are optional (§9, like Redash): unconfigured, their views say how.
     match sources::airflow::AirflowSource::new(&config.airflow) {
@@ -1086,6 +1089,10 @@ async fn fake_loop(
             _ = polling.tick() => {
                 if tx.send(Event::Snapshot(Box::new(fake.snapshot()))).is_err() {
                     return;
+                }
+                if local_step == 0 {
+                    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+                    let _ = tx.send(Event::Usage(Box::new(fake::usage(at))));
                 }
                 local_step += 1;
                 let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());

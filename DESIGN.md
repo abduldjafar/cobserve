@@ -939,6 +939,19 @@ or from a slope over the last minutes of it.
   failed one failed; below, a thread per DAG across the 24 hours (quarter-hour cells on a wide
   terminal) under the clock's hours, its rhythm and next run after it. Same rows, order, keys and
   drawer as the narrow views, which stay below 140 columns.
+- **AI usage** (`src/usage.rs`, `src/sources/usage.rs`, `src/ui/usage.rs`): what Claude Code and
+  OpenCode used on this machine, beside view 0's machine from 140 columns (a line under its
+  pressure below that) and as a chip in the app's status bar. Read every minute on a thread of
+  its own, usage numbers only: of Claude Code's transcripts (`~/.claude/projects/**/*.jsonl`,
+  each read once, then only what was appended) the lines with `usage`, deduplicated by message
+  and request id; of OpenCode's database, opened read-only with `sqlite3`, its assistant
+  messages' tokens and recorded cost. The arithmetic: a reply's tokens are input + output +
+  cache written + cache read; OpenCode's dollars are its own; Claude Code's are only ever *≈ at
+  API prices* — list input, output and cache-read prices, cache writes at 1.25× input (5 min) or
+  2× (1 h); a model not priced counts its tokens and marks the sum `≥`. The 5-hour window starts
+  on the hour of the first reply after the last window ended. On screen: each program's day with
+  its parts, the window's time left, the last seven days as columns, today by model and by
+  project.
 - **Cards** (`src/ui/cards.rs`): from 150 columns and 30 rows the band's lines become a card
   each — ClickHouse, Redash and this machine side by side in rounded frames, in the rows the
   shelf's padding took. The numbers are the lines' own (§5 and the LOCAL arithmetic above), set

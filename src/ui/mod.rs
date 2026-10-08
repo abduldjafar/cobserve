@@ -40,6 +40,7 @@ mod map;
 mod nodes;
 mod queue;
 mod tape;
+mod usage;
 pub mod widgets;
 
 #[cfg(test)]
