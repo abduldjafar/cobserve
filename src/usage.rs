@@ -150,9 +150,10 @@ pub struct Summary {
     /// The last seven days, oldest first, each day's tokens by program.
     pub days: Vec<BTreeMap<Tool, u64>>,
     pub week: Tally,
-    /// Today's tokens by model and by project, the most first.
-    pub models: Vec<(String, Tool, u64)>,
-    pub projects: Vec<(String, u64)>,
+    /// Today by model, the most tokens first.
+    pub models: Vec<(String, Tool, Tally)>,
+    /// Today by project, each program's share of it: the most tokens first.
+    pub projects: Vec<(String, BTreeMap<Tool, Tally>)>,
 }
 
 impl Usage {
@@ -172,8 +173,8 @@ impl Usage {
         let day_of = |at: i64| (at + offset_s).div_euclid(86_400);
         let today = day_of(now);
         let mut summary = Summary { days: vec![BTreeMap::new(); 7], ..Summary::default() };
-        let mut models: BTreeMap<(String, Tool), u64> = BTreeMap::new();
-        let mut projects: BTreeMap<String, u64> = BTreeMap::new();
+        let mut models: BTreeMap<(String, Tool), Tally> = BTreeMap::new();
+        let mut projects: BTreeMap<String, BTreeMap<Tool, Tally>> = BTreeMap::new();
         for reply in &self.replies {
             let Some(tool) = reply.tool else { continue };
             let ago = today - day_of(reply.at);
@@ -184,15 +185,16 @@ impl Usage {
             summary.week.add(reply);
             if ago == 0 {
                 summary.today.entry(tool).or_default().add(reply);
-                *models.entry((short_model(&reply.model), tool)).or_default() += reply.tokens();
-                *projects.entry(reply.project.clone()).or_default() += reply.tokens();
+                models.entry((short_model(&reply.model), tool)).or_default().add(reply);
+                projects.entry(reply.project.clone()).or_default().entry(tool).or_default().add(reply);
             }
         }
         summary.window = window(&self.replies, now);
-        let mut models: Vec<(String, Tool, u64)> = models.into_iter().map(|((m, t), n)| (m, t, n)).collect();
-        models.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
-        let mut projects: Vec<(String, u64)> = projects.into_iter().collect();
-        projects.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let mut models: Vec<(String, Tool, Tally)> = models.into_iter().map(|((m, t), n)| (m, t, n)).collect();
+        models.sort_by(|a, b| b.2.tokens.cmp(&a.2.tokens).then(a.0.cmp(&b.0)));
+        let total = |by: &BTreeMap<Tool, Tally>| by.values().map(|t| t.tokens).sum::<u64>();
+        let mut projects: Vec<(String, BTreeMap<Tool, Tally>)> = projects.into_iter().collect();
+        projects.sort_by(|a, b| total(&b.1).cmp(&total(&a.1)).then(a.0.cmp(&b.0)));
         summary.models = models;
         summary.projects = projects;
         summary
@@ -369,7 +371,12 @@ mod tests {
         assert_eq!(s.days[3][&Tool::Claude], 2_000_000, "three days ago");
         assert_eq!(s.week.tokens, 4_003_510 + 500_900 + 2_000_000, "nine days ago is not in the week");
         assert_eq!(s.models[0].0, "fable-5-1");
-        assert_eq!(s.projects[0], ("airflow-dags".to_string(), 3_000_510));
+        assert_eq!(s.projects[0].0, "airflow-dags");
+        assert_eq!(s.projects[0].1[&Tool::Claude].tokens, 3_000_510);
+        assert!(!s.projects[0].1.contains_key(&Tool::OpenCode));
+        let apitap = s.projects.iter().find(|p| p.0 == "apitap-lib").unwrap();
+        assert_eq!(apitap.1[&Tool::OpenCode].tokens, 500_900, "each program's share of a project");
+        assert!(s.models[0].2.dollars > 0.0, "a model's day has its price");
         assert_eq!(window(&usage.replies, NOW + 2 * 3600), None, "the window has ended");
         assert_eq!((tokens(4_003_510), tokens(850_000), tokens(312)), ("4.0M".to_string(), "850k".to_string(), "312".to_string()));
         assert_eq!((dollars(18.4), dollars(0.0021)), ("$18.40".to_string(), "$0.002".to_string()));

@@ -2618,7 +2618,15 @@ fn view_zero_says_what_claude_code_and_opencode_used() {
     assert!(row(" replies").contains("in ") && row(" replies").contains("cache "), "{screen}");
     assert!(row("5h window").contains(" left · "), "{screen}");
     assert!(!row("last 7 days").is_empty() && screen.contains("by model") && screen.contains("by project"), "{screen}");
-    assert!(row("by model").contains("by project"), "side by side");
+    // By project, each program in a column of its own, the day's all under them.
+    let head = row("by project");
+    assert!(head.contains("✻ Claude Code") && head.contains("▣ OpenCode") && head.contains("total"), "{head}");
+    let project = |name: &str| screen.lines().find(|l| l.contains(&format!("  {name} ")) && l.contains("│ ") && l.split('│').nth(1).is_some_and(|p| p.contains(name))).unwrap_or_else(|| panic!("{name}: {screen}")).to_string();
+    let cobserve = project("cobserve");
+    assert!(cobserve.contains("≈ $") && cobserve.contains("$0.01"), "both programs on one project: {cobserve}");
+    assert!(project("airflow-dags").contains('—'), "a program that did not work there: {screen}");
+    assert!(row("  all ").contains("≈ $"), "{screen}");
+    assert!(row("by model").contains("tokens") && row("by model").contains("cost"), "{screen}");
     assert!(screen.contains("≈ Claude Code at API prices"), "what ≈ means: {screen}");
     // Narrow: a line under the pressure.
     let narrow = render(&app, 120, 36);
