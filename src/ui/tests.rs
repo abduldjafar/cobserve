@@ -2665,3 +2665,25 @@ fn the_session_list_says_what_each_session_used_today() {
     // On the session's row: what it used, its own conversation only.
     assert!(row("integrate-jira-api").contains("1.2M "), "{screen}");
 }
+
+#[test]
+fn the_ai_is_in_sight_from_every_view() {
+    let mut app = app_with_local();
+    let now = app.now();
+    app.update(Event::Usage(Box::new(crate::fake::usage(now))));
+    // View 1, wide and tall: on the This Mac card, in place of the busiest process.
+    let screen = render(&app, 200, 40);
+    let card = screen.lines().find(|l| l.contains("[0] local")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(card.contains("✻ ") && card.contains(" · 5h ") && card.contains("▣ "), "{card}");
+    assert!(!card.contains("top "), "the busiest process gives way: {card}");
+    // Narrower: on the band's LOCAL line.
+    let narrow = render(&app, 140, 40);
+    let local = narrow.lines().find(|l| l.contains("LOCAL ")).unwrap_or_else(|| panic!("{narrow}"));
+    assert!(local.contains("✻ ") && local.contains("▣ "), "{local}");
+    // On view 5 too: the shelf is on every view.
+    app.update(key(KeyCode::Char('5')));
+    assert!(render(&app, 200, 40).lines().any(|l| l.contains("[0] local") && l.contains("✻ ")));
+    // In the app's status bar, early, where a narrow window keeps it.
+    let ids: Vec<&str> = crate::desktop::state(&app).chips.iter().map(|c| c.id).collect();
+    assert_eq!(ids.iter().position(|i| *i == "ai"), ids.iter().position(|i| *i == "redash").map(|i| i + 1), "{ids:?}");
+}

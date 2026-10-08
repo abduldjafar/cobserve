@@ -302,3 +302,30 @@ pub fn by_session(app: &App) -> std::collections::HashMap<String, u64> {
     let now = app.now();
     app.usage.by_session(now, app.time.offset_s(now)).into_iter().map(|(id, t)| (id, t.tokens)).collect()
 }
+
+/// The AI at a glance, for the shelf on every view: `✻ 287M · 5h 1h26m   ▣ 54M` — today's tokens
+/// of each program that used any, and Claude Code's window left. `None` before the first read or
+/// on a day nothing was used.
+pub fn glance(app: &App, theme: &Theme) -> Option<Cells> {
+    if !app.usage.read {
+        return None;
+    }
+    let now = app.now();
+    let summary = app.usage.summary(now, app.time.offset_s(now));
+    let mut cells = Cells::new();
+    for tool in [Tool::Claude, Tool::OpenCode] {
+        let Some(tally) = summary.today.get(&tool).copied().filter(|t| t.replies > 0) else { continue };
+        if cells.width() > 0 {
+            cells.push("   ", Style::default());
+        }
+        cells.push(format!("{} ", tool.glyph()), tool_style(tool, theme));
+        cells.push(tokens(tally.tokens), theme.text2());
+        if tool == Tool::Claude
+            && let Some(w) = summary.window
+        {
+            cells.push(" · 5h ", theme.faint());
+            cells.push(crate::fmt::dur((w.end - now).max(0) as f64), theme.muted());
+        }
+    }
+    (cells.width() > 0).then_some(cells)
+}

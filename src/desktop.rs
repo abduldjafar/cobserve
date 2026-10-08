@@ -171,7 +171,8 @@ pub fn state(app: &App) -> State {
         if let Some(w) = summary.window {
             text.push_str(&format!(" · 5h {} left", crate::fmt::dur((w.end - now).max(0) as f64)));
         }
-        let at = chips.iter().position(|c| c.id == "logged").unwrap_or(chips.len());
+        // Early in the bar, after the fleet and Redash: the chips that do not fit are the last ones.
+        let at = chips.iter().position(|c| c.id == "redash").map_or(chips.len().min(1), |i| i + 1);
         chips.insert(at, Chip { id: "ai", view: 0, label: "AI", text, sev: "none" });
     }
 
