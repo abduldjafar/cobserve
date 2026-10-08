@@ -2597,6 +2597,7 @@ fn dump_usage() {
     let mut app = app_with_local();
     let now = app.now();
     app.update(Event::Usage(Box::new(crate::fake::usage(now))));
+    app.update(Event::Limits(Box::new(crate::fake::limits(now))));
     app.update(key(KeyCode::Char('0')));
     println!("{}", render(&app, 172, 48));
     println!("{}", render(&app, 120, 36));
@@ -2696,4 +2697,32 @@ fn the_ai_is_in_sight_from_every_view() {
     // In the app's status bar, early, where a narrow window keeps it.
     let ids: Vec<&str> = crate::desktop::state(&app).chips.iter().map(|c| c.id).collect();
     assert_eq!(ids.iter().position(|i| *i == "ai"), ids.iter().position(|i| *i == "redash").map(|i| i + 1), "{ids:?}");
+}
+
+#[test]
+fn the_claude_plan_s_limits_show_where_its_usage_does() {
+    let mut app = app_with_local();
+    let now = app.now();
+    app.update(Event::Usage(Box::new(crate::fake::usage(now))));
+    app.update(Event::Limits(Box::new(crate::fake::limits(now))));
+    app.update(key(KeyCode::Char('0')));
+    let screen = render(&app, 172, 48);
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
+    // The plan by name, and a line a limit: its share, when it resets.
+    assert!(row("✻ Claude Code · Max 5x").contains(" tokens"), "{screen}");
+    let session = row("session  ");
+    assert!(session.contains(" 11% of it") && session.contains("resets "), "{session}");
+    assert!(row("this week  ").contains(" 70% of it"), "{screen}");
+    assert!(row("Fable this week").contains(" 29% of it"), "{screen}");
+    assert!(!screen.contains("5h window"), "the plan's own figures in its place");
+    // On the shelf, in the sessions' list and in the app's chip: the session and the week.
+    assert!(render(&app, 200, 40).lines().any(|l| l.contains("[0] local") && l.contains("session 11%") && l.contains("week 70%")));
+    let chip = crate::desktop::state(&app).chips.into_iter().find(|c| c.id == "ai").unwrap();
+    assert!(chip.text.contains("session 11% · week 70%") && chip.sev == "none", "{chip:?}");
+    // Not live: from when, and why.
+    let mut stale = crate::fake::limits(now - 4 * 86_400);
+    stale.live = false;
+    stale.note = Some("Claude Code's login has run out until it next runs".into());
+    app.update(Event::Limits(Box::new(stale)));
+    assert!(render(&app, 172, 48).contains("as Claude Code last saw them, 4d00h ago"), "{}", render(&app, 172, 48));
 }

@@ -23,6 +23,7 @@ mod folders;
 mod history;
 mod insight;
 mod jira;
+mod limits;
 mod local;
 mod usage;
 mod model;
@@ -968,6 +969,8 @@ fn spawn_sources(
     tokio::spawn(sources::local::run(config.poll, tx.clone()));
     // What Claude Code and OpenCode used, every minute, on a thread of its own.
     sources::usage::spawn(tx.clone());
+    // The Claude plan's limits, every five minutes, with Claude Code's own login.
+    tokio::spawn(sources::limits::run(tx.clone()));
 
     // Airflow and Jira are optional (§9, like Redash): unconfigured, their views say how.
     match sources::airflow::AirflowSource::new(&config.airflow) {
@@ -1093,6 +1096,7 @@ async fn fake_loop(
                 if local_step == 0 {
                     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
                     let _ = tx.send(Event::Usage(Box::new(fake::usage(at))));
+                    let _ = tx.send(Event::Limits(Box::new(fake::limits(at))));
                 }
                 local_step += 1;
                 let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
