@@ -2627,6 +2627,8 @@ fn view_zero_says_what_claude_code_and_opencode_used() {
     assert!(project("airflow-dags").contains('—'), "a program that did not work there: {screen}");
     assert!(row("  all ").contains("≈ $"), "{screen}");
     assert!(row("by model").contains("tokens") && row("by model").contains("cost"), "{screen}");
+    // This month so far and the last, in the same columns.
+    assert!(row("by month").contains("✻ Claude Code") && row(" to the ").contains("≈ $"), "{screen}");
     assert!(screen.contains("≈ Claude Code at API prices"), "what ≈ means: {screen}");
     // Narrow: a line under the pressure.
     let narrow = render(&app, 120, 36);
