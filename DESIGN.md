@@ -955,6 +955,17 @@ or from a slope over the last minutes of it.
   columns as the projects, today by model with its
   money, and by project with each program's tokens and money in a column of its own, the
   project's total and the day's all under them.
+- **The Claude plan's limits** (`src/limits.rs`, `src/sources/limits.rs`): the plan by name
+  (`Max 5x`, from Claude Code's login) and each of its limits — the session, the week, a model's
+  own week — as `/usage` shows them: the share used, of a limit Anthropic does not publish (so
+  each line says which limit it is a share of), and when it resets; coloured by §7's 75 and 90.
+  Asked every five minutes of the endpoint `/usage` asks (`api.anthropic.com/api/oauth/usage`),
+  with Claude Code's login from the macOS Keychain: one GET, the token never shown, logged, kept,
+  passed on or refreshed (a refresh would sign Claude Code out). When the login has run out or the
+  answer does not come, Claude Code's last copy in `~/.claude.json` stands in, with its age and
+  why. In view 0's panel under Claude Code, and as `session n% · week n%` on the shelf, over the
+  sessions and in the app's chip. OpenCode Go's plan limits are not among them: neither its
+  command line nor an API its login reaches has them — they are on opencode.ai's own pages.
 - **Cards** (`src/ui/cards.rs`): from 150 columns and 30 rows the band's lines become a card
   each — ClickHouse, Redash and this machine side by side in rounded frames, in the rows the
   shelf's padding took. The numbers are the lines' own (§5 and the LOCAL arithmetic above), set

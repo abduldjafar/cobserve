@@ -4,6 +4,7 @@
 pub mod airflow;
 pub mod clickhouse;
 pub mod jira;
+pub mod limits;
 pub mod local;
 pub mod usage;
 pub mod redash;

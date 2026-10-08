@@ -168,12 +168,21 @@ pub fn state(app: &App) -> State {
         let summary = app.usage.summary(now, app.time.offset_s(now));
         let used: u64 = summary.today.values().map(|t| t.tokens).sum();
         let mut text = format!("today {} tokens", crate::usage::tokens(used));
-        if let Some(w) = summary.window {
-            text.push_str(&format!(" · 5h {} left", crate::fmt::dur((w.end - now).max(0) as f64)));
+        // The plan's session and week when they are known, the window worked out here else.
+        let plan = app.limits.as_ref().filter(|p| !p.limits.is_empty());
+        match (plan, summary.window) {
+            (Some(plan), _) => text.push_str(&format!(" · {}", plan.short())),
+            (None, Some(w)) => text.push_str(&format!(" · 5h {} left", crate::fmt::dur((w.end - now).max(0) as f64))),
+            _ => {}
         }
+        let severity = plan.map_or("none", |p| match p.severity() {
+            Severity::Crit => "crit",
+            Severity::Warn => "warn",
+            _ => "none",
+        });
         // Early in the bar, after the fleet and Redash: the chips that do not fit are the last ones.
         let at = chips.iter().position(|c| c.id == "redash").map_or(chips.len().min(1), |i| i + 1);
-        chips.insert(at, Chip { id: "ai", view: 0, label: "AI", text, sev: "none" });
+        chips.insert(at, Chip { id: "ai", view: 0, label: "AI", text, sev: severity });
     }
 
     let status = match app.snapshot() {

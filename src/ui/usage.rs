@@ -67,7 +67,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 
     for tool in [Tool::Claude, Tool::OpenCode] {
         let tally = summary.today.get(&tool).copied().unwrap_or_default();
-        lines.extend(program(tool, &tally, &summary, now, theme, width));
+        lines.extend(program(tool, &tally, &summary, app, theme, width));
         lines.push(Line::from(""));
     }
 
@@ -98,10 +98,15 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 }
 
 /// A program's day: its mark, name, tokens and money; its parts under; Claude Code's window.
-fn program(tool: Tool, tally: &Tally, summary: &Summary, now: i64, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+fn program(tool: Tool, tally: &Tally, summary: &Summary, app: &App, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let now = app.now();
+    let plan = app.limits.as_ref().filter(|_| tool == Tool::Claude);
     let mut head = Cells::new();
     head.push(format!("{} ", tool.glyph()), tool_style(tool, theme));
     head.push(tool.name(), theme.text());
+    if let Some(plan) = plan.filter(|p| !p.plan.is_empty()) {
+        head.push(format!(" · {}", plan.plan), theme.muted());
+    }
     let (money, _, _) = money(tool, tally);
     let used = format!("{} tokens", tokens(tally.tokens));
     let middle = width.saturating_sub(money.len()).saturating_sub(used.len() + 4);
@@ -129,7 +134,10 @@ fn program(tool: Tool, tally: &Tally, summary: &Summary, now: i64, theme: &Theme
     }
     out.push(parts.line(width, Style::default()));
 
-    if tool == Tool::Claude
+    // The plan's own limits, as `/usage` shows them; without them, the window worked out here.
+    if let Some(plan) = plan.filter(|p| !p.limits.is_empty()) {
+        out.extend(plan_lines(plan, app, theme, width));
+    } else if tool == Tool::Claude
         && let Some(window) = summary.window
     {
         let mut line = Cells::new();
@@ -142,6 +150,49 @@ fn program(tool: Tool, tally: &Tally, summary: &Summary, now: i64, theme: &Theme
         line.push(format!("  {}", crate::fmt::dur(left as f64)), theme.text2());
         line.push(" left · ", theme.faint());
         line.push(tokens(window.tally.tokens), theme.text2());
+        out.push(line.line(width, Style::default()));
+    }
+    out
+}
+
+/// A line a limit of the plan: what it is, a bar of how much is used — coloured by §7's 75 and 90
+/// — the share of that limit, and when it resets; under them, when they are not live, from when.
+///
+/// ```text
+///   session          ━━╸━━━━━━━━━━━━━━━━━  11% of it   resets 20:39
+///   this week        ━━━━━━━━━━━━━━╸━━━━━━  70% of it   resets Sun 19:59
+///   Fable this week  ━━━━━━╸━━━━━━━━━━━━━━  29% of it   resets Sun 19:59
+/// ```
+fn plan_lines(plan: &crate::limits::PlanLimits, app: &App, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let now = app.now();
+    let label_w = plan.limits.iter().map(|l| crate::fmt::width(&l.label)).max().unwrap_or(7).max(7);
+    let mut out = Vec::new();
+    for limit in &plan.limits {
+        let sev = crate::severity::node(Some(limit.percent));
+        let mut line = Cells::new();
+        line.push("  ", Style::default());
+        line.cell(&limit.label, label_w + 2, theme.faint());
+        let resets = limit.resets_at.map(|at| {
+            let fmt = if at - now < 20 * 3600 { "%H:%M" } else { "%a %H:%M" };
+            format!("resets {}", app.time.format(at, fmt))
+        });
+        let tail = 4 + 8 + resets.as_ref().map_or(0, |r| r.chars().count() + 3);
+        let bar = width.saturating_sub(line.width() + tail).clamp(6, 24);
+        line.spans(thin_bar(Some(limit.percent), bar, theme.bar_fill(sev), theme));
+        line.push(format!("  {:>3.0}%", limit.percent), theme.sev(sev).add_modifier(Modifier::BOLD));
+        line.push(" of it", theme.faint());
+        if let Some(resets) = resets {
+            line.push(format!("   {resets}"), theme.muted());
+        }
+        out.push(line.line(width, Style::default()));
+    }
+    if !plan.live {
+        let mut line = Cells::new();
+        let age = crate::fmt::dur((now - plan.as_of).max(0) as f64);
+        line.push(format!("  as Claude Code last saw them, {age} ago"), theme.faint());
+        if let Some(why) = &plan.note {
+            line.push(format!(" · {why}"), theme.faint());
+        }
         out.push(line.line(width, Style::default()));
     }
     out
@@ -361,10 +412,14 @@ pub fn line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
         cells.push(tokens(tally.tokens), theme.strong());
         cells.push(if i == 0 { " today " } else { " " }, theme.faint());
         cells.push(money(tool, &tally).0, theme.text2());
-        if tool == Tool::Claude
-            && let Some(w) = summary.window
-        {
-            cells.push(format!(" · 5h {} left", crate::fmt::dur((w.end - now).max(0) as f64)), theme.faint());
+        if tool == Tool::Claude {
+            match app.limits.as_ref().map(|p| p.short()).filter(|s| !s.is_empty()) {
+                Some(short) => cells.push(format!(" · {short}"), theme.faint()),
+                None => match summary.window {
+                    Some(w) => cells.push(format!(" · 5h {} left", crate::fmt::dur((w.end - now).max(0) as f64)), theme.faint()),
+                    None => &mut cells,
+                },
+            };
         }
     }
     cells.line(width, Style::default())
@@ -390,11 +445,8 @@ pub fn sidebar_lines(app: &App, theme: &Theme, width: usize) -> Vec<Line<'static
         cells.push(tokens(tally.tokens), theme.text2());
         cells.push(" today · ", theme.faint());
         cells.push(money(tool, &tally).0, theme.muted());
-        if tool == Tool::Claude
-            && let Some(w) = summary.window
-        {
-            cells.push(" · 5h ", theme.faint());
-            cells.push(crate::fmt::dur((w.end - now).max(0) as f64), theme.muted());
+        if tool == Tool::Claude {
+            limit_glance(&mut cells, app, &summary, now, theme);
         }
         out.push(cells.line(width, Style::default()));
     }
@@ -427,12 +479,31 @@ pub fn glance(app: &App, theme: &Theme) -> Option<Cells> {
         }
         cells.push(format!("{} ", tool.glyph()), tool_style(tool, theme));
         cells.push(tokens(tally.tokens), theme.text2());
-        if tool == Tool::Claude
-            && let Some(w) = summary.window
-        {
-            cells.push(" · 5h ", theme.faint());
-            cells.push(crate::fmt::dur((w.end - now).max(0) as f64), theme.muted());
+        if tool == Tool::Claude {
+            limit_glance(&mut cells, app, &summary, now, theme);
         }
     }
     (cells.width() > 0).then_some(cells)
+}
+
+/// After Claude Code's tokens in a short line: the plan's session and week, coloured by how near
+/// their limits — else the window worked out here.
+fn limit_glance(cells: &mut Cells, app: &App, summary: &Summary, now: i64, theme: &Theme) {
+    match app.limits.as_ref().filter(|p| !p.limits.is_empty()) {
+        Some(plan) => {
+            for (i, label) in ["session", "this week"].into_iter().enumerate() {
+                if let Some(limit) = plan.limits.iter().find(|l| l.label == label) {
+                    let sev = crate::severity::node(Some(limit.percent));
+                    cells.push(if i == 0 { " · session " } else { " · week " }, theme.faint());
+                    cells.push(format!("{:.0}%", limit.percent), if sev.is_problem() { theme.sev(sev).add_modifier(Modifier::BOLD) } else { theme.muted() });
+                }
+            }
+        }
+        None => {
+            if let Some(w) = summary.window {
+                cells.push(" · 5h ", theme.faint());
+                cells.push(crate::fmt::dur((w.end - now).max(0) as f64), theme.muted());
+            }
+        }
+    }
 }

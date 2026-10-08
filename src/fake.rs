@@ -1539,6 +1539,22 @@ pub fn usage(now: i64) -> crate::usage::Usage {
     Usage { replies, notes: Vec::new(), read: true }
 }
 
+/// A made-up Max plan's limits, for view 0 and the sessions' list.
+pub fn limits(now: i64) -> crate::limits::PlanLimits {
+    use crate::limits::{Limit, PlanLimits};
+    PlanLimits {
+        plan: "Max 5x".into(),
+        limits: vec![
+            Limit { label: "session".into(), percent: 11.0, resets_at: Some(now + 3 * 3600 + 1200) },
+            Limit { label: "this week".into(), percent: 70.0, resets_at: Some(now + 3 * 86_400 + 5 * 3600) },
+            Limit { label: "Fable this week".into(), percent: 29.0, resets_at: Some(now + 3 * 86_400 + 5 * 3600) },
+        ],
+        as_of: now,
+        live: true,
+        note: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
