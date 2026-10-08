@@ -150,6 +150,12 @@ pub struct Summary {
     /// The last seven days, oldest first, each day's tokens by program.
     pub days: Vec<BTreeMap<Tool, u64>>,
     pub week: Tally,
+    /// This month so far and the whole of the last, each program's — on the clock's calendar.
+    pub this_month: BTreeMap<Tool, Tally>,
+    pub last_month: BTreeMap<Tool, Tally>,
+    /// `October`, `September`, and today's day of the month: what the rows are called.
+    pub month_names: (String, String),
+    pub day_of_month: u32,
     /// Today by model, the most tokens first.
     pub models: Vec<(String, Tool, Tally)>,
     /// Today by project, each program's share of it: the most tokens first.
@@ -188,6 +194,25 @@ impl Usage {
                 models.entry((short_model(&reply.model), tool)).or_default().add(reply);
                 projects.entry(reply.project.clone()).or_default().entry(tool).or_default().add(reply);
             }
+        }
+        // The months, on the clock's calendar.
+        let month_of = |at: i64| {
+            let date = chrono::DateTime::from_timestamp(at + offset_s, 0).map(|d| d.naive_utc().date());
+            date.map(|d| (chrono::Datelike::year(&d), chrono::Datelike::month(&d)))
+        };
+        if let Some((year, month)) = month_of(now) {
+            let last = if month == 1 { (year - 1, 12) } else { (year, month - 1) };
+            for reply in &self.replies {
+                let Some(tool) = reply.tool else { continue };
+                match month_of(reply.at) {
+                    Some(m) if m == (year, month) => summary.this_month.entry(tool).or_default().add(reply),
+                    Some(m) if m == last => summary.last_month.entry(tool).or_default().add(reply),
+                    _ => {}
+                }
+            }
+            let name = |m: u32| chrono::Month::try_from(m as u8).map(|m| m.name().to_string()).unwrap_or_default();
+            summary.month_names = (name(month), name(last.1));
+            summary.day_of_month = chrono::DateTime::from_timestamp(now + offset_s, 0).map_or(1, |d| chrono::Datelike::day(&d.naive_utc().date()));
         }
         summary.window = window(&self.replies, now);
         let mut models: Vec<(String, Tool, Tally)> = models.into_iter().map(|((m, t), n)| (m, t, n)).collect();
@@ -233,7 +258,23 @@ pub fn tokens(n: u64) -> String {
 
 /// `$18.40`, `$0.42`, `$0.003`.
 pub fn dollars(d: f64) -> String {
-    if d >= 0.01 || d == 0.0 { format!("${d:.2}") } else { format!("${d:.3}") }
+    if d >= 1000.0 {
+        // `$2,140`: a month's money, its cents beside the point.
+        let whole = d.round() as u64;
+        let digits = whole.to_string();
+        let mut out = String::new();
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(c);
+        }
+        format!("${out}")
+    } else if d >= 0.01 || d == 0.0 {
+        format!("${d:.2}")
+    } else {
+        format!("${d:.3}")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +420,12 @@ mod tests {
         assert!(s.models[0].2.dollars > 0.0, "a model's day has its price");
         assert_eq!(window(&usage.replies, NOW + 2 * 3600), None, "the window has ended");
         assert_eq!((tokens(4_003_510), tokens(850_000), tokens(312)), ("4.0M".to_string(), "850k".to_string(), "312".to_string()));
-        assert_eq!((dollars(18.4), dollars(0.0021)), ("$18.40".to_string(), "$0.002".to_string()));
+        assert_eq!((dollars(18.4), dollars(0.0021), dollars(2140.4)), ("$18.40".to_string(), "$0.002".to_string(), "$2,140".to_string()));
+        // NOW is 8 October: the month so far, and September whole; nine days ago is September.
+        assert_eq!(s.month_names, ("October".to_string(), "September".to_string()));
+        assert_eq!(s.day_of_month, 8);
+        assert_eq!(s.this_month[&Tool::Claude].tokens, 4_003_510 + 2_000_000);
+        assert_eq!(s.last_month[&Tool::Claude].tokens, 9_000_000);
+        assert!(!s.last_month.contains_key(&Tool::OpenCode));
     }
 }

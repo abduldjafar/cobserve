@@ -73,6 +73,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 
     lines.extend(week(&summary, app, now, theme, width));
     lines.push(Line::from(""));
+    lines.extend(months(&summary, theme, width));
+    lines.push(Line::from(""));
     lines.extend(breakdown(&summary, theme, width));
 
     // What ≈ means, and what could not be read.
@@ -231,14 +233,32 @@ fn breakdown(summary: &Summary, theme: &Theme, width: usize) -> Vec<Line<'static
     out.push(Line::from(""));
 
     // By project, a column a program.
+    let shown = 6;
+    let mut rows: Vec<(String, BTreeMap<Tool, Tally>, Style)> =
+        summary.projects.iter().take(shown).map(|(p, by)| (p.clone(), by.clone(), theme.text())).collect();
+    let more = (summary.projects.len() > shown).then(|| {
+        let rest: u64 = summary.projects.iter().skip(shown).flat_map(|(_, by)| by.values()).map(|t| t.tokens).sum();
+        format!("+{} more · {}", summary.projects.len() - shown, tokens(rest))
+    });
+    if !summary.projects.is_empty() {
+        rows.push(("all".to_string(), summary.today.clone(), theme.strong()));
+    }
+    out.extend(table("by project", &rows, more, true, theme, width));
+    out
+}
+
+/// A table a column a program — its tokens and its money, `—` where it did not work — and the
+/// row's total: by project, by month. `rule_before_last` sets the last row apart as a total.
+fn table(title: &str, rows: &[(String, BTreeMap<Tool, Tally>, Style)], more: Option<String>, rule_before_last: bool, theme: &Theme, width: usize) -> Vec<Line<'static>> {
     let tools = [Tool::Claude, Tool::OpenCode];
     let tok_w = 7;
-    let cost_of = |tool: Tool| if tool == Tool::Claude { 10 } else { 7 };
+    let cost_of = |tool: Tool| if tool == Tool::Claude { 10 } else { 8 };
     let col = |tool: Tool| tok_w + 1 + cost_of(tool);
     let total_w = 7;
     let name_w = width.saturating_sub(2 + col(Tool::Claude) + 3 + col(Tool::OpenCode) + 3 + total_w).max(8);
+    let mut out = Vec::new();
     let mut head = Cells::new();
-    head.push("by project", theme.section());
+    head.push(title.to_string(), theme.section());
     head.pad_to(2 + name_w);
     for (i, tool) in tools.into_iter().enumerate() {
         if i > 0 {
@@ -254,13 +274,28 @@ fn breakdown(summary: &Summary, theme: &Theme, width: usize) -> Vec<Line<'static
     head.gap(3);
     head.cell_right("total", total_w, theme.faint());
     out.push(head.line(width, Style::default()));
-
-    let row = |name: &str, by: &BTreeMap<Tool, Tally>, strong: bool| -> Line<'static> {
+    if rows.is_empty() {
+        out.push(Line::from(ratatui::text::Span::styled("  nothing today", theme.faint())));
+        return out;
+    }
+    for (i, (name, by, style)) in rows.iter().enumerate() {
+        let last = i + 1 == rows.len();
+        if last && rule_before_last && rows.len() > 1 {
+            if let Some(more) = &more {
+                let mut line = Cells::new();
+                line.push(format!("  {more}"), theme.faint());
+                out.push(line.line(width, Style::default()));
+            }
+            let mut rule = Cells::new();
+            rule.push("  ", Style::default());
+            rule.push("─".repeat(width.saturating_sub(2)), theme.rule());
+            out.push(rule.line(width, Style::default()));
+        }
         let mut cells = Cells::new();
         cells.push("  ", Style::default());
-        cells.cell(&crate::fmt::truncate(name, name_w), name_w, if strong { theme.strong() } else { theme.text() });
-        for (i, tool) in tools.into_iter().enumerate() {
-            if i > 0 {
+        cells.cell(&crate::fmt::truncate(name, name_w), name_w, *style);
+        for (j, tool) in tools.into_iter().enumerate() {
+            if j > 0 {
                 cells.gap(3);
             }
             match by.get(&tool).filter(|t| t.replies > 0) {
@@ -277,29 +312,36 @@ fn breakdown(summary: &Summary, theme: &Theme, width: usize) -> Vec<Line<'static
         }
         cells.gap(3);
         let total: u64 = by.values().map(|t| t.tokens).sum();
-        cells.cell_right(&tokens(total), total_w, theme.strong());
-        cells.line(width, Style::default())
-    };
-    let shown = 6;
-    for (project, by) in summary.projects.iter().take(shown) {
-        out.push(row(project, by, false));
-    }
-    if summary.projects.len() > shown {
-        let rest: u64 = summary.projects.iter().skip(shown).flat_map(|(_, by)| by.values()).map(|t| t.tokens).sum();
-        let mut more = Cells::new();
-        more.push(format!("  +{} more · {}", summary.projects.len() - shown, tokens(rest)), theme.faint());
-        out.push(more.line(width, Style::default()));
-    }
-    if summary.projects.is_empty() {
-        out.push(Line::from(ratatui::text::Span::styled("  nothing today", theme.faint())));
-    } else {
-        let mut rule = Cells::new();
-        rule.push("  ", Style::default());
-        rule.push("─".repeat(width.saturating_sub(2)), theme.rule());
-        out.push(rule.line(width, Style::default()));
-        out.push(row("all", &summary.today, true));
+        if total == 0 {
+            cells.cell_right("—", total_w, theme.faint());
+        } else {
+            cells.cell_right(&tokens(total), total_w, theme.strong());
+        }
+        out.push(cells.line(width, Style::default()));
     }
     out
+}
+
+/// This month so far and the whole of the last, in the same columns.
+fn months(summary: &Summary, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let (this, last) = &summary.month_names;
+    let rows = vec![
+        (format!("{this} to the {}", ordinal(summary.day_of_month)), summary.this_month.clone(), theme.text()),
+        (last.clone(), summary.last_month.clone(), theme.text2()),
+    ];
+    table("by month", &rows, None, false, theme, width)
+}
+
+/// `1st`, `2nd`, `3rd`, `8th`, `21st`.
+fn ordinal(day: u32) -> String {
+    let suffix = match (day % 10, day % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{day}{suffix}")
 }
 
 /// The narrow view's line of it, under the machine's pressure:

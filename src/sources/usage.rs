@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 
-/// How far back is read: the panel's week, and a day.
-const KEEP_S: i64 = 8 * 86_400;
+/// How far back is read: this month and the whole of the last, whatever the day.
+const KEEP_S: i64 = 63 * 86_400;
 
 pub fn spawn(tx: mpsc::UnboundedSender<Event>) {
     std::thread::spawn(move || {
@@ -168,6 +168,9 @@ mod tests {
             println!("window ends in {} min, {} tokens", (w.end - now) / 60, crate::usage::tokens(w.tally.tokens));
         }
         println!("week {} · days {:?}", crate::usage::tokens(s.week.tokens), s.days.iter().map(|d| crate::usage::tokens(d.values().sum())).collect::<Vec<_>>());
+        for (name, by) in [(&s.month_names.0, &s.this_month), (&s.month_names.1, &s.last_month)] {
+            println!("{name}: {:?}", by.iter().map(|(t, n)| format!("{} {} {}", t.name(), crate::usage::tokens(n.tokens), crate::usage::dollars(n.dollars))).collect::<Vec<_>>());
+        }
         println!("models {:?}", s.models.iter().take(5).map(|m| (m.0.clone(), crate::usage::tokens(m.2.tokens))).collect::<Vec<_>>());
         println!("projects {:?}", s.projects.iter().take(5).map(|p| (p.0.clone(), p.1.iter().map(|(t, n)| format!("{} {} {}", t.name(), crate::usage::tokens(n.tokens), crate::usage::dollars(n.dollars))).collect::<Vec<_>>())).collect::<Vec<_>>());
     }
