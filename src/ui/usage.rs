@@ -26,6 +26,7 @@ use crate::app::App;
 use crate::severity::Severity;
 use crate::theme::Theme;
 use crate::usage::{dollars, tokens, Summary, Tally, Tool};
+use std::collections::BTreeMap;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
@@ -183,58 +184,122 @@ fn week(summary: &Summary, app: &App, now: i64, theme: &Theme, width: usize) -> 
     out
 }
 
-/// Today by model and by project, side by side when there is room, each the five most.
+/// Today by model — its tokens, a bar of its share, its money — then by project, each program's
+/// tokens and money in a column of its own and the project's total, the day's all under them.
+///
+/// ```text
+/// by model                                       tokens          cost
+///   ✻ opus-5-5                  363.2M  ━━━━━━━━━━         ≈ $240.10
+///   ▣ deepseek-v4.1-flash        60.1M  ━╸                     $0.42
+///
+/// by project          ✻ Claude Code       ▣ OpenCode        total
+///   airflow-dags      240.1M ≈ $181.90    35.9M   $0.40    276.0M
+///   cobserve           39.9M  ≈ $26.20        —             39.9M
+///   ───────────────────────────────────────────────────────────────
+///   all               ...
+/// ```
 fn breakdown(summary: &Summary, theme: &Theme, width: usize) -> Vec<Line<'static>> {
-    let half = width / 2;
-    let side = width >= 56;
-    let models: Vec<(String, Style, u64)> = summary.models.iter().take(5).map(|(m, t, n)| (m.clone(), tool_style(*t, theme), *n)).collect();
-    let projects: Vec<(String, Style, u64)> = summary.projects.iter().take(5).map(|(p, n)| (p.clone(), theme.text(), *n)).collect();
-    let block = |title: &str, rows: &[(String, Style, u64)], room: usize| -> Vec<Cells> {
-        let mut out = Vec::new();
-        let mut head = Cells::new();
-        head.push(title.to_string(), theme.section());
-        out.push(head);
-        let top = rows.first().map_or(1, |r| r.2).max(1);
-        for (name, style, n) in rows {
-            let mut cells = Cells::new();
-            cells.push("  ", Style::default());
-            let name_room = room.saturating_sub(2 + 8 + 1 + 6);
-            cells.cell(&crate::fmt::truncate(name, name_room), name_room, if *style == theme.text() { theme.text() } else { *style });
-            cells.cell_right(&tokens(*n), 7, theme.text2());
-            cells.push(" ", Style::default());
-            let share = *n as f64 / top as f64 * 100.0;
-            cells.spans(thin_bar(Some(share), 6.min(room.saturating_sub(cells.width())), theme.bar_fill(Severity::None), theme));
-            out.push(cells);
-        }
-        if rows.is_empty() {
-            let mut none = Cells::new();
-            none.push("  nothing today", theme.faint());
-            out.push(none);
-        }
-        out
-    };
-    if side {
-        let left = block("by model", &models, half.saturating_sub(2));
-        let right = block("by project", &projects, width - half);
-        (0..left.len().max(right.len()))
-            .map(|i| {
-                let mut line = Cells::new();
-                if let Some(cells) = left.get(i) {
-                    line.spans(cells.clone().into_spans());
-                }
-                line.pad_to(half);
-                if let Some(cells) = right.get(i) {
-                    line.spans(cells.clone().into_spans());
-                }
-                line.line(width, Style::default())
-            })
-            .collect()
-    } else {
-        let mut out: Vec<Line<'static>> = block("by model", &models, width).into_iter().map(|c| c.line(width, Style::default())).collect();
-        out.push(Line::from(""));
-        out.extend(block("by project", &projects, width).into_iter().map(|c| c.line(width, Style::default())));
-        out
+    let mut out = Vec::new();
+
+    // By model.
+    let top = summary.models.first().map_or(1, |m| m.2.tokens).max(1);
+    let cost_w = 11;
+    let bar_w = 10.min(width / 6);
+    let name_w = width.saturating_sub(4 + 8 + 2 + bar_w + cost_w);
+    // The column names over the columns: tokens over its numbers, cost at the right.
+    let mut head = Cells::new();
+    head.push("by model", theme.section());
+    head.pad_to(4 + name_w + 8 - 6);
+    head.push("tokens", theme.faint());
+    head.pad_to(width.saturating_sub(4));
+    head.push("cost", theme.faint());
+    out.push(head.line(width, Style::default()));
+    for (model, tool, tally) in summary.models.iter().take(5) {
+        let mut cells = Cells::new();
+        cells.push("  ", Style::default());
+        cells.push(format!("{} ", tool.glyph()), tool_style(*tool, theme));
+        cells.cell(&crate::fmt::truncate(model, name_w), name_w, theme.text());
+        cells.cell_right(&tokens(tally.tokens), 8, theme.strong());
+        cells.push("  ", Style::default());
+        cells.spans(thin_bar(Some(tally.tokens as f64 / top as f64 * 100.0), bar_w, theme.bar_fill(Severity::None), theme));
+        cells.cell_right(&money(*tool, tally).0, cost_w, theme.text2());
+        out.push(cells.line(width, Style::default()));
     }
+    if summary.models.is_empty() {
+        out.push(Line::from(ratatui::text::Span::styled("  nothing today", theme.faint())));
+    }
+    out.push(Line::from(""));
+
+    // By project, a column a program.
+    let tools = [Tool::Claude, Tool::OpenCode];
+    let tok_w = 7;
+    let cost_of = |tool: Tool| if tool == Tool::Claude { 10 } else { 7 };
+    let col = |tool: Tool| tok_w + 1 + cost_of(tool);
+    let total_w = 7;
+    let name_w = width.saturating_sub(2 + col(Tool::Claude) + 3 + col(Tool::OpenCode) + 3 + total_w).max(8);
+    let mut head = Cells::new();
+    head.push("by project", theme.section());
+    head.pad_to(2 + name_w);
+    for (i, tool) in tools.into_iter().enumerate() {
+        if i > 0 {
+            head.gap(3);
+        }
+        let mut label = Cells::new();
+        label.push(format!("{} ", tool.glyph()), tool_style(tool, theme));
+        label.push(tool.name(), theme.faint());
+        let w = label.width();
+        head.gap(col(tool).saturating_sub(w));
+        head.spans(label.into_spans());
+    }
+    head.gap(3);
+    head.cell_right("total", total_w, theme.faint());
+    out.push(head.line(width, Style::default()));
+
+    let row = |name: &str, by: &BTreeMap<Tool, Tally>, strong: bool| -> Line<'static> {
+        let mut cells = Cells::new();
+        cells.push("  ", Style::default());
+        cells.cell(&crate::fmt::truncate(name, name_w), name_w, if strong { theme.strong() } else { theme.text() });
+        for (i, tool) in tools.into_iter().enumerate() {
+            if i > 0 {
+                cells.gap(3);
+            }
+            match by.get(&tool).filter(|t| t.replies > 0) {
+                Some(tally) => {
+                    cells.cell_right(&tokens(tally.tokens), tok_w, theme.text2());
+                    cells.push(" ", Style::default());
+                    cells.cell_right(&money(tool, tally).0, cost_of(tool), theme.muted());
+                }
+                None => {
+                    cells.cell_right("—", tok_w, theme.faint());
+                    cells.gap(1 + cost_of(tool));
+                }
+            }
+        }
+        cells.gap(3);
+        let total: u64 = by.values().map(|t| t.tokens).sum();
+        cells.cell_right(&tokens(total), total_w, theme.strong());
+        cells.line(width, Style::default())
+    };
+    let shown = 6;
+    for (project, by) in summary.projects.iter().take(shown) {
+        out.push(row(project, by, false));
+    }
+    if summary.projects.len() > shown {
+        let rest: u64 = summary.projects.iter().skip(shown).flat_map(|(_, by)| by.values()).map(|t| t.tokens).sum();
+        let mut more = Cells::new();
+        more.push(format!("  +{} more · {}", summary.projects.len() - shown, tokens(rest)), theme.faint());
+        out.push(more.line(width, Style::default()));
+    }
+    if summary.projects.is_empty() {
+        out.push(Line::from(ratatui::text::Span::styled("  nothing today", theme.faint())));
+    } else {
+        let mut rule = Cells::new();
+        rule.push("  ", Style::default());
+        rule.push("─".repeat(width.saturating_sub(2)), theme.rule());
+        out.push(rule.line(width, Style::default()));
+        out.push(row("all", &summary.today, true));
+    }
+    out
 }
 
 /// The narrow view's line of it, under the machine's pressure:

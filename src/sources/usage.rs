@@ -168,7 +168,7 @@ mod tests {
             println!("window ends in {} min, {} tokens", (w.end - now) / 60, crate::usage::tokens(w.tally.tokens));
         }
         println!("week {} · days {:?}", crate::usage::tokens(s.week.tokens), s.days.iter().map(|d| crate::usage::tokens(d.values().sum())).collect::<Vec<_>>());
-        println!("models {:?}", s.models.iter().take(5).map(|m| (m.0.clone(), crate::usage::tokens(m.2))).collect::<Vec<_>>());
-        println!("projects {:?}", s.projects.iter().take(5).map(|p| (p.0.clone(), crate::usage::tokens(p.1))).collect::<Vec<_>>());
+        println!("models {:?}", s.models.iter().take(5).map(|m| (m.0.clone(), crate::usage::tokens(m.2.tokens))).collect::<Vec<_>>());
+        println!("projects {:?}", s.projects.iter().take(5).map(|p| (p.0.clone(), p.1.iter().map(|(t, n)| format!("{} {} {}", t.name(), crate::usage::tokens(n.tokens), crate::usage::dollars(n.dollars))).collect::<Vec<_>>())).collect::<Vec<_>>());
     }
 }

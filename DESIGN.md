@@ -950,8 +950,9 @@ or from a slope over the last minutes of it.
   API prices* — list input, output and cache-read prices, cache writes at 1.25× input (5 min) or
   2× (1 h); a model not priced counts its tokens and marks the sum `≥`. The 5-hour window starts
   on the hour of the first reply after the last window ended. On screen: each program's day with
-  its parts, the window's time left, the last seven days as columns, today by model and by
-  project.
+  its parts, the window's time left, the last seven days as columns, today by model with its
+  money, and by project with each program's tokens and money in a column of its own, the
+  project's total and the day's all under them.
 - **Cards** (`src/ui/cards.rs`): from 150 columns and 30 rows the band's lines become a card
   each — ClickHouse, Redash and this machine side by side in rounded frames, in the rows the
   shelf's padding took. The numbers are the lines' own (§5 and the LOCAL arithmetic above), set
