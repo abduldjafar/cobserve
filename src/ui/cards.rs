@@ -295,13 +295,17 @@ fn machine(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         }
         None => lines.push(Line::from(Span::styled("mem not read", theme.muted()))),
     }
-    let mut last = Cells::new();
-    if let Some((top, cores)) = local.top() {
+    // Its last line: what Claude Code and OpenCode used today, when they used anything — the
+    // busiest process and the swap otherwise (view 0 has both either way).
+    let ai = super::usage::glance(app, theme);
+    let quiet = ai.is_none();
+    let mut last = ai.unwrap_or_default();
+    if quiet && let Some((top, cores)) = local.top() {
         last.push("top ", theme.faint());
         last.push(top.name().to_string(), theme.text());
         last.push(format!(" {cores:.2}"), theme.text2());
     }
-    if let Some((used, _)) = sample.swap.filter(|s| s.0 > 0) {
+    if quiet && let Some((used, _)) = sample.swap.filter(|s| s.0 > 0) {
         last.push(" · swap ", theme.faint());
         last.push(format!("{:.1} GiB", fmt::gib(used)), theme.text2());
     }

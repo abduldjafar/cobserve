@@ -450,6 +450,9 @@ pub fn band_line(app: &App, theme: &Theme, label: usize, width: usize) -> Line<'
         (12, true, 8, 2),
         (12, true, 0, 2),
         (12, true, 0, 1),
+        // The AI keeps its place while the bars shorten and go.
+        (8, true, 0, 1),
+        (0, true, 0, 1),
         (12, true, 0, 0),
         (8, true, 0, 0),
         (0, true, 0, 0),
@@ -489,12 +492,17 @@ pub fn band_line(app: &App, theme: &Theme, label: usize, width: usize) -> Line<'
             let sev = p.severity();
             pieces.push(p.word(), if sev == Severity::Ok { theme.text2() } else { theme.sev(sev).add_modifier(Modifier::BOLD) });
         }
-        // 2: the swap and the busiest process; 1: the busiest only.
+        // What Claude Code and OpenCode used today, before the swap and the busiest process.
+        if extra >= 1 && let Some(ai) = super::usage::glance(app, theme) {
+            pieces.push("   ", theme.text());
+            pieces.spans(ai.into_spans());
+        }
+        // 2: the swap and the busiest process; 1: neither.
         if extra == 2 && let Some((used, _)) = sample.swap.filter(|s| s.0 > 0) {
             pieces.push(" · swap ", theme.faint());
             pieces.push(format!("{} GiB", gib(used)), theme.text2());
         }
-        if extra >= 1 && let Some((top, cores)) = local.top() {
+        if extra == 2 && let Some((top, cores)) = local.top() {
             pieces.push("   top ", theme.faint());
             pieces.push(top.name().to_string(), theme.text());
             pieces.push(format!(" {cores:.2}"), theme.text2());
