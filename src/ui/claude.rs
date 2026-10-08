@@ -224,6 +224,11 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         None => {}
     }
     lines.push(title.line(width, Style::default()));
+    // What Claude Code and OpenCode used today, over the sessions that used it.
+    if finding.is_none() {
+        lines.extend(super::usage::sidebar_lines(app, theme, width));
+    }
+    let used = super::usage::by_session(app);
     // Many sessions on several projects: grouped by project, a line each (`grouped_rows`).
     let grouped = finding.is_none() && sessions.list.len() >= GROUPED_FROM && sessions.groups().len() >= 2;
     if grouped {
@@ -290,6 +295,10 @@ fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         // Its mark and name; at the right, what it rang for and its number — a key to press
         // once ctrl+\ asks which, for the five a digit picks.
         let mut right = Cells::new();
+        // What it used today, quietly, before its mark.
+        if let Some(n) = session.conversation.as_ref().and_then(|c| used.get(c)).filter(|n| **n > 0) {
+            right.push(format!("{} ", crate::usage::tokens(*n)), theme.faint());
+        }
         match mark(session) {
             "●" => right.push("● ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
             "✕" => right.push("✕ ", theme.faint()),
@@ -398,6 +407,7 @@ fn grouped_rows(app: &App, theme: &Theme, area: Rect, top: u16, room: usize, lit
     let sessions = &app.claude;
     let width = area.width as usize;
     let inner = width.saturating_sub(4);
+    let used = super::usage::by_session(app);
     // Every line, and the session it is of, before the window is cut.
     let mut all: Vec<(Line<'static>, Option<usize>)> = Vec::new();
     for (g, (project, members)) in sessions.groups().into_iter().enumerate() {
@@ -424,6 +434,9 @@ fn grouped_rows(app: &App, theme: &Theme, area: Rect, top: u16, room: usize, lit
             let on_screen = lit_card == Some(index);
             let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
             let mut right = Cells::new();
+            if let Some(n) = session.conversation.as_ref().and_then(|c| used.get(c)).filter(|n| **n > 0) {
+                right.push(format!("{} ", crate::usage::tokens(*n)), theme.faint());
+            }
             match mark(session) {
                 "●" => right.push("● ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
                 "✕" => right.push("✕ ", theme.faint()),

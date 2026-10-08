@@ -262,3 +262,43 @@ pub fn line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
     }
     cells.line(width, Style::default())
 }
+
+/// View 7's list, over its sessions: today for each program in a line, Claude Code's window with it.
+///
+/// ```text
+/// ✻ 287M today · ≈ $191 · 5h 1h26m
+/// ▣ 54M today · $0.86
+/// ```
+pub fn sidebar_lines(app: &App, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    if !app.usage.read {
+        return Vec::new();
+    }
+    let now = app.now();
+    let summary = app.usage.summary(now, app.time.offset_s(now));
+    let mut out = Vec::new();
+    for tool in [Tool::Claude, Tool::OpenCode] {
+        let Some(tally) = summary.today.get(&tool).copied().filter(|t| t.replies > 0) else { continue };
+        let mut cells = Cells::new();
+        cells.push(format!("{} ", tool.glyph()), tool_style(tool, theme));
+        cells.push(tokens(tally.tokens), theme.text2());
+        cells.push(" today · ", theme.faint());
+        cells.push(money(tool, &tally).0, theme.muted());
+        if tool == Tool::Claude
+            && let Some(w) = summary.window
+        {
+            cells.push(" · 5h ", theme.faint());
+            cells.push(crate::fmt::dur((w.end - now).max(0) as f64), theme.muted());
+        }
+        out.push(cells.line(width, Style::default()));
+    }
+    out
+}
+
+/// Today's tokens of each conversation, for the list's rows.
+pub fn by_session(app: &App) -> std::collections::HashMap<String, u64> {
+    if !app.usage.read {
+        return std::collections::HashMap::new();
+    }
+    let now = app.now();
+    app.usage.by_session(now, app.time.offset_s(now)).into_iter().map(|(id, t)| (id, t.tokens)).collect()
+}

@@ -2632,3 +2632,36 @@ fn view_zero_says_what_claude_code_and_opencode_used() {
         assert_eq!(render(&app, w, h).lines().count(), h as usize);
     }
 }
+
+#[test]
+fn the_session_list_says_what_each_session_used_today() {
+    use crate::usage::{Reply, Tool, Usage};
+    let mut app = app_with_claude(b"hello\r\n");
+    let now = app.now();
+    app.claude.list[0].conversation = Some("conv-a".into());
+    app.claude.list[0].name = Some("integrate-jira-api".into());
+    let reply = |tool, session: &str, read: u64| Reply {
+        tool: Some(tool),
+        at: now - 600,
+        model: "claude-opus-5-5".into(),
+        project: "cobserve".into(),
+        session: session.into(),
+        input: 10,
+        output: 500,
+        cache_read: read,
+        cost: (tool == Tool::OpenCode).then_some(0.42),
+        ..Reply::default()
+    };
+    app.update(Event::Usage(Box::new(Usage {
+        replies: vec![reply(Tool::Claude, "conv-a", 1_200_000), reply(Tool::Claude, "elsewhere", 3_000_000), reply(Tool::OpenCode, "ses_9", 50_000)],
+        notes: Vec::new(),
+        read: true,
+    })));
+    let screen = render(&app, 160, 48);
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
+    // Over the list: each program today, Claude Code's window with it.
+    assert!(row("✻ 4.2M today").contains("≈ $") && row("✻ 4.2M today").contains("· 5h "), "{screen}");
+    assert!(row("▣ 51k today").contains("$0.42"), "{screen}");
+    // On the session's row: what it used, its own conversation only.
+    assert!(row("integrate-jira-api").contains("1.2M "), "{screen}");
+}
