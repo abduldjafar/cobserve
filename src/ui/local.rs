@@ -39,7 +39,28 @@ fn cores_of(busy: f64, cores: u32) -> String {
     format!("{busy:.1}/{cores} cores")
 }
 
+/// From this width the AI panel stands beside the machine; below it, a line of it under the
+/// pressure.
+const AI_BESIDE_FROM: u16 = 140;
+
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    if area.width >= AI_BESIDE_FROM && app.usage.read {
+        let panel = (area.width * 2 / 5).clamp(56, 72);
+        let left = Rect::new(area.x, area.y, area.width - panel - 3, area.height);
+        let rule = Rect::new(left.x + left.width + 1, area.y, 1, area.height);
+        let right = Rect::new(rule.x + 2, area.y, panel, area.height);
+        draw_machine(frame, app, theme, left, false);
+        let bar: Vec<Line<'static>> = (0..area.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
+        frame.render_widget(Paragraph::new(bar), rule);
+        super::usage::draw(frame, app, theme, right);
+    } else {
+        draw_machine(frame, app, theme, area, app.usage.read);
+    }
+}
+
+/// The machine: its name, CPU, memory and pressure, then its processes — and, when the AI panel
+/// has no room beside it, a line of that under the pressure.
+fn draw_machine(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, ai_line: bool) {
     if area.height == 0 {
         return;
     }
@@ -61,6 +82,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     lines.push(cpu_line(app, theme, width));
     lines.push(memory_line(app, theme, width));
     lines.push(pressure_line(local, theme, width));
+    if ai_line {
+        lines.push(super::usage::line(app, theme, width));
+    }
     lines.push(Line::from(""));
 
     let rows = local.rows();

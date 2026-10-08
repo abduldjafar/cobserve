@@ -2590,3 +2590,45 @@ fn many_sessions_sit_by_project_a_line_each_with_the_way_to_find_one() {
         assert_eq!(render(&app, w, h).lines().count(), h as usize);
     }
 }
+
+#[test]
+#[ignore]
+fn dump_usage() {
+    let mut app = app_with_local();
+    let now = app.now();
+    app.update(Event::Usage(Box::new(crate::fake::usage(now))));
+    app.update(key(KeyCode::Char('0')));
+    println!("{}", render(&app, 172, 48));
+    println!("{}", render(&app, 120, 36));
+}
+
+#[test]
+fn view_zero_says_what_claude_code_and_opencode_used() {
+    let mut app = app_with_local();
+    let now = app.now();
+    app.update(Event::Usage(Box::new(crate::fake::usage(now))));
+    app.update(key(KeyCode::Char('0')));
+    let screen = render(&app, 172, 48);
+    let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
+    // Beside the machine: each program's day, its parts, the plan's window, the week, the breakdowns.
+    assert!(row("AI · today").contains("│ AI · today"), "a panel of its own: {screen}");
+    let claude = row("✻ Claude Code");
+    assert!(claude.contains(" tokens") && claude.contains("≈ $"), "{claude}");
+    assert!(row("▣ OpenCode").contains(" tokens") && !row("▣ OpenCode").contains('≈'), "its own cost, no ≈");
+    assert!(row(" replies").contains("in ") && row(" replies").contains("cache "), "{screen}");
+    assert!(row("5h window").contains(" left · "), "{screen}");
+    assert!(!row("last 7 days").is_empty() && screen.contains("by model") && screen.contains("by project"), "{screen}");
+    assert!(row("by model").contains("by project"), "side by side");
+    assert!(screen.contains("≈ Claude Code at API prices"), "what ≈ means: {screen}");
+    // Narrow: a line under the pressure.
+    let narrow = render(&app, 120, 36);
+    let ai = narrow.lines().find(|l| l.trim_start().starts_with("AI ")).unwrap_or_else(|| panic!("{narrow}"));
+    assert!(ai.contains("✻ ") && ai.contains(" today ≈ $") && ai.contains("▣ "), "{ai}");
+    // The app's status bar has it too.
+    let state = crate::desktop::state(&app);
+    let chip = state.chips.iter().find(|c| c.id == "ai").expect("an AI chip");
+    assert!(chip.text.starts_with("today ") && chip.text.contains(" tokens"), "{chip:?}");
+    for (w, h) in [(140, 30), (250, 60), (60, 20)] {
+        assert_eq!(render(&app, w, h).lines().count(), h as usize);
+    }
+}

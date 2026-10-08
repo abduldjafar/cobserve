@@ -287,6 +287,8 @@ pub enum Event {
     Jira(Box<crate::jira::Board>),
     /// One read of this machine (view 0).
     Local(Box<crate::local::Sample>),
+    /// What Claude Code and OpenCode used (view 0).
+    Usage(Box<crate::usage::Usage>),
     /// What a page of view 5 or 6 asked for, and what came back.
     Detail(crate::detail::Ask, Result<crate::detail::Body, String>),
     Quit,
@@ -392,6 +394,8 @@ pub struct App {
     pub jira: crate::jira::Board,
     /// View 0: this machine.
     pub local: crate::local::Local,
+    /// View 0's AI panel: what Claude Code and OpenCode used.
+    pub usage: crate::usage::Usage,
     /// The row under view 5's cursor, by what it is about — the lists move under it every 15 s —
     /// and its place, for when it is gone.
     airflow_selected: Option<crate::airflow::RowKey>,
@@ -491,6 +495,7 @@ impl App {
             airflow: crate::airflow::Activity::unreachable(crate::airflow::NOT_READ),
             jira: crate::jira::Board::unreachable(crate::jira::NOT_READ),
             local: crate::local::Local::default(),
+            usage: crate::usage::Usage::default(),
             airflow_selected: None,
             airflow_index: 0,
             jira_selected: None,
@@ -1048,6 +1053,7 @@ impl App {
                     self.on_jira(*board)
                 }
             }
+            Event::Usage(usage) => self.usage = *usage,
             Event::Local(sample) => {
                 if !self.paused {
                     self.local.record(*sample)

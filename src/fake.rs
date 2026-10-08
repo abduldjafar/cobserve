@@ -1501,6 +1501,43 @@ pub fn local(step: u64, at: f64) -> crate::local::Sample {
     }
 }
 
+/// A made-up week of Claude Code and OpenCode, for view 0's AI panel: every number made, no
+/// transcript read.
+pub fn usage(now: i64) -> crate::usage::Usage {
+    use crate::usage::{Reply, Tool, Usage};
+    let mut replies = Vec::new();
+    let projects = ["airflow-dags", "cobserve", "apitap-lib", "airflow-dags", "cobserve"];
+    // Seven days back, a reply every 20 minutes of the working hours, more of late.
+    for day in 0..7i64 {
+        let busy = [6, 9, 4, 0, 0, 8, 11][day as usize];
+        for i in 0..busy * 3 {
+            let at = now - (6 - day) * 86_400 - (i as i64) * 1200 - 600;
+            if at > now {
+                continue;
+            }
+            let project = projects[(i as usize + day as usize) % projects.len()].to_string();
+            let (tool, model) = match i % 5 {
+                0 => (Tool::OpenCode, "deepseek-v4.1-flash"),
+                1 | 2 => (Tool::Claude, "claude-fable-5-1"),
+                _ => (Tool::Claude, "claude-opus-5-5"),
+            };
+            replies.push(Reply {
+                tool: Some(tool),
+                at,
+                model: model.into(),
+                project,
+                input: 40 + (i as u64 % 7) * 13,
+                output: 600 + (i as u64 % 9) * 120,
+                cache_write_5m: 0,
+                cache_write_1h: if tool == Tool::Claude { 4_000 + (i as u64 % 4) * 900 } else { 0 },
+                cache_read: 60_000 + (i as u64 % 11) * 9_000,
+                cost: (tool == Tool::OpenCode).then_some(0.0021),
+            });
+        }
+    }
+    Usage { replies, notes: Vec::new(), read: true }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
