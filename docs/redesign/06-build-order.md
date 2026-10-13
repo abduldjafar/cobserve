@@ -12,10 +12,11 @@ volatile — match them). The fake generator will need the simulation's numbers 
 scenario (`FAKE=1 FAKE_SCENARIO=redesign`), one-time work in phase 1. A screen that cannot match
 exactly for a good reason gets that reason in the test, not a looser comparison.
 
-## Phase 0 — contracts in the engine (S)
+## Phase 0 — contracts in the engine (S) — done
 
-- `src/action.rs`, `src/provenance.rs`, `explain_*` functions in `model.rs` for every §5 formula,
-  `src/ui2/layout.rs`.
+- `src/action.rs`, `src/provenance.rs` with an `explain_*` function for every §5 formula (beside
+  the type, so `model.rs` stays untouched), `src/ui2/layout.rs`, `src/ui2/state.rs` (focus, zoom,
+  preset, density, toasts), `src/caps.rs`.
 - The capability probe in `main.rs`; synchronized output around `draw` if the backend lacks it.
 - Tests: provenance round-trips on the fake snapshot; layout tiles the screen at the worked sizes
   and at 500 random sizes; the `Action` list has no duplicate keys within a scope.

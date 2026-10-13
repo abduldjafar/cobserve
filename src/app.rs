@@ -400,6 +400,10 @@ pub struct App {
     pub usage: crate::usage::Usage,
     /// The Claude plan's limits, as `/usage` shows them.
     pub limits: Option<crate::limits::PlanLimits>,
+    /// The new shell's own state (`ui2`, `docs/redesign/`): focus, zoom, preset, density, toasts.
+    pub shell: crate::ui2::ShellState,
+    /// What the terminal can do, probed before the event loop (`caps.rs`).
+    pub caps: crate::caps::Caps,
     /// The row under view 5's cursor, by what it is about — the lists move under it every 15 s —
     /// and its place, for when it is gone.
     airflow_selected: Option<crate::airflow::RowKey>,
@@ -501,6 +505,8 @@ impl App {
             local: crate::local::Local::default(),
             usage: crate::usage::Usage::default(),
             limits: None,
+            shell: crate::ui2::ShellState::default(),
+            caps: crate::caps::Caps::default(),
             airflow_selected: None,
             airflow_index: 0,
             jira_selected: None,

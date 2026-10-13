@@ -50,8 +50,9 @@ pub struct Action {
     pub keys: &'static [&'static str], // ["e"]; empty for palette-only actions
     pub scope: Scope,                // Everywhere | Panel(PanelId) | Zoomed(PanelId) | Overlay(..)
     pub rank: u8,                    // status-bar order; the five lowest ranks of the scope show
+    pub shown: &'static str,         // how the status bar writes its keys: "1-8", "←→↑↓"
     pub enabled: fn(&App) -> bool,   // "cancel job" only on a queue row; "back to live" only in replay
-    pub run: fn(&mut App),
+    pub run: fn(&mut App, &str),     // the key pressed: one action answers several ("1"…"8")
 }
 ```
 
@@ -76,11 +77,11 @@ pub struct Input { pub name: &'static str, pub value: f64, pub unit: Unit, pub s
 pub struct Metric<T> { pub value: T, pub prov: Provenance }
 ```
 
-`model.rs` keeps returning plain numbers for the hot path; a parallel set of
-`explain_*(…) -> Provenance` functions, one per §5 formula, rebuilds the provenance from the same
-inputs on demand (the popover is opened by a person, not every poll). Tested: for every metric on
-the fake snapshot, evaluating the provenance's inputs with its formula reproduces the value
-within 0.1.
+`model.rs` keeps returning plain numbers for the hot path and is not touched; a parallel set of
+`explain_*(…) -> Provenance` functions in `provenance.rs`, one per §5 formula, rebuilds the
+provenance from the same inputs on demand (the popover is opened by a person, not every poll),
+and carries the formula as a function as well as a string. Tested: for every metric on the fake
+snapshot, evaluating the provenance's inputs with its formula reproduces the value within 0.1.
 
 ## Contract 3 — `Layout`
 

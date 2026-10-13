@@ -5,10 +5,12 @@
 //! clock, and **the UI never blocks on the network**: a slow node, a dead Redash, or a
 //! ClickHouse that never answers all show up as numbers that do not move.
 
+mod action;
 mod airflow;
 mod app;
 mod assist;
 mod attrib;
+mod caps;
 mod claude;
 mod clock;
 mod complete;
@@ -28,6 +30,7 @@ mod local;
 mod usage;
 mod model;
 mod prayer;
+mod provenance;
 mod saved;
 mod pty;
 mod severity;
@@ -37,6 +40,7 @@ mod tape;
 mod theme;
 mod tree;
 mod ui;
+mod ui2;
 
 use app::{App, Event};
 use config::Config;
@@ -95,13 +99,16 @@ async fn main() -> color_eyre::Result<()> {
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
     }
     let modified_enter = tell_enter_apart();
+    // What the terminal can do, asked before anything reads keys: the width check's answer comes
+    // on standard input (docs/redesign/04-architecture.md).
+    let caps = caps::probe(modified_enter);
 
     // The terminal's title is the monitor's while it runs, and the one it had after.
     {
         use std::io::Write;
         let _ = std::io::stdout().write_all(b"\x1b[22;0t");
     }
-    let result = run(&mut terminal, config, args.claude, modified_enter).await;
+    let result = run(&mut terminal, config, args.claude, modified_enter, caps).await;
 
     restore_terminal();
     result
@@ -151,9 +158,10 @@ fn install_panic_hook() {
     }));
 }
 
-async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool) -> color_eyre::Result<()> {
+async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool, caps: caps::Caps) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
+    app.caps = caps;
     app.poll_interval = config.poll;
     app.modified_enter = modified_enter;
     app.claude.commands = claude::Commands {
@@ -231,7 +239,12 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     app.outside_chrome = inside_app;
     let mut told: Option<desktop::State> = None;
     loop {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        // One frame at a time on the terminal (DEC 2026, where it is spoken): ratatui does not
+        // wrap its draw in synchronized output itself; a terminal that does not know it ignores it.
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate);
+        let drawn = terminal.draw(|frame| ui::draw(frame, &app));
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::EndSynchronizedUpdate);
+        drawn?;
         if inside_app {
             let state = desktop::state(&app);
             if told.as_ref() != Some(&state) {

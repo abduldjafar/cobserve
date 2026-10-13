@@ -86,7 +86,8 @@ else SESSIONS alone. Widths are rounded so the panels tile the row exactly; a fr
 panel (two columns, two rows of every box are border).
 
 Worked sizes: 120×36 → 1 + 7 + 12 + 9 + 6 + 1. 80×24 → 1 + 5 + 6 (one tile row) + 8 + 3 + 1.
-160×48 → 1 + 9 + 7 (one row of 7 tiles) + 23 + 7 + 1.
+160×48 → 1 + 9 + 12 (two rows of 7 tiles) + 18 + 7 + 1 — as `screens/160x48-dash.txt` draws it
+(an earlier draft of this line said one row; the screen and `layout()` agree on two).
 
 Rules that follow: a panel whose inner height is under 3 rows is not drawn (its key still zooms
 it); the NODE panel's graph needs 8 inner rows; the FLEET and QUEUE big numbers need 4 inner rows
