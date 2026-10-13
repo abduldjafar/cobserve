@@ -1,0 +1,48 @@
+ ❖ cobserve · prod    Subuh 04:21 ━━━━━━━━━ Terbit 05:33 ━━━━━━━━━ Dzuhur 11:45 ━━━━━━━━━ Ashar 14:48 ━━━━●┄┄┄┄┄ Maghrib 17:50 in 1h57m ┄┄┄┄┄┄┄┄┄ Isya 18:59IB
+╭ 1 FLEET ─────────────────────────────────────────────── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ───────────────────────────────────── oldest 3m43s ✖ ─╮
+│ █ █ ▀▀█ ▀ █  cpu                                                                     ││ ▄█  █▀▀  waiting                                              ▁▁▂▅▄  │
+│ ▀▀█ █▀▀  ▄▀  32.8%                                                                   ││  █  █▀█  6 running                                   ▂▃▃▂▅▆▅▆██████  │
+│   █ █▄▄ █ ▄  52/160 c                                                                ││ ▄█▄ █▄█  3 stale                                   ▆▆██████████████  │
+│ 268/640 GiB memory  ▂▂▂▃▂▂••▂▂▂▂▁▁▁▁▁▁▁▁▁▂▂▂▂▂▂▂▂▂▂▂▁▁▂▁▁▁▁▂▂▂▂▂▂▃▃▃▃▂▂▂▂▂▃▃▃▃▃▃▄▄▄  ││ ●●●●●●○ 6/7 worker…                           ▃▄▆▆▇████████████████  │
+│ 13 queries · 8 ! ·… ••••••██•••••••••••••••••••••••••••••••••••••••••••••••••••••••  ││ 4 of 4 hold a runa…                    ▃▅▆▇▇███████████████████████  │
+│                     ███████████████████████████████████████████████████████████████  ││                     ▅▅▄▆▅▅▄▄▆▄▄▅▅▄▆▄▅▄▅████████████████████████████  │
+│                     -60m                                          █ mem  • cpu  now  ││                     -60m                          waiting jobs  now  │
+╰──────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
+╭ 5 AIRFLOW ─────────────────────────────────────────────────────── last 24 h ─╮╭ 6 JIRA ─────────────────────────────────────────────────────────────── mine ─╮
+│ 217 runs  ✔ 211  ✖ 3  ▸ 2  ◌ 1  ↻ 1                                          ││ 4 › 4 › 1 › 3 done                                               ✖ 1 overdue │
+│ ▪▪▪▪▪▪▪▪▪▪▪▪▪▪✖✖▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪✖✖▪▪✖✖ ▸━                          ││ today 5h10 of 7h30 ▇▇ ▆▆ ·· ▅▅ ▇▇                                            │
+│ 18    00    06    12   now                                                   ││ DATA-2207 Product metrics integration — PostHog + ClickHouse → …         11d │
+│ ✖ test_clickhouse_connection                                         262d04h ││ DATA-2804 Reload mv_statement_daily_agg for 198 dates missing r…          8h │
+│ ▸ statement_daily_agg_reload                                           2h12m ││ DATA-2850 STATEMENT_DAILY_AGG: upstream moves drifted 131 histo…due tomorrow │
+│ ◌ gateway_transfers_backfill                                           4m12s ││ DATA-2849 airflow-dags: extract duplicated Google auth and pars…         15h │
+│ ✖ replication_app_consisten…                                           8m06s ││ DATA-2647 Client account balances as a daily warehouse table (p…  overdue 2d │
+│ ✖ kyc_onboarding_tables                                               10m48s ││ DATA-1817 Replicate gateway.bank_transfer_data (transfer origin…          2d │
+│ ✖ cbk_accounts_report                                                  3m36s ││ DATA-2788 cbk_accounts_report: close the duplicate-upload race …          2d │
+│ ▪ gateway_transfers_backfill                                          queued ││ DATA-2773 KYC onboarding tables for funnel cohorts and question…          2d │
+│ ▪ clickhouse_replication_ch…                                          7m ago ││ DATA-1289 Daily per-covenantee history of statement vs accounti…         12d │
+│ ▪ postgres_blacklist_etl                                             22m ago ││ DATA-2638 Enrich accounting_monitoring.statement_mismatches wit…        ✔ 2h │
+│ ▪ posthog_warehouse_refresh                                          32m ago ││ DATA-2737 Google Chat failure alerts for the 10 highest-impact …        ✔ 2d │
+│ ▪ cbk_accounts_report                                                37m ago ││ DATA-2650 Add all gateway.bank_account columns to the ClickHous…        ✔ 3d │
+│ ▪ single_table_reconcile                                             42m ago ││                                                                              │
+│ ▪ redash_scheduler_monitori…                                         52m ago ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+│                                                                              ││                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────────────╯
+╭ 7 TAPE ─────────────────────────────────────────────────── newest first · n note · y export ─╮╭ 8 SESSIONS ─────────────────────────────── 4 · \ floats one ─╮
+│ ✖ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▃▁▁▁▁▁▁▁▃▁▅▃  ▲ 15:51 ended m.kairys on clickhouse-bi after ≥ 1m00s…        ││ ✻ 7  billing export     ~/work/billing ⎇ main      ● working │
+│ ▲ ▁▁▁▁▁▁▃▁▁▁▁▁▃▁▁▁▁▁▁▁▁▃▁▁▃▁▃  ✖ 15:51 m.kairys's query on clickhouse-bi at 95% of i…        ││ ▣ 8  late partitions    ~/work/pipelines ⎇ fi…    ! approval │
+│                                ▲ 15:50 runaway m.kairys on clickhouse-bi — 80% of it…        ││ ▦ 9  sql · clickhouse3  —                             ○ idle │
+│                                ▲ 15:50 ended m.kairys on clickhouse-bi after ≥ 1m00s…        ││ ❯ 10 make totals        ~/work/reports ⎇ add-…        ○ idle │
+│                                ✖ 15:50 Redash queries backed up: 13 waiting, oldest …        ││ + new session · ↻ past conversations                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────╯
+ 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command   ? keys                                         ops · 9/9 nodes · 0.8 s · read-only

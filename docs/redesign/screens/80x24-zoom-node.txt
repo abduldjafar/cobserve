@@ -1,0 +1,24 @@
+ ❖ cobserve · prod    dashboard › node › clickesc back   ● live   15:52:07 WIB
+╭ 4 clickh shard 1 · replica 1 · v24.11.1 · up 46d07h · poll 0.6 s · esc back ─╮
+│ WHO HOLDS IT  memory, share of the node · t│MEMORY · 60 mino 93.1% of 64 GiB │
+│ grigol.gankava   █░░░░  25.5%  16.3G  3.10c│                             ▁▃▄ │
+│ j.petrova        █░░░░  12.9%   8.2G  0.70c│                        ▃▃▅▇████ │
+│ airflow          ░░░░░   5.5%   3.5G  5.00c│▁▂▂▃▁▂▃▁▁▃▃▂▂▂▂▃▂▂▁▃▅▆▇█████████ │
+│ haris            ░░░░░   1.9%   1.2G  0.30c│████████████████████████████████ │
+│ server · caches… ██░░░  47.4%  30.3G  5.80c│████████████████████████████████ │
+│                                            │████████████████████████████████ │
+│ 8f1c · #7438 Gateway transfers · 8m31s ! · │-60mly 42 s (318× / 7 d)     now │
+│ read 41.2 GB / 1.9 B rows · 57% done · E es│imate · would read 1.9 B rows · 41
+│ ▎ SELECT country, sum(amount) AS total, …  │CPU · 60 min   93.1% of 16 cores │
+│ ▎ FROM gateway.transfers WHERE created_a…  │                             ▁▃▄ │
+│ ▎ GROUP BY country ORDER BY total DESC     │                        ▃▃▅▇████ │
+│                                            │▁▂▂▃▁▂▃▁▁▃▃▂▂▂▂▃▂▂▁▃▅▆▇█████████ │
+│                                            │████████████████████████████████ │
+│                                            │████████████████████████████████ │
+│                                            │████████████████████████████████ │
+│                                            │-60m                         now │
+│                                            │                                 │
+│                                            │lag 0 s · 1.2k parts · free 4.4 Gi
+│                                            │                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ a person   e explain   c SQL on it        poll 0.6 s · read-only
