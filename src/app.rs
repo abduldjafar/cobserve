@@ -1018,6 +1018,7 @@ impl App {
     /// The clock at `at`, as a tick sets it — the tests and the screenshots choose their moment.
     pub fn tick_at(&mut self, at: SystemTime) {
         self.clock = at;
+        self.shell.expire(at);
         let now = self.now();
         if let Some(alert) = self.prayers.tick(now) {
             let moment = alert.moment();
@@ -1040,6 +1041,7 @@ impl App {
                 self.prayers.move_to(place);
                 self.on_tick();
             }
+            Event::Key(key) if self.shell.on => crate::ui2::keys::on_key(self, key),
             Event::Key(key) => self.on_key(key),
             // While paused, live data is dropped rather than queued up: unpausing must show
             // the last thing on screen, not a burst of everything that happened since (§3).

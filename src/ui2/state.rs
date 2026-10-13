@@ -23,19 +23,49 @@ impl Toast {
 /// At most this many toasts at once; the oldest goes first.
 pub const TOASTS: usize = 3;
 
+/// The palette (`:`) or the keys box (`?`), while open.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Palette {
+    pub query: String,
+    /// The row chosen among the matches.
+    pub sel: usize,
+    /// Which channel: 0 is the actions (`overlay::palette::CHANNELS`).
+    pub channel: usize,
+    /// Opened with `?`: the keys of the scope only.
+    pub help: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellState {
+    /// The new shell is the one on screen (`UI=2`); the old one otherwise.
+    pub on: bool,
+    /// What the top bar names after `cobserve ·`: the cluster, or `fake`.
+    pub profile: String,
     pub focus: PanelId,
     pub zoom: Option<PanelId>,
     pub preset: Preset,
     pub density: Density,
     pub toasts: Vec<Toast>,
+    /// The chosen node, by name: the NODE panel and the explain popover follow it. `None` until
+    /// one is chosen, which reads as the first in the sort order.
+    pub chosen: Option<String>,
+    pub palette: Option<Palette>,
 }
 
 impl Default for ShellState {
     /// The focus starts on NODES (`01-screen.md` *Focus and zoom*).
     fn default() -> ShellState {
-        ShellState { focus: PanelId::Nodes, zoom: None, preset: Preset::All, density: Density::Comfortable, toasts: Vec::new() }
+        ShellState {
+            on: false,
+            profile: "prod".into(),
+            focus: PanelId::Nodes,
+            zoom: None,
+            preset: Preset::All,
+            density: Density::Comfortable,
+            toasts: Vec::new(),
+            chosen: None,
+            palette: None,
+        }
     }
 }
 
@@ -65,6 +95,9 @@ impl ShellState {
     /// `esc`: close the top-most thing — here, the zoom. Never quits; says whether it closed
     /// something.
     pub fn back(&mut self) -> bool {
+        if self.palette.take().is_some() {
+            return true;
+        }
         self.zoom.take().is_some()
     }
 

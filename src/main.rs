@@ -108,7 +108,8 @@ async fn main() -> color_eyre::Result<()> {
         use std::io::Write;
         let _ = std::io::stdout().write_all(b"\x1b[22;0t");
     }
-    let result = run(&mut terminal, config, args.claude, modified_enter, caps).await;
+    let next_shell = args.next_shell || std::env::var("UI").is_ok_and(|v| v.trim() == "2");
+    let result = run(&mut terminal, config, args.claude, modified_enter, caps, next_shell).await;
 
     restore_terminal();
     result
@@ -158,10 +159,12 @@ fn install_panic_hook() {
     }));
 }
 
-async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool, caps: caps::Caps) -> color_eyre::Result<()> {
+async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool, caps: caps::Caps, next_shell: bool) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
     app.caps = caps;
+    app.shell.on = next_shell;
+    app.shell.profile = if config.fake { "fake".to_string() } else { config.clickhouse.cluster.clone() };
     app.poll_interval = config.poll;
     app.modified_enter = modified_enter;
     app.claude.commands = claude::Commands {
@@ -242,7 +245,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         // One frame at a time on the terminal (DEC 2026, where it is spoken): ratatui does not
         // wrap its draw in synchronized output itself; a terminal that does not know it ignores it.
         let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate);
-        let drawn = terminal.draw(|frame| ui::draw(frame, &app));
+        let drawn = terminal.draw(|frame| if app.shell.on { ui2::draw(frame, &app) } else { ui::draw(frame, &app) });
         let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::EndSynchronizedUpdate);
         drawn?;
         if inside_app {

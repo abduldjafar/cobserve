@@ -22,7 +22,7 @@ exactly for a good reason gets that reason in the test, not a looser comparison.
   and at 500 random sizes; the `Action` list has no duplicate keys within a scope.
 - No screen changes.
 
-## Phase 1 — shell skeleton (M)
+## Phase 1 — shell skeleton (M) — done
 
 `FAKE=1 UI=2 cargo run` shows: top bar with the day line, the grid with FLEET and QUEUE drawn
 (big numbers, graphs on the 4-minute history stretched and labelled `-4m`), empty frames for the
@@ -31,6 +31,13 @@ and `tab`, zoom frame with an empty body, `esc`, the palette (`tui-input` + `nuc
 toasts, density, presets.
 Acceptance: `120x36-dash.txt` rows 0–8 and 35, `80x24-dash.txt` rows 0–5, `160x48-dash.txt` rows
 0–10; `120x36-palette*.txt`; `120x36-dash-density-*.txt`; the resize fuzz.
+
+As built: the palette is our own (`ui2/overlay/palette.rs`, the simulation's `fz` scoring) rather
+than `tui-input` + `nucleo` — two crates for a one-line input and a subsequence match over a few
+hundred rows. The screens are compared by their frames (every corner and side in place), their
+chrome and their labels; the numbers inside come from the fake fleet, which is not the
+simulation's, and are checked against the engine instead (`ui2/tests.rs` says why). The queue's
+graph is on a fixed scale of 100 jobs waiting.
 
 ## Phase 2 — NODES and NODE (M)
 

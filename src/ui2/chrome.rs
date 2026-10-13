@@ -1,0 +1,192 @@
+//! The chrome (`01-screen.md` *Chrome*): the top bar — the name, the day line or its chip, the
+//! path while zoomed, the clock — and the status bar, whose hints come from the `Action` table and
+//! whose right end is the poll line.
+
+use super::paint::Painter;
+use crate::action;
+use crate::app::App;
+use crate::fmt;
+use crate::prayer::{Alert, Prayer};
+use crate::severity::Severity;
+use crate::theme::Theme;
+use crate::ui2::layout::Density;
+use ratatui::layout::Rect;
+use ratatui::style::Modifier;
+
+/// What sits at the right of the top bar: the clock and whether the numbers are live.
+fn clock_text(app: &App) -> (String, ClockState) {
+    let now = app.now();
+    let ck = format!("{} {}", app.time.hms(now), app.time.label(now));
+    if app.paused {
+        (format!("○ paused   {ck} "), ClockState::Paused)
+    } else if app.is_stale() {
+        let age = app.data_age().map(|d| fmt::dur(d.as_secs_f64())).unwrap_or_default();
+        (format!("◌ stale {age}   {ck} "), ClockState::Stale)
+    } else {
+        (format!("● live   {ck} "), ClockState::Live)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClockState {
+    Live,
+    Paused,
+    Stale,
+}
+
+pub fn top_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
+    if area.height == 0 || area.width < 20 {
+        return;
+    }
+    let (y, w) = (area.y, area.width);
+    p.put(1, y, "❖", theme.accent());
+    p.put(3, y, "cobserve", theme.strong());
+    p.put(12, y, &format!("· {}", app.shell.profile), theme.muted());
+
+    let (right, state) = clock_text(app);
+    let right_w = fmt::width(&right) as u16;
+    let start = p.putr(w - 1, y, &right, theme.text());
+    match state {
+        ClockState::Live => {
+            p.put(start, y, "●", theme.sev(Severity::Ok));
+        }
+        ClockState::Paused => {
+            p.put(start, y, &right, theme.muted());
+        }
+        ClockState::Stale => {
+            p.put(start, y, &right, theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        }
+    }
+    let middle_end = w.saturating_sub(right_w + 3);
+
+    if let Some(zoom) = app.shell.zoom {
+        let mut path = format!("dashboard › {}", zoom.slug());
+        if zoom == crate::ui2::PanelId::Node
+            && let Some(node) = super::chosen_node(app)
+        {
+            path.push_str(&format!(" › {node}"));
+        }
+        p.within(Rect::new(0, y, middle_end, 1), |p| {
+            p.put(22, y, &path, theme.muted());
+        });
+        p.putr(middle_end, y, "esc back ", theme.muted());
+        return;
+    }
+
+    let now = app.now();
+    if let Some(alert) = app.prayer_alert() {
+        let text = match alert {
+            Alert::Soon { moment, left } => format!("◷ {} in {} ", moment.name(), fmt::countdown(left)),
+            Alert::Now { moment, .. } => format!("☾ time for {} ", moment.name()),
+        };
+        let sev = if matches!(alert, Alert::Soon { .. }) { Severity::Warn } else { Severity::Ok };
+        p.putr(middle_end, y, &text, theme.sev(sev).add_modifier(Modifier::BOLD));
+        return;
+    }
+    let Some(schedule) = app.prayers.schedule.as_ref() else { return };
+    let avail = w as i32 - right_w as i32 - 24;
+    if app.shell.density == Density::Comfortable && avail >= 60 {
+        let today = schedule.today();
+        let friday = today.is_friday();
+        let stops: Vec<(&str, i64)> = Prayer::ALL.into_iter().filter_map(|pr| Some((pr.name(friday), today.at(pr)?))).collect();
+        let next = stops.iter().position(|s| s.1 > now);
+        let fill = ((avail - 58) / 6).max(1) as u16;
+        let names = avail >= 80;
+        let mut x = 22u16;
+        p.within(Rect::new(0, y, middle_end, 1), |p| {
+            for (i, (name, at)) in stops.iter().enumerate() {
+                let passed = *at <= now;
+                let is_next = Some(i) == next;
+                let label = if names { format!("{name} {}", app.time.local_hm(*at)) } else { app.time.local_hm(*at) };
+                let style = if is_next {
+                    theme.strong()
+                } else if passed {
+                    theme.text()
+                } else {
+                    theme.muted()
+                };
+                x = p.put(x, y, &label, style);
+                if is_next {
+                    x = p.put(x, y, &format!(" in {}", fmt::countdown(at - now)), theme.accent().add_modifier(Modifier::BOLD));
+                }
+                x += 1;
+                if let Some((_, to)) = stops.get(i + 1) {
+                    if now >= *to {
+                        p.run(x, y, '━', fill, theme.accent());
+                        x += fill + 1;
+                    } else if now < *at {
+                        p.run(x, y, '┄', fill, theme.muted());
+                        x += fill + 1;
+                    } else {
+                        let gone = (((now - at) as f64 / (to - at).max(1) as f64) * f64::from(fill)).round() as u16;
+                        let gone = gone.min(fill);
+                        p.run(x, y, '━', gone, theme.accent());
+                        p.put(x + gone, y, "●", theme.accent().add_modifier(Modifier::BOLD));
+                        p.run(x + gone + 1, y, '┄', fill - gone, theme.muted());
+                        x += fill + 2;
+                    }
+                }
+            }
+        });
+    } else if let Some(next) = schedule.next_prayer(now) {
+        p.putr(middle_end, y, &format!("☾ {} in {} ", next.name(), fmt::countdown(next.at - now)), theme.muted());
+    }
+}
+
+/// The poll line: `<preset> · 9/9 nodes · 0.8 s · read-only`.
+pub fn poll_line(app: &App, with_preset: bool) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if with_preset {
+        parts.push(app.shell.preset.name().to_string());
+    }
+    if let Some(snapshot) = app.snapshot() {
+        let reachable = snapshot.nodes.iter().filter(|n| n.reachable).count();
+        parts.push(format!("{reachable}/{} nodes", snapshot.nodes.len()));
+        if let Some(ms) = snapshot.nodes.iter().filter_map(|n| n.poll_ms).max() {
+            parts.push(format!("{:.1} s", f64::from(ms) / 1000.0));
+        }
+    }
+    parts.push("read-only".into());
+    parts.join(" · ")
+}
+
+/// The status bar: the hints of the scope in force, as many as fit, then the poll line.
+pub fn status_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
+    if area.height == 0 {
+        return;
+    }
+    let (y, w) = (area.y, area.width);
+    let status = poll_line(app, app.shell.zoom.is_none());
+    let limit = w.saturating_sub(fmt::width(&status) as u16 + 2);
+    let mut x = 1u16;
+    for (key, desc) in hints(app) {
+        let need = (fmt::width(&key) + fmt::width(&desc) + 4) as u16;
+        if x + need > limit {
+            continue;
+        }
+        p.put(x, y, &key, theme.accent().add_modifier(Modifier::BOLD));
+        p.put(x + fmt::width(&key) as u16 + 1, y, &desc, theme.muted());
+        x += need;
+    }
+    p.putr(w - 1, y, &status, theme.muted());
+}
+
+/// The hints the status bar offers, in rank order: `(key, what it does)`.
+pub fn hints(app: &App) -> Vec<(String, String)> {
+    let actions = action::actions_for(app);
+    if let Some(zoom) = app.shell.zoom {
+        // A zoom: esc first, then the zoom's own actions.
+        let mut out = vec![("esc".to_string(), "back".to_string())];
+        out.extend(actions.iter().filter(|a| matches!(a.scope, action::Scope::Zoomed(p) if p == zoom)).map(|a| (a.shown.to_string(), a.label.to_string())));
+        return out;
+    }
+    actions
+        .iter()
+        .filter(|a| !a.keys.is_empty())
+        .take(7)
+        .map(|a| {
+            let label = if a.id == "zoom" { format!("open {}", app.shell.focus.slug()) } else { a.label.to_string() };
+            (a.shown.to_string(), label)
+        })
+        .collect()
+}

@@ -2,10 +2,12 @@
 //! the status bar, `?` and the palette, so the three cannot disagree — and the key router, so no
 //! key does something unlisted and no listed key does nothing (`DESIGN.md` §3, made mechanical).
 //!
-//! Phase 0 lists the keys of `docs/redesign/05-keys.md` *Everywhere*. The ones whose work comes in
-//! a later phase say so in a toast when run; each phase replaces its stubs. `run` takes the key that
+//! It lists the keys of `docs/redesign/05-keys.md` *Everywhere*, and the palette-only actions
+//! (no key). The ones whose work comes in a later phase say so in a toast when run; each phase
+//! replaces its stubs. `run` takes the key that
 //! was pressed, since one action can answer several (`1`–`8` focus a panel).
 
+// The overlays' and the zooms' scopes fill in as their phases land (`06-build-order.md`).
 #![allow(dead_code)]
 
 use crate::app::App;
@@ -41,8 +43,10 @@ pub enum Scope {
 pub struct Action {
     /// `explain`, `zoom`, `cancel-job` — what the palette runs it by.
     pub id: &'static str,
-    /// `explain this number`.
+    /// `explain`: the status bar's word for it.
     pub label: &'static str,
+    /// `explain this number`: the palette's line for it.
+    pub phrase: &'static str,
     /// `the value under the cursor · its §5 formula`.
     pub detail: &'static str,
     /// The keys it answers, as `KeyCode` names them; empty for a palette-only action.
@@ -89,38 +93,39 @@ fn grid_or_local(app: &mut App, key: &str) {
 }
 
 pub static ACTIONS: &[Action] = &[
-    Action { id: "focus", label: "panel", detail: "focus a panel · while zoomed, switch the zoom", keys: &["1", "2", "3", "4", "5", "6", "7", "8"], shown: "1-8", scope: Scope::Everywhere, rank: 1, enabled: always, run: focus_number },
-    Action { id: "zoom", label: "open", detail: "the focused panel full-screen · in a zoom, the panel's own open", keys: &["Enter"], shown: "⏎", scope: Scope::Everywhere, rank: 2, enabled: always, run: |app, _| app.shell.toggle_zoom() },
-    Action { id: "choose", label: "choose", detail: "move the focused panel's cursor", keys: &["Left", "Right", "Up", "Down", "h", "j", "k", "l", "PageUp", "PageDown", "Home", "End"], shown: "←→↑↓", scope: Scope::Everywhere, rank: 3, enabled: always, run: later },
-    Action { id: "explain", label: "explain", detail: "the number under the cursor · its §5 formula and inputs", keys: &["e"], shown: "e", scope: Scope::Everywhere, rank: 4, enabled: always, run: later },
-    Action { id: "layout", label: "layout", detail: "preset all → fleet → ops", keys: &["p"], shown: "p", scope: Scope::Everywhere, rank: 5, enabled: always, run: |app, _| app.shell.cycle_preset() },
-    Action { id: "palette", label: "command", detail: "every action and object, fuzzy", keys: &[":"], shown: ":", scope: Scope::Everywhere, rank: 6, enabled: always, run: later },
-    Action { id: "keys", label: "keys", detail: "the keys of this scope", keys: &["?"], shown: "?", scope: Scope::Everywhere, rank: 7, enabled: always, run: later },
-    Action { id: "next-panel", label: "next panel", detail: "the focus to the next panel", keys: &["Tab"], shown: "tab", scope: Scope::Everywhere, rank: 8, enabled: always, run: |app, _| app.shell.step(true) },
-    Action { id: "prev-panel", label: "previous panel", detail: "the focus to the previous panel", keys: &["BackTab"], shown: "⇧tab", scope: Scope::Everywhere, rank: 9, enabled: always, run: |app, _| app.shell.step(false) },
-    Action { id: "back", label: "back", detail: "close the top-most thing: overlay, filter, zoom · never quits", keys: &["Esc", "Backspace"], shown: "esc", scope: Scope::Everywhere, rank: 10, enabled: always, run: |app, _| {
+    Action { id: "focus", label: "panel", phrase: "focus a panel", detail: "focus a panel · while zoomed, switch the zoom", keys: &["1", "2", "3", "4", "5", "6", "7", "8"], shown: "1-8", scope: Scope::Everywhere, rank: 1, enabled: always, run: focus_number },
+    Action { id: "zoom", label: "open", phrase: "open the focused panel", detail: "the focused panel full-screen · in a zoom, the panel's own open", keys: &["Enter"], shown: "⏎", scope: Scope::Everywhere, rank: 2, enabled: always, run: |app, _| app.shell.toggle_zoom() },
+    Action { id: "choose", label: "choose", phrase: "choose", detail: "move the focused panel's cursor", keys: &["Left", "Right", "Up", "Down", "h", "j", "k", "l", "PageUp", "PageDown", "Home", "End"], shown: "←→↑↓", scope: Scope::Everywhere, rank: 3, enabled: always, run: later },
+    Action { id: "explain", label: "explain", phrase: "explain this number", detail: "the number under the cursor · its §5 formula and inputs", keys: &["e"], shown: "e", scope: Scope::Everywhere, rank: 4, enabled: always, run: later },
+    Action { id: "layout", label: "layout", phrase: "layout · all → fleet → ops", detail: "preset all → fleet → ops", keys: &["p"], shown: "p", scope: Scope::Everywhere, rank: 5, enabled: always, run: |app, _| app.shell.cycle_preset() },
+    Action { id: "palette", label: "command", phrase: "command palette", detail: "every action and object, fuzzy", keys: &[":"], shown: ":", scope: Scope::Everywhere, rank: 6, enabled: always, run: |app, _| crate::ui2::keys::open_palette(app, false) },
+    Action { id: "keys", label: "keys", phrase: "keys for this screen", detail: "the keys of this scope", keys: &["?"], shown: "?", scope: Scope::Everywhere, rank: 7, enabled: always, run: |app, _| crate::ui2::keys::open_palette(app, true) },
+    Action { id: "next-panel", label: "next panel", phrase: "next panel", detail: "the focus to the next panel", keys: &["Tab"], shown: "tab", scope: Scope::Everywhere, rank: 8, enabled: always, run: |app, _| app.shell.step(true) },
+    Action { id: "prev-panel", label: "previous panel", phrase: "previous panel", detail: "the focus to the previous panel", keys: &["BackTab"], shown: "⇧tab", scope: Scope::Everywhere, rank: 9, enabled: always, run: |app, _| app.shell.step(false) },
+    Action { id: "back", label: "back", phrase: "back · close the top-most thing", detail: "close the top-most thing: overlay, filter, zoom · never quits", keys: &["Esc", "Backspace"], shown: "esc", scope: Scope::Everywhere, rank: 10, enabled: always, run: |app, _| {
         app.shell.back();
     } },
-    Action { id: "grid", label: "grid", detail: "the grid from a zoom · this Mac (`:local`) from the grid", keys: &["0"], shown: "0", scope: Scope::Everywhere, rank: 11, enabled: always, run: grid_or_local },
-    Action { id: "zoom-toggle", label: "zoom ↔ grid", detail: "the same as ⏎ and esc on a panel", keys: &["f"], shown: "f", scope: Scope::Everywhere, rank: 12, enabled: always, run: |app, _| app.shell.toggle_zoom() },
-    Action { id: "estimate", label: "estimate", detail: "EXPLAIN ESTIMATE of the chosen query · read-only", keys: &["E"], shown: "E", scope: Scope::Everywhere, rank: 13, enabled: always, run: later },
-    Action { id: "filter", label: "filter", detail: "the focused list, by substring · esc clears", keys: &["/"], shown: "/", scope: Scope::Everywhere, rank: 14, enabled: always, run: later },
-    Action { id: "float", label: "float a session", detail: "the chosen session over any panel · again: the prefix", keys: &["\\", "ctrl+\\"], shown: "\\", scope: Scope::Everywhere, rank: 15, enabled: always, run: later },
-    Action { id: "sql", label: "SQL on it", detail: "a SQL session on the chosen node, floating", keys: &["c"], shown: "c", scope: Scope::Everywhere, rank: 16, enabled: always, run: later },
-    Action { id: "density", label: "density", detail: "comfortable → compact → focus", keys: &["+"], shown: "+", scope: Scope::Everywhere, rank: 17, enabled: always, run: |app, _| app.shell.cycle_density() },
-    Action { id: "sort", label: "sort", detail: "the nodes: pressure → memory → CPU → name", keys: &["s"], shown: "s", scope: Scope::Everywhere, rank: 18, enabled: always, run: |app, _| app.tree.sort = app.tree.sort.next() },
-    Action { id: "replay-back", label: "a minute back", detail: "replay one minute back, up to 59", keys: &["["], shown: "[", scope: Scope::Everywhere, rank: 19, enabled: always, run: later },
-    Action { id: "replay-forward", label: "a minute forward", detail: "replay one minute forward", keys: &["]"], shown: "]", scope: Scope::Everywhere, rank: 20, enabled: always, run: later },
-    Action { id: "live", label: "live", detail: "back from replay to now", keys: &["t"], shown: "t", scope: Scope::Everywhere, rank: 21, enabled: always, run: later },
-    Action { id: "pause", label: "pause", detail: "stop taking new numbers · the clock goes on", keys: &[" "], shown: "space", scope: Scope::Everywhere, rank: 22, enabled: always, run: |app, _| app.paused = !app.paused },
-    Action { id: "refresh", label: "read now", detail: "every source again now", keys: &["r"], shown: "r", scope: Scope::Everywhere, rank: 23, enabled: always, run: later },
-    Action { id: "note", label: "note", detail: "a note on the tape", keys: &["n"], shown: "n", scope: Scope::Everywhere, rank: 24, enabled: always, run: later },
-    Action { id: "copy-link", label: "copy link", detail: "the row's link · OSC 8 where it works", keys: &["y"], shown: "y", scope: Scope::Everywhere, rank: 25, enabled: always, run: later },
-    Action { id: "snooze", label: "snooze", detail: "no notifications for an hour", keys: &["z"], shown: "z", scope: Scope::Everywhere, rank: 26, enabled: always, run: later },
-    Action { id: "came-from", label: "where I was", detail: "back to where you came from", keys: &["-"], shown: "-", scope: Scope::Everywhere, rank: 27, enabled: always, run: later },
-    Action { id: "wall", label: "wall", detail: "the big numbers alone", keys: &["W"], shown: "W", scope: Scope::Everywhere, rank: 28, enabled: always, run: later },
-    Action { id: "quit", label: "quit", detail: "leave cobserve", keys: &["q", "ctrl+c"], shown: "q", scope: Scope::Everywhere, rank: 29, enabled: always, run: |app, _| app.quit = true },
-    Action { id: "cancel-job", label: "cancel job", detail: "the job under the cursor in Redash: a dialog, then y", keys: &["x"], shown: "x", scope: Scope::Panel(PanelId::Queue), rank: 4, enabled: zoomed, run: later },
+    Action { id: "grid", label: "grid", phrase: "the grid", detail: "the grid from a zoom · this Mac (`:local`) from the grid", keys: &["0"], shown: "0", scope: Scope::Everywhere, rank: 11, enabled: always, run: grid_or_local },
+    Action { id: "zoom-toggle", label: "zoom ↔ grid", phrase: "zoom ↔ grid", detail: "the same as ⏎ and esc on a panel", keys: &["f"], shown: "f", scope: Scope::Everywhere, rank: 12, enabled: always, run: |app, _| app.shell.toggle_zoom() },
+    Action { id: "estimate", label: "estimate", phrase: "explain estimate · this query", detail: "EXPLAIN ESTIMATE of the chosen query · read-only", keys: &["E"], shown: "E", scope: Scope::Everywhere, rank: 13, enabled: always, run: later },
+    Action { id: "filter", label: "filter", phrase: "filter this list", detail: "the focused list, by substring · esc clears", keys: &["/"], shown: "/", scope: Scope::Everywhere, rank: 14, enabled: always, run: later },
+    Action { id: "float", label: "float a session", phrase: "float the session", detail: "the chosen session over any panel · again: the prefix", keys: &["\\", "ctrl+\\"], shown: "\\", scope: Scope::Everywhere, rank: 15, enabled: always, run: later },
+    Action { id: "sql", label: "SQL on it", phrase: "SQL on this node", detail: "a SQL session on the chosen node, floating", keys: &["c"], shown: "c", scope: Scope::Everywhere, rank: 16, enabled: always, run: later },
+    Action { id: "density", label: "density", phrase: "density · comfortable → compact → focus", detail: "comfortable → compact → focus", keys: &["+"], shown: "+", scope: Scope::Everywhere, rank: 17, enabled: always, run: |app, _| app.shell.cycle_density() },
+    Action { id: "sort", label: "sort", phrase: "sort · pressure → memory → CPU → name", detail: "the nodes: pressure → memory → CPU → name", keys: &["s"], shown: "s", scope: Scope::Everywhere, rank: 18, enabled: always, run: |app, _| app.tree.sort = app.tree.sort.next() },
+    Action { id: "replay-back", label: "a minute back", phrase: "replay · back one minute", detail: "replay one minute back, up to 59", keys: &["["], shown: "[", scope: Scope::Everywhere, rank: 19, enabled: always, run: later },
+    Action { id: "replay-forward", label: "a minute forward", phrase: "replay · forward one minute", detail: "replay one minute forward", keys: &["]"], shown: "]", scope: Scope::Everywhere, rank: 20, enabled: always, run: later },
+    Action { id: "live", label: "live", phrase: "back to live", detail: "back from replay to now", keys: &["t"], shown: "t", scope: Scope::Everywhere, rank: 21, enabled: always, run: later },
+    Action { id: "pause", label: "pause", phrase: "pause polling", detail: "stop taking new numbers · the clock goes on", keys: &[" "], shown: "space", scope: Scope::Everywhere, rank: 22, enabled: always, run: |app, _| app.paused = !app.paused },
+    Action { id: "refresh", label: "read now", phrase: "read now", detail: "every source again now", keys: &["r"], shown: "r", scope: Scope::Everywhere, rank: 23, enabled: always, run: later },
+    Action { id: "note", label: "note", phrase: "note on the tape", detail: "a note on the tape", keys: &["n"], shown: "n", scope: Scope::Everywhere, rank: 24, enabled: always, run: later },
+    Action { id: "copy-link", label: "copy link", phrase: "copy the row's link", detail: "the row's link · OSC 8 where it works", keys: &["y"], shown: "y", scope: Scope::Everywhere, rank: 25, enabled: always, run: later },
+    Action { id: "snooze", label: "snooze", phrase: "snooze notifications · 1 h", detail: "no notifications for an hour", keys: &["z"], shown: "z", scope: Scope::Everywhere, rank: 26, enabled: always, run: later },
+    Action { id: "came-from", label: "where I was", phrase: "back to where I was", detail: "back to where you came from", keys: &["-"], shown: "-", scope: Scope::Everywhere, rank: 27, enabled: always, run: later },
+    Action { id: "wall", label: "wall", phrase: "wall · the big numbers alone", detail: "the big numbers alone", keys: &["W"], shown: "W", scope: Scope::Everywhere, rank: 28, enabled: always, run: later },
+    Action { id: "quit", label: "quit", phrase: "quit", detail: "leave cobserve", keys: &["q", "ctrl+c"], shown: "q", scope: Scope::Everywhere, rank: 29, enabled: always, run: |app, _| app.quit = true },
+    Action { id: "clock", label: "clock · local ↔ UTC", phrase: "clock · local ↔ UTC", detail: "the servers' own time, or this machine's", keys: &[], shown: "", scope: Scope::Everywhere, rank: 40, enabled: always, run: |app, _| app.time.flip() },
+    Action { id: "cancel-job", label: "cancel job", phrase: "cancel this Redash job", detail: "the job under the cursor in Redash: a dialog, then y", keys: &["x"], shown: "x", scope: Scope::Panel(PanelId::Queue), rank: 4, enabled: zoomed, run: later },
 ];
 
 /// The actions that can be taken now: those of the scopes in force, enabled, by rank.
@@ -168,7 +173,7 @@ mod tests {
         let before = ids.len();
         ids.dedup();
         assert_eq!(ids.len(), before, "an id twice");
-        assert!(ACTIONS.iter().all(|a| !a.label.is_empty() && !a.detail.is_empty() && !a.shown.is_empty()));
+        assert!(ACTIONS.iter().all(|a| !a.label.is_empty() && !a.detail.is_empty() && (a.keys.is_empty() || !a.shown.is_empty())));
     }
 
     #[test]

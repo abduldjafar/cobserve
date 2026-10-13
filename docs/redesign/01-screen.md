@@ -103,7 +103,8 @@ middle; the NODE panel leaves) → `all`. Kept in the config as `layout = "all"`
 ## Density (`+`)
 
 `comfortable` (the day line) → `compact` (the chip instead; nothing else changes) → `focus` (no
-top bar at all; the clock moves into the status bar's right part). Screens:
+top bar at all; the status bar stays as it is, as the screen draws it — the clock is gone with the
+bar). Screens:
 `120x36-dash-density-compact.txt`, `120x36-dash-density-focus.txt`.
 
 ## Focus and zoom

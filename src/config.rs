@@ -171,6 +171,7 @@ Usage: cobserve [--credential FILE] [--claude]
                       cluster and Redash) in YAML — see credentials.example.yaml. What the
                       file says wins over the environment.
   --claude            open on view 5: Claude Code in a pane, the monitor above it
+  --shell next        the new shell, mission control (as UI=2 does)
   -h, --help          this text
   -V, --version       the version
 
@@ -207,6 +208,8 @@ pub struct Args {
     pub credential: Option<PathBuf>,
     /// Open on view 5, with Claude started.
     pub claude: bool,
+    /// `--shell next`: the new shell (`docs/redesign/`), as `UI=2` does.
+    pub next_shell: bool,
     pub help: bool,
     pub version: bool,
 }
@@ -220,6 +223,11 @@ impl Args {
                 "-h" | "--help" => parsed.help = true,
                 "-V" | "--version" => parsed.version = true,
                 "--claude" => parsed.claude = true,
+                "--shell" => match args.next().as_deref() {
+                    Some("next") => parsed.next_shell = true,
+                    Some("old") => parsed.next_shell = false,
+                    _ => return Err(ConfigError::Usage("--shell takes next or old".to_string())),
+                },
                 "-c" | "--credential" | "--credentials" => {
                     let path = args.next().filter(|p| !p.is_empty()).ok_or_else(|| {
                         ConfigError::Usage(format!("{arg} needs a file, e.g. {arg} credentials.yaml"))

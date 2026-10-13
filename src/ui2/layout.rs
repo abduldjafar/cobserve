@@ -40,6 +40,20 @@ impl PanelId {
     }
 
     /// The title its frame carries.
+    /// The panel's name in lower case, as the path and the palette say it: `queue`, `node`.
+    pub fn slug(self) -> &'static str {
+        match self {
+            PanelId::Fleet => "fleet",
+            PanelId::Queue => "queue",
+            PanelId::Nodes => "nodes",
+            PanelId::Node => "node",
+            PanelId::Airflow => "airflow",
+            PanelId::Jira => "jira",
+            PanelId::Tape => "tape",
+            PanelId::Sessions => "sessions",
+        }
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             PanelId::Fleet => "FLEET",
