@@ -1665,6 +1665,57 @@ impl App {
         }
     }
 
+    /// The new shell zoomed a panel that is one of today's views: that view under it, with its
+    /// state brought up to date, so the zoom draws and moves as the view does.
+    pub fn set_view(&mut self, view: View) {
+        if self.view != view {
+            self.go_to_view(view);
+        }
+        self.sync_view_state();
+    }
+
+    /// A key for the view under the new shell's zoom: that view's own handler, as today.
+    pub fn view_key(&mut self, key: KeyEvent) {
+        match self.view {
+            View::Queue => self.on_queue_key(key),
+            View::Airflow => self.on_airflow_key(key.code),
+            View::Jira => self.on_jira_key(key.code),
+            View::Tape => self.on_tape_key(key.code),
+            View::Local => self.on_local_key(key.code),
+            _ => {}
+        }
+        self.sync_view_state();
+    }
+
+    /// `r` in the new shell: the sources that can be asked again at once (ClickHouse and Redash
+    /// are read every poll anyway).
+    pub fn read_now(&mut self) {
+        self.read_again(Feed::Airflow);
+        self.read_again(Feed::Jira);
+    }
+
+    /// `n`: a line of the person at the screen, kept on the tape with the events.
+    pub fn note(&mut self, text: &str) {
+        let at = crate::history::secs(self.clock);
+        self.tape.extend([crate::tape::Event {
+            at,
+            level: Severity::Info,
+            kind: crate::tape::Kind::Note,
+            parts: vec![("✎ ".to_string(), insight::Tone::Plain), (text.to_string(), insight::Tone::Strong)],
+            subject: None,
+        }]);
+    }
+
+    /// The answer to the cancel `x` asked about: `y` sends it, anything else keeps the job.
+    pub fn answer_cancel(&mut self, yes: bool) {
+        if let Some(id) = self.queue_confirm.take()
+            && yes
+        {
+            self.cancel_job(&id);
+        }
+        self.sync_view_state();
+    }
+
     /// The session bar's commands, after `ctrl+\`.
     fn on_bar_key(&mut self, key: KeyEvent) {
         let closing = std::mem::take(&mut self.claude.closing);

@@ -24,22 +24,22 @@
 //! prayer's reminder in its place when one is near. Colour comes from `theme.rs`; this module
 //! asks for roles, never for colours.
 
-mod airflow;
+pub(crate) mod airflow;
 mod band;
 mod board;
 mod cards;
 mod claude;
 mod console;
 mod day;
-mod detail;
-mod drawer;
-mod jira;
+pub(crate) mod detail;
+pub(crate) mod drawer;
+pub(crate) mod jira;
 mod local;
 mod loom;
 mod map;
 mod nodes;
-mod queue;
-mod tape;
+pub(crate) mod queue;
+pub(crate) mod tape;
 mod usage;
 pub mod widgets;
 

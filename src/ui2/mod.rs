@@ -19,6 +19,7 @@ pub mod overlay;
 pub mod paint;
 pub mod panels;
 pub mod state;
+pub mod views;
 
 #[cfg(test)]
 mod tests;
@@ -42,38 +43,52 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
-    let buf = frame.buffer_mut();
-    let mut p = Painter::new(buf);
-    p.clear(area, theme.base());
-    if area.width < MIN_W || area.height < MIN_H {
-        let text = format!("cobserve · too small ({MIN_W}×{MIN_H} at least)");
-        p.put(0, 0, &paint::tr(&text, area.width as usize), theme.muted());
-        return;
-    }
-    let nodes = app.snapshot().map_or(0, |s| s.nodes.len());
-    let grid = layout::compute(area.width, area.height, app.shell.preset, app.shell.density, nodes);
-    chrome::top_bar(&mut p, app, theme, grid.top);
-    match app.shell.zoom {
-        Some(zoom) => {
-            let top = grid.top.height;
-            let r = Rect::new(0, top, area.width, area.height.saturating_sub(1 + top));
-            panels::draw_zoomed(&mut p, app, theme, zoom, r);
+    let (grid, view_inside) = {
+        let mut p = Painter::new(frame.buffer_mut());
+        p.clear(area, theme.base());
+        if area.width < MIN_W || area.height < MIN_H {
+            let text = format!("cobserve · too small ({MIN_W}×{MIN_H} at least)");
+            p.put(0, 0, &paint::tr(&text, area.width as usize), theme.muted());
+            return;
         }
-        None => {
-            for (id, r) in &grid.panels {
-                if r.height < 3 || r.width < 6 {
-                    continue;
+        let nodes = app.snapshot().map_or(0, |s| s.nodes.len());
+        let grid = layout::compute(area.width, area.height, app.shell.preset, app.shell.density, nodes);
+        chrome::top_bar(&mut p, app, theme, grid.top);
+        let mut inside = None;
+        match app.shell.zoom {
+            Some(zoom) => {
+                let top = grid.top.height;
+                let r = Rect::new(0, top, area.width, area.height.saturating_sub(1 + top));
+                inside = panels::draw_zoomed(&mut p, app, theme, zoom, r).map(|i| (zoom, i));
+            }
+            None => {
+                for (id, r) in &grid.panels {
+                    if r.height < 3 || r.width < 6 {
+                        continue;
+                    }
+                    panels::draw(&mut p, app, theme, *id, *r, app.shell.focus == *id, (grid.tile_w, grid.tile_h));
                 }
-                panels::draw(&mut p, app, theme, *id, *r, app.shell.focus == *id, (grid.tile_w, grid.tile_h));
             }
         }
+        (grid, inside)
+    };
+    // Today's views, zoomed: they draw with ratatui's widgets into the frame.
+    if let Some((zoom, inside)) = view_inside {
+        views::draw(frame, app, theme, zoom, inside);
     }
+    let mut p = Painter::new(frame.buffer_mut());
     chrome::status_bar(&mut p, app, theme, grid.status);
     if let Some(e) = &app.shell.explain {
         overlay::explain::draw(&mut p, theme, e);
     }
+    if let Some(job) = app.cancel_asked() {
+        overlay::dialog::draw(&mut p, app, theme, job);
+    }
     if let Some(palette) = &app.shell.palette {
         overlay::palette::draw(&mut p, app, theme, palette);
+    }
+    if let Some(note) = &app.shell.note {
+        overlay::note::draw(&mut p, theme, note, grid.status);
     }
     let mut lines: Vec<(String, bool)> = app.shell.toasts.iter().map(|t| (t.text.clone(), t.error)).collect();
     if let Some(notice) = app.notice() {

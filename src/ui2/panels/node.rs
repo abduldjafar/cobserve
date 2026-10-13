@@ -97,7 +97,7 @@ pub fn draw(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, focused: boo
         return;
     }
     let drawn = with_chosen(app, |n| {
-        p.within(Rect::new(i.x.saturating_sub(1), i.y, i.width + 2, i.height), |p| body(p, app, theme, n, i, focused));
+        p.within(i, |p| body(p, app, theme, n, i, focused));
     });
     if drawn.is_none() {
         p.put(i.x, i.y, "waiting for the first snapshot…", theme.muted());
@@ -121,7 +121,7 @@ fn body(p: &mut Painter<'_>, app: &App, theme: &Theme, n: &NodeView<'_>, i: Rect
     for (k, (row, fill)) in rows.iter().zip(&fills).enumerate().skip(first).take(room) {
         let y = i.y + (k - first) as u16;
         if focused && k == at {
-            p.style(Rect::new(i.x - 1, y, i.width + 2, 1), theme.selected());
+            p.band(Rect::new(i.x - 1, y, i.width + 2, 1), theme.selected());
         }
         let (fill_style, text_style) = row_style(theme, row);
         let name_style = if row.is_server() { theme.muted() } else { theme.person() };

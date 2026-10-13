@@ -77,7 +77,8 @@ pub fn choose(app: &mut App, key: &str) {
                 app.shell.person = Some(k.clone());
             }
         }
-        other => toast(app, format!("{} · its cursor comes in phase 3", other.slug())),
+        PanelId::Queue | PanelId::Airflow | PanelId::Jira | PanelId::Tape => crate::ui2::views::pass(app, key),
+        PanelId::Sessions => toast(app, "sessions · their cursor comes in phase 4"),
     }
 }
 
@@ -96,7 +97,8 @@ pub fn open(app: &mut App) {
             app.shell.zoom = Some(PanelId::Node);
         }
         PanelId::Node => explain_now(app),
-        other => toast(app, format!("⏎ in {} comes in phase 3", other.slug())),
+        PanelId::Queue | PanelId::Airflow | PanelId::Jira | PanelId::Tape => crate::ui2::views::pass(app, "Enter"),
+        PanelId::Sessions => toast(app, "⏎ in sessions comes in phase 4"),
     }
 }
 
@@ -146,6 +148,28 @@ pub fn filter(app: &mut App) {
         PanelId::Nodes | PanelId::Fleet => {
             app.shell.filter = Some(crate::ui2::state::Filter { query: String::new(), typing: true });
         }
-        other => toast(app, format!("/ in {} comes in phase 3", other.slug())),
+        other => toast(app, format!("/ filters the tiles; {} lists keep their own order", other.slug())),
+    }
+}
+
+/// `y`: the link or the id of what is under the cursor, on the clipboard.
+pub fn copy_link(app: &mut App, key: &str) {
+    let text = match target(app) {
+        PanelId::Airflow | PanelId::Jira => return crate::ui2::views::pass(app, key),
+        PanelId::Queue => app.selected_job().map(|j| j.id.clone()),
+        PanelId::Node => node::with_chosen(app, |n| {
+            let rows = node::rows(n);
+            let row = &rows[node::cursor(app, &rows)];
+            n.users.iter().find(|u| u.label() == row.key).and_then(|u| u.queries.first()).map_or_else(|| n.name().to_string(), |q| q.query.query_id.clone())
+        }),
+        PanelId::Fleet | PanelId::Nodes => crate::ui2::chosen_node(app),
+        PanelId::Tape | PanelId::Sessions => None,
+    };
+    match text {
+        Some(t) => {
+            toast(app, format!("copied {t}"));
+            app.copy(t);
+        }
+        None => toast(app, "nothing under the cursor to copy"),
     }
 }

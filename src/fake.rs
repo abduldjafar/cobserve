@@ -457,6 +457,12 @@ impl FakeSource {
         }
     }
 
+    /// A fake fleet whose first poll is at `epoch` — for the tests that freeze the clock.
+    #[cfg(test)]
+    pub fn starting_at(epoch: SystemTime) -> Self {
+        Self { epoch, ..Self::new() }
+    }
+
     fn now(&self) -> SystemTime {
         self.epoch + self.tick
     }

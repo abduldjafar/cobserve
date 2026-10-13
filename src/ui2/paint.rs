@@ -86,6 +86,13 @@ impl<'a> Painter<'a> {
         self.buf.set_style(area, style);
     }
 
+    /// Patch the style of a rectangle that may reach past the clip — a selection band runs under
+    /// the frame's sides — staying inside the buffer.
+    pub fn band(&mut self, area: Rect, style: Style) {
+        let area = self.buf.area.intersection(area);
+        self.buf.set_style(area, style);
+    }
+
     /// Only the background of a rectangle.
     pub fn bg(&mut self, area: Rect, color: Color) {
         self.style(area, Style::default().bg(color));

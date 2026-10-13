@@ -73,6 +73,8 @@ pub struct ShellState {
     pub palette: Option<Palette>,
     pub filter: Option<Filter>,
     pub explain: Option<Explained>,
+    /// `n`: the note being written.
+    pub note: Option<String>,
     /// How many tiles the last frame fit a row, on the grid and zoomed: what `↑↓` step by.
     pub tiles_per_row: std::cell::Cell<u16>,
     pub zoom_tiles_per_row: std::cell::Cell<u16>,
@@ -94,6 +96,7 @@ impl Default for ShellState {
             palette: None,
             filter: None,
             explain: None,
+            note: None,
             tiles_per_row: std::cell::Cell::new(1),
             zoom_tiles_per_row: std::cell::Cell::new(1),
         }

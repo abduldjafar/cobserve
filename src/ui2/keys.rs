@@ -39,6 +39,18 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
     if app.shell.palette.is_some() {
         return palette_key(app, key);
     }
+    if app.cancel_asked().is_some() {
+        // The dialog: `y` sends the cancel, anything else keeps the job.
+        let yes = matches!(key.code, KeyCode::Char('y' | 'Y'));
+        app.answer_cancel(yes);
+        if !yes {
+            app.shell.toast("kept · nothing was sent", false, std::time::SystemTime::now());
+        }
+        return;
+    }
+    if app.shell.note.is_some() {
+        return note_key(app, key);
+    }
     if let Some(e) = app.shell.explain.take() {
         // Explain: ⏎ asks Claude, y copies, anything else closes.
         match key.code {
@@ -58,6 +70,28 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
     if let Some(a) = action::for_key(app, &name) {
         (a.run)(app, &name);
     }
+    crate::ui2::views::sync(app);
+}
+
+/// Writing a note: printable keys add, `⌫` takes back, `⏎` keeps it on the tape, `esc` drops it.
+fn note_key(app: &mut App, key: KeyEvent) {
+    let Some(mut note) = app.shell.note.take() else { return };
+    match key.code {
+        KeyCode::Esc => return,
+        KeyCode::Enter => {
+            if !note.trim().is_empty() {
+                app.note(note.trim());
+                app.shell.toast("✎ note kept on the tape", false, std::time::SystemTime::now());
+            }
+            return;
+        }
+        KeyCode::Backspace => {
+            note.pop();
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => note.push(c),
+        _ => {}
+    }
+    app.shell.note = Some(note);
 }
 
 /// Typing into `/`: printable keys add, `⌫` takes back, `⏎` keeps it, `esc` clears it.

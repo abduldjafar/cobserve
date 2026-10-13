@@ -86,6 +86,24 @@ fn focus_number(app: &mut App, key: &str) {
     }
 }
 
+/// `esc`: what is open inside a zoomed view (a page, the month's time) first, then the shell's.
+fn back(app: &mut App, key: &str) {
+    if app.shell.palette.is_none() && app.shell.explain.is_none() && app.shell.filter.is_none() && crate::ui2::views::has_inner(app) {
+        crate::ui2::views::pass(app, key);
+        return;
+    }
+    app.shell.back();
+}
+
+fn read_now(app: &mut App, _: &str) {
+    app.read_now();
+    app.shell.toast("reading Airflow and Jira now · ClickHouse and Redash are read every poll", false, SystemTime::now());
+}
+
+fn pass(app: &mut App, key: &str) {
+    crate::ui2::views::pass(app, key);
+}
+
 fn grid_or_local(app: &mut App, key: &str) {
     if !app.shell.back() {
         later(app, key);
@@ -102,9 +120,7 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "keys", label: "keys", phrase: "keys for this screen", detail: "the keys of this scope", keys: &["?"], shown: "?", scope: Scope::Everywhere, rank: 7, enabled: always, run: |app, _| crate::ui2::keys::open_palette(app, true) },
     Action { id: "next-panel", label: "next panel", phrase: "next panel", detail: "the focus to the next panel", keys: &["Tab"], shown: "tab", scope: Scope::Everywhere, rank: 8, enabled: always, run: |app, _| app.shell.step(true) },
     Action { id: "prev-panel", label: "previous panel", phrase: "previous panel", detail: "the focus to the previous panel", keys: &["BackTab"], shown: "⇧tab", scope: Scope::Everywhere, rank: 9, enabled: always, run: |app, _| app.shell.step(false) },
-    Action { id: "back", label: "back", phrase: "back · close the top-most thing", detail: "close the top-most thing: overlay, filter, zoom · never quits", keys: &["Esc", "Backspace"], shown: "esc", scope: Scope::Everywhere, rank: 10, enabled: always, run: |app, _| {
-        app.shell.back();
-    } },
+    Action { id: "back", label: "back", phrase: "back · close the top-most thing", detail: "close the top-most thing: overlay, filter, zoom · never quits", keys: &["Esc", "Backspace"], shown: "esc", scope: Scope::Everywhere, rank: 10, enabled: always, run: back },
     Action { id: "grid", label: "grid", phrase: "the grid", detail: "the grid from a zoom · this Mac (`:local`) from the grid", keys: &["0"], shown: "0", scope: Scope::Everywhere, rank: 11, enabled: always, run: grid_or_local },
     Action { id: "zoom-toggle", label: "zoom ↔ grid", phrase: "zoom ↔ grid", detail: "the same as ⏎ and esc on a panel", keys: &["f"], shown: "f", scope: Scope::Everywhere, rank: 12, enabled: always, run: |app, _| app.shell.toggle_zoom() },
     Action { id: "estimate", label: "estimate", phrase: "explain estimate · this query", detail: "EXPLAIN ESTIMATE of the chosen query · read-only", keys: &["E"], shown: "E", scope: Scope::Everywhere, rank: 13, enabled: always, run: later },
@@ -117,9 +133,9 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "replay-forward", label: "a minute forward", phrase: "replay · forward one minute", detail: "replay one minute forward", keys: &["]"], shown: "]", scope: Scope::Everywhere, rank: 20, enabled: always, run: later },
     Action { id: "live", label: "live", phrase: "back to live", detail: "back from replay to now", keys: &["t"], shown: "t", scope: Scope::Everywhere, rank: 21, enabled: always, run: later },
     Action { id: "pause", label: "pause", phrase: "pause polling", detail: "stop taking new numbers · the clock goes on", keys: &[" "], shown: "space", scope: Scope::Everywhere, rank: 22, enabled: always, run: |app, _| app.paused = !app.paused },
-    Action { id: "refresh", label: "read now", phrase: "read now", detail: "every source again now", keys: &["r"], shown: "r", scope: Scope::Everywhere, rank: 23, enabled: always, run: later },
-    Action { id: "note", label: "note", phrase: "note on the tape", detail: "a note on the tape", keys: &["n"], shown: "n", scope: Scope::Everywhere, rank: 24, enabled: always, run: later },
-    Action { id: "copy-link", label: "copy link", phrase: "copy the row's link", detail: "the row's link · OSC 8 where it works", keys: &["y"], shown: "y", scope: Scope::Everywhere, rank: 25, enabled: always, run: later },
+    Action { id: "refresh", label: "read now", phrase: "read now", detail: "every source again now", keys: &["r"], shown: "r", scope: Scope::Everywhere, rank: 23, enabled: always, run: read_now },
+    Action { id: "note", label: "note", phrase: "note on the tape", detail: "a note on the tape", keys: &["n"], shown: "n", scope: Scope::Everywhere, rank: 24, enabled: always, run: |app, _| app.shell.note = Some(String::new()) },
+    Action { id: "copy-link", label: "copy link", phrase: "copy the row's link", detail: "the row's link · OSC 8 where it works", keys: &["y"], shown: "y", scope: Scope::Everywhere, rank: 25, enabled: always, run: crate::ui2::nav::copy_link },
     Action { id: "snooze", label: "snooze", phrase: "snooze notifications · 1 h", detail: "no notifications for an hour", keys: &["z"], shown: "z", scope: Scope::Everywhere, rank: 26, enabled: always, run: later },
     Action { id: "came-from", label: "where I was", phrase: "back to where I was", detail: "back to where you came from", keys: &["-"], shown: "-", scope: Scope::Everywhere, rank: 27, enabled: always, run: later },
     Action { id: "wall", label: "wall", phrase: "wall · the big numbers alone", detail: "the big numbers alone", keys: &["W"], shown: "W", scope: Scope::Everywhere, rank: 28, enabled: always, run: later },
@@ -138,9 +154,28 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "node-explain", label: "explain", phrase: "explain this row", detail: "the row's share · its formula and inputs", keys: &["e"], shown: "e", scope: Scope::Zoomed(PanelId::Node), rank: 2, enabled: always, run: |app, _| crate::ui2::nav::explain_now(app) },
     Action { id: "node-sql", label: "SQL on it", phrase: "SQL on this node", detail: "a SQL session on the node, floating", keys: &["c"], shown: "c", scope: Scope::Zoomed(PanelId::Node), rank: 3, enabled: always, run: later },
     Action { id: "node-claude", label: "ask claude", phrase: "ask Claude about this row", detail: "the floating session, the row in its prompt", keys: &["\\"], shown: "\\", scope: Scope::Zoomed(PanelId::Node), rank: 4, enabled: always, run: later },
-    Action { id: "node-copy", label: "copy link", phrase: "copy the row's link", detail: "the query id, or the node", keys: &["y"], shown: "y", scope: Scope::Zoomed(PanelId::Node), rank: 5, enabled: always, run: later },
+    Action { id: "node-copy", label: "copy link", phrase: "copy the row's link", detail: "the query id, or the node", keys: &["y"], shown: "y", scope: Scope::Zoomed(PanelId::Node), rank: 5, enabled: always, run: crate::ui2::nav::copy_link },
+    Action { id: "queue-move", label: "move", phrase: "move through the queue", detail: "running, waiting, stale", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Queue), rank: 1, enabled: always, run: pass },
+    Action { id: "queue-open", label: "the node", phrase: "open the job's node", detail: "the ClickHouse query a running job became", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Queue), rank: 2, enabled: always, run: pass },
+    Action { id: "cancel-job", label: "cancel job", phrase: "cancel this Redash job", detail: "the job under the cursor in Redash: a dialog, then y", keys: &["x"], shown: "x", scope: Scope::Zoomed(PanelId::Queue), rank: 3, enabled: always, run: pass },
+    Action { id: "queue-sql", label: "scroll SQL", phrase: "scroll the job's SQL", detail: "the drawer's SQL, a line at a time", keys: &["J", "K"], shown: "J K", scope: Scope::Zoomed(PanelId::Queue), rank: 4, enabled: always, run: pass },
+    Action { id: "airflow-move", label: "move", phrase: "move through the runs", detail: "running, queued, failed, the DAGs", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Airflow), rank: 1, enabled: always, run: pass },
+    Action { id: "airflow-open", label: "task log", phrase: "open the run", detail: "its tasks, then a task's log", keys: &["Enter", "Right", "l"], shown: "⏎", scope: Scope::Zoomed(PanelId::Airflow), rank: 2, enabled: always, run: pass },
+    Action { id: "airflow-browser", label: "in Airflow", phrase: "open in Airflow", detail: "the run or the DAG in the browser", keys: &["o"], shown: "o", scope: Scope::Zoomed(PanelId::Airflow), rank: 3, enabled: always, run: pass },
+    Action { id: "airflow-copy", label: "copy link", phrase: "copy the run's link", detail: "its Airflow address on the clipboard", keys: &["y"], shown: "y", scope: Scope::Zoomed(PanelId::Airflow), rank: 4, enabled: always, run: pass },
+    Action { id: "airflow-read", label: "read now", phrase: "read Airflow now", detail: "instead of at the next poll", keys: &["r"], shown: "r", scope: Scope::Zoomed(PanelId::Airflow), rank: 5, enabled: always, run: pass },
+    Action { id: "jira-lane", label: "a lane", phrase: "cross to the next lane", detail: "the board's columns", keys: &["Left", "Right", "h", "l"], shown: "←→", scope: Scope::Zoomed(PanelId::Jira), rank: 1, enabled: always, run: pass },
+    Action { id: "jira-ticket", label: "a ticket", phrase: "walk the lane", detail: "its tickets, by priority", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Jira), rank: 2, enabled: always, run: pass },
+    Action { id: "jira-open", label: "ticket in full", phrase: "the ticket in full", detail: "its page, in here", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Jira), rank: 3, enabled: always, run: pass },
+    Action { id: "jira-browser", label: "in Jira", phrase: "open in Jira", detail: "the ticket in the browser", keys: &["o"], shown: "o", scope: Scope::Zoomed(PanelId::Jira), rank: 4, enabled: always, run: pass },
+    Action { id: "jira-copy", label: "copy link", phrase: "copy the ticket's link", detail: "its Jira address on the clipboard", keys: &["y"], shown: "y", scope: Scope::Zoomed(PanelId::Jira), rank: 5, enabled: always, run: pass },
+    Action { id: "jira-time", label: "the month", phrase: "the month's time", detail: "logged time by day and ticket", keys: &["t"], shown: "t", scope: Scope::Zoomed(PanelId::Jira), rank: 6, enabled: always, run: pass },
+    Action { id: "jira-read", label: "read now", phrase: "read Jira now", detail: "instead of at the next poll", keys: &["r"], shown: "r", scope: Scope::Zoomed(PanelId::Jira), rank: 7, enabled: always, run: pass },
+    Action { id: "tape-scroll", label: "scroll", phrase: "scroll the tape", detail: "newest first", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Tape), rank: 1, enabled: always, run: pass },
+    Action { id: "tape-open", label: "go to it", phrase: "go to what it is about", detail: "the node, the person, the queue", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Tape), rank: 2, enabled: always, run: pass },
+    Action { id: "tape-note", label: "note", phrase: "note on the tape", detail: "a line of yours, kept with the events", keys: &["n"], shown: "n", scope: Scope::Zoomed(PanelId::Tape), rank: 3, enabled: always, run: |app, _| app.shell.note = Some(String::new()) },
+    Action { id: "tape-export", label: "export report", phrase: "export the incident report", detail: "markdown with every denominator (feature B3)", keys: &["y"], shown: "y", scope: Scope::Zoomed(PanelId::Tape), rank: 4, enabled: always, run: later },
     Action { id: "clock", label: "clock · local ↔ UTC", phrase: "clock · local ↔ UTC", detail: "the servers' own time, or this machine's", keys: &[], shown: "", scope: Scope::Everywhere, rank: 40, enabled: always, run: |app, _| app.time.flip() },
-    Action { id: "cancel-job", label: "cancel job", phrase: "cancel this Redash job", detail: "the job under the cursor in Redash: a dialog, then y", keys: &["x"], shown: "x", scope: Scope::Panel(PanelId::Queue), rank: 4, enabled: zoomed, run: later },
 ];
 
 /// The actions that can be taken now: those of the scopes in force, enabled, by rank.

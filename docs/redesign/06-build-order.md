@@ -55,13 +55,20 @@ of its formula only (the simulation adds the node's CPU under a memory share); t
 last line says lag, parts and free memory and nothing that §5 does not trace ("= 0.2× a 24 GiB
 query"). "usually 42 s (318× / 7 d)" needs the query-log fingerprints of feature A2.
 
-## Phase 3 — QUEUE, AIRFLOW, JIRA, TAPE (M)
+## Phase 3 — QUEUE, AIRFLOW, JIRA, TAPE (M) — done
 
 Zoomed QUEUE from today's view 2 drawing code (moved, not rewritten), the dialog; AIRFLOW panel
 and zoom with the Gantt; JIRA panel and the board zoom (from `ui/board.rs`); TAPE panel with the
 density strips and the folded repeats, the note.
 Acceptance: `*-zoom-queue.txt`, `120x36-cancel-dialog.txt`, `*-zoom-airflow.txt`,
 `*-zoom-jira.txt`, `*-zoom-tape.txt`, `120x36-note.txt`.
+
+As built: the four zooms are today's views drawn inside the zoom's frame (`ui2/views.rs`), their
+state still keyed by `app.view`, which the shell keeps on the focused panel; their keys are
+listed as `Zoomed` actions that hand the key to the view's own handler, so the status bar, `?`
+and the palette name them. `⏎` on a running job or a tape line follows the view to the panel that
+shows it (the node zoomed, its person chosen). The view's own first lines (its title, the drawer's
+"view 1" wording) are today's until phase 6 moves the code. The dashboard panels are new.
 
 ## Phase 4 — SESSIONS and the floating pane (S–M)
 

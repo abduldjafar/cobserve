@@ -34,7 +34,9 @@ fn ch(c: char) -> Event {
 /// The fake fleet after `polls` polls, the new shell on, the clock at the simulation's instant in
 /// Jakarta, and block graphs — the tier the screens were drawn in.
 fn app_after(polls: usize) -> App {
-    let mut fake = FakeSource::new();
+    // The polls end at the simulation's instant, so the history and the tape are of its hour.
+    let start = std::time::UNIX_EPOCH + std::time::Duration::from_secs(MOMENT - 2 * polls.max(1) as u64);
+    let mut fake = FakeSource::starting_at(start);
     let mut app = App::new();
     app.shell.on = true;
     app.caps.graph = GraphTier::Block;
@@ -45,6 +47,8 @@ fn app_after(polls: usize) -> App {
         }
     }
     app.update(Event::Queue(Box::new(fake.queue())));
+    app.update(Event::Airflow(Box::new(crate::fake::airflow(MOMENT as i64))));
+    app.update(Event::Jira(Box::new(crate::fake::jira(MOMENT as i64))));
     app.time.zone = Some("Asia/Jakarta".into());
     app.time.pinned = chrono::FixedOffset::east_opt(7 * 3600);
     app.prayers = crate::prayer::Prayers::new(crate::prayer::city("Jakarta"), 0);
@@ -265,7 +269,7 @@ fn focus_tab_zoom_and_back() {
     app.update(key(KeyCode::Enter));
     let got = render(&app, 120, 36);
     assert!(got[0].contains("dashboard › queue") && got[0].contains("esc back "), "{}", got[0]);
-    assert!(got[1].starts_with("╭ 2 REDASH QUEUE ─") && got[34].starts_with("╰"), "one frame over the body: {}", got[1]);
+    assert!(got[1].starts_with("╭ 2 REDASH QUEUE · ") && got[34].starts_with("╰"), "one frame over the body: {}", got[1]);
     assert!(got[35].starts_with(" esc back"), "{}", got[35]);
     app.update(ch('6'));
     assert_eq!(app.shell.zoom, Some(PanelId::Jira), "a digit switches the zoom");
@@ -410,6 +414,126 @@ fn sort_and_filter_the_tiles() {
     assert!(app.shell.filter.is_none() && render(&app, 120, 36)[9].contains("clickhouse"), "esc clears it");
 }
 
+#[test]
+fn the_airflow_jira_and_tape_panels_on_the_dashboard() {
+    let app = app_after(30);
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-dash");
+    same_frames(&got, &want, 20..=34, "120x36 middle and bottom");
+    // AIRFLOW: the day in numbers, the strip, the hours, then the rows in view 5's order.
+    // The screen's line runs into the frame (`↻ 1││`); here the retries give way instead.
+    assert!(cells(&got[21], 48, 86).starts_with("│ 217 runs  ✔ 211  ✖ 3  ▸ 2  ◌ 1 "), "{:?}", cells(&got[21], 48, 86));
+    assert!(cells(&got[22], 48, 86).contains("▸━") && cells(&got[23], 48, 86).contains("now"), "{}\n{}", got[22], got[23]);
+    for (y, start) in [(24, "│ ✖ test_clickhouse_con…"), (25, "│ ▸ statement_daily_agg…"), (26, "│ ◌ gateway_transfers_b…"), (27, "│ ✖ replication_app_con…")] {
+        assert_eq!(cells(&got[y], 48, 86).split("  ").next(), cells(&want[y], 48, 86).split("  ").next(), "row {y}");
+        assert!(cells(&got[y], 48, 86).starts_with(start));
+    }
+    // JIRA: the flow and what is overdue, the hours, the tickets with their due or age.
+    assert!(cells(&got[21], 86, 120).contains(" › ") && cells(&got[21], 86, 120).contains("✖ 1 overdue │"), "{}", got[21]);
+    assert!(cells(&got[23], 86, 120).starts_with("│ DATA-2207 ") && cells(&got[23], 86, 120).ends_with("11d │"), "{}", got[23]);
+    assert!(cells(&got[25], 86, 120).contains("due tomorrow │") && cells(&got[27], 86, 120).contains("overdue 2d │"), "{}\n{}", got[25], got[27]);
+    // TAPE: the two density rows beside the newest lines.
+    assert!(got[30].starts_with("│ ✖ ▁") && got[31].starts_with("│ ▲ ▁"), "{}\n{}", got[30], got[31]);
+    assert_eq!(col(&got[30], "▲ 15:5"), col(&want[30], "▲ 15:5"), "the lines start where the screen's do");
+}
+
+#[test]
+fn the_zoomed_queue_and_the_cancel_dialog() {
+    let mut app = app_after(30);
+    app.update(ch('2'));
+    app.update(key(KeyCode::Enter));
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-zoom-queue");
+    assert!(got[0].contains("dashboard › queue"));
+    assert_eq!(trimmed(&got[1]), trimmed(&want[1]), "the zoom's title: the instance and its workers");
+    same_frames(&got, &want, 1..=34, "zoom queue");
+    let text = got.join("\n");
+    // Today's view 2, moved: the table, the sections, the stitch, the drawer.
+    for part in ["QUEUE ", "RUNNING", "queries ", "─ RUNNING · 6 on a worker ─", "→ clickhouse3 16.3G 3.1c", "─ WAITING · ", "─ job · queries · grigol.gankava ─"] {
+        assert!(text.contains(part), "{part}:\n{text}");
+    }
+    assert_eq!(trimmed(&got[35]).split("   ").take(4).collect::<Vec<_>>(), trimmed(&want[35]).split("   ").take(4).collect::<Vec<_>>());
+
+    // x asks, n keeps, x then y sends.
+    app.update(key(KeyCode::Down));
+    app.update(ch('x'));
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-cancel-dialog");
+    let top = got.iter().position(|r| r.contains("╭─ Cancel Redash job ")).expect("the dialog");
+    assert_eq!(Some(top), want.iter().position(|r| r.contains("╭─ Cancel Redash job ")));
+    assert_eq!(col(&got[top], "╭─ Cancel"), col(&want[top], "╭─ Cancel"));
+    assert!(got[top].contains("· j.petrova? ─"), "{}", got[top]);
+    assert!(got[top + 2].contains("#8585 AML dashboard · clickhouse-bi · running "), "{}", got[top + 2]);
+    assert!(got[top + 3].contains("Its query on clickhouse-bi keeps running"), "{}", got[top + 3]);
+    assert!(got[top + 7].contains("[y] cancel the job     [esc] keep it"), "{}", got[top + 7]);
+    app.update(ch('n'));
+    assert!(app.cancel_asked().is_none() && app.take_cancels().is_empty(), "anything but y keeps it");
+    app.update(ch('x'));
+    app.update(ch('y'));
+    assert_eq!(app.take_cancels().len(), 1, "y sends it");
+
+    // ⏎ on a running job opens its node, with the person chosen.
+    app.update(key(KeyCode::Up));
+    app.update(key(KeyCode::Enter));
+    assert_eq!(app.shell.zoom, Some(PanelId::Node));
+    assert_eq!(app.shell.chosen.as_deref(), Some("clickhouse3"));
+    assert!(app.shell.person.as_deref().is_some_and(|p| p.contains("grigol.gankava")), "{:?}", app.shell.person);
+}
+
+#[test]
+fn the_zoomed_airflow_jira_and_tape_are_today_s_views() {
+    let mut app = app_after(30);
+    for (digit, name, parts) in [
+        ('5', "120x36-zoom-airflow", vec!["RUNNING", "test_clickhouse_connection", "QUEUED", "FAILED", "replication_app_consistency_check"]),
+        ('6', "120x36-zoom-jira", vec!["DATA-2207", "DATA-2647", "IN PROGRESS"]),
+        ('7', "120x36-zoom-tape", vec!["TAPE", "runaway m.kairys on clickhouse-bi"]),
+    ] {
+        app.update(key(KeyCode::Esc));
+        app.update(ch(digit));
+        app.update(key(KeyCode::Enter));
+        let got = render(&app, 120, 36);
+        let want = screen(name);
+        assert_eq!(got[0].split("    ").nth(1).map(str::trim), want[0].split("    ").nth(1).map(str::trim), "the path");
+        assert_eq!(cells(&got[1], 0, 9), cells(&want[1], 0, 9), "{name}: the title");
+        assert!(trimmed(&got[1]).ends_with("esc back ─╮"), "{}", got[1]);
+        assert_eq!(frames(&got[2]).first(), Some(&(0, '│')));
+        let text = got.join("\n");
+        for part in parts {
+            assert!(text.to_uppercase().contains(&part.to_uppercase()), "{name}: {part}\n{text}");
+        }
+        let hints: Vec<&str> = trimmed(&want[35]).split("   ").take(3).collect();
+        assert_eq!(trimmed(&got[35]).split("   ").take(3).collect::<Vec<_>>(), hints, "{name}: the zoom's hints");
+    }
+    // In the jira zoom, ⏎ opens the ticket's page and esc closes it before the zoom.
+    app.update(key(KeyCode::Esc));
+    app.update(ch('6'));
+    app.update(key(KeyCode::Enter));
+    app.update(key(KeyCode::Enter));
+    assert!(app.page().is_some() || app.jira_page.is_some(), "the ticket in full");
+    app.update(key(KeyCode::Esc));
+    assert_eq!(app.shell.zoom, Some(PanelId::Jira), "esc closed the page, not the zoom");
+    assert!(app.jira_page.is_none());
+}
+
+#[test]
+fn a_note_goes_on_the_tape() {
+    let mut app = app_after(5);
+    app.update(ch('7'));
+    app.update(key(KeyCode::Enter));
+    app.update(ch('n'));
+    for c in "ch3 hot".chars() {
+        app.update(ch(c));
+    }
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-note");
+    assert!(got[35].starts_with(" note › ch3 hot█"), "{}", got[35]);
+    assert!(trimmed(&got[35]).ends_with("⏎ keeps it on the tape · esc") && trimmed(&want[35]).ends_with("⏎ keeps it on the tape · esc"));
+    app.update(key(KeyCode::Enter));
+    assert!(app.shell.note.is_none());
+    let newest: String = app.tape.newest_first().next().unwrap().parts.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(newest, "✎ ch3 hot");
+}
+
 /// `cargo test ui2::tests::dump -- --ignored --nocapture`: the screen at a size, to look at.
 #[test]
 #[ignore]
@@ -456,6 +580,8 @@ fn every_size_renders_without_a_panic() {
             nav::explain_now(&mut app);
         }
         app.shell.filter = (round % 13 == 0).then(|| crate::ui2::state::Filter { query: "ch".into(), typing: true });
+        app.shell.note = (round % 17 == 0).then(|| "a note".to_string());
+        views::sync(&mut app);
         let rows = render(&app, w, h);
         assert_eq!(rows.len(), h as usize);
     }
