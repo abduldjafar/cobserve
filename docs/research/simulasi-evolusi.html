@@ -1,0 +1,558 @@
+<title>Simulasi konsep UI cobserve</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Recursive:wght@400;600&display=swap">
+<style>
+/* layout: a short header, then one terminal screen of W×H cells drawn as a <pre>; every control lives inside the screen */
+:root{--bg:#efe6d4;--fg:#2a1f18;--muted:#8c7f6e;--accent:#3b43b5;--line:#d8cdb8;
+ --t-bg:#f4ecdc;--t-fg:#2a1f18;--t-dim:#8c7f6e;--t-acc:#3b43b5;--t-sel:#dcdcf0;--t-pan:#eadfca;--t-sh:#cfc3ad;--t-red:#b8321f;--t-amb:#9a6a06;--t-grn:#25754f;--t-per:#6b3fa0;
+ --font-ui:'Recursive',system-ui,sans-serif;--font-mono:'JetBrains Mono',Menlo,'DejaVu Sans Mono',monospace;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15100d;--fg:#efe3cf;--muted:#8a7b6a;--accent:#8a90e8;--line:#2e2521;
+ --t-bg:#1b1512;--t-fg:#efe3cf;--t-dim:#7f7161;--t-acc:#8a90e8;--t-sel:#2b2946;--t-pan:#271f1a;--t-sh:#0e0a08;--t-red:#e8604c;--t-amb:#e0a92a;--t-grn:#4fb58a;--t-per:#c9a6e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15100d;--fg:#efe3cf;--muted:#8a7b6a;--accent:#8a90e8;--line:#2e2521;
+ --t-bg:#1b1512;--t-fg:#efe3cf;--t-dim:#7f7161;--t-acc:#8a90e8;--t-sel:#2b2946;--t-pan:#271f1a;--t-sh:#0e0a08;--t-red:#e8604c;--t-amb:#e0a92a;--t-grn:#4fb58a;--t-per:#c9a6e6;color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);margin:0;padding-block:12px;padding-inline:16px}
+.wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:10px;min-width:0}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px}
+h1{font-size:18px;font-weight:600;margin:0}
+h1 small{font-weight:400;color:var(--muted);font-size:13px;margin-left:8px}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+.ctl button{font:inherit;font-size:12px;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:4px;padding:2px 8px;cursor:pointer}
+.ctl button[aria-pressed="true"]{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.ctl button:focus-visible,.term:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.screen{overflow-x:auto;min-width:0}
+.term{display:block;margin:0;background:var(--t-bg);color:var(--t-fg);font-family:var(--font-mono);line-height:1.25;white-space:pre;padding:6px 0 6px 0;border-radius:6px;width:max-content;cursor:default;user-select:none;font-variant-numeric:tabular-nums}
+.term span.d{color:var(--t-dim)}.term span.a{color:var(--t-acc)}.term span.r{color:var(--t-red)}.term span.w{color:var(--t-amb)}.term span.g{color:var(--t-grn)}.term span.p{color:var(--t-per)}
+.term span.b{font-weight:700}.term span.ab{color:var(--t-acc);font-weight:700}.term span.rb{color:var(--t-red);font-weight:700}.term span.wb{color:var(--t-amb);font-weight:700}.term span.gb{color:var(--t-grn);font-weight:700}
+.term span.u{text-decoration:underline;font-weight:700}
+.term span.sel{background:var(--t-sel)}.term span.pan{background:var(--t-pan)}.term span.sh{background:var(--t-sh)}.term span.chip{background:var(--t-acc);color:var(--t-bg);font-weight:700}.term span.inv{background:var(--t-fg);color:var(--t-bg)}
+.legend{font-size:12px;color:var(--muted);line-height:1.5;max-width:72ch}
+.legend kbd{font-family:var(--font-mono);font-size:11px;background:var(--t-pan);color:var(--fg);padding:0 4px;border-radius:3px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<div class="wrap">
+ <header>
+  <h1>Simulasi konsep UI cobserve <small>HOME · grammar resource → inspector · palette · floating session · explain · wizard</small></h1>
+  <div class="ctl">
+   <span>ukuran</span>
+   <button id="s80" type="button" aria-pressed="false">80×24</button>
+   <button id="s120" type="button" aria-pressed="true">120×36</button>
+   <button id="s160" type="button" aria-pressed="false">160×48</button>
+   <button id="btheme" type="button">tema</button>
+   <button id="btour" type="button">tur 6 langkah</button>
+  </div>
+ </header>
+ <div class="screen"><pre class="term" id="term" tabindex="0" aria-label="layar cobserve"></pre></div>
+ <p class="legend">Klik layar lalu pakai keyboard, seperti di terminal: <kbd>0</kbd>–<kbd>5</kbd> view · <kbd>↑↓</kbd> pilih · <kbd>⏎</kbd> masuk · <kbd>esc</kbd> mundur satu tingkat · <kbd>tab</kbd> sub-view · <kbd>/</kbd> filter · <kbd>:</kbd> palette · <kbd>?</kbd> kunci layar ini · <kbd>e</kbd> explain this number · <kbd>f</kbd> zoom · <kbd>+</kbd> densitas · <kbd>ctrl+\</kbd> (atau <kbd>\</kbd>) floating session · <kbd>[</kbd> <kbd>]</kbd> replay, <kbd>t</kbd> live · <kbd>x</kbd> lalu <kbd>y</kbd> cancel job di queue · <kbd>y</kbd> copy link · <kbd>n</kbd> catatan · <kbd>z</kbd> snooze · <kbd>␣</kbd> fold · <kbd>s</kbd> sort. Mouse: klik tab, kartu, baris, hint footer. Semua angka dari fleet buatan; rumus §5 yang sama.</p>
+</div>
+<script>
+// ───────── data: a made-up fleet, the same arithmetic as DESIGN.md §5 ─────────
+const $=s=>document.querySelector(s);
+let W=120,H=36;
+const rnd=(()=>{let s=20261013;return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}})();
+const SQL1=['SELECT toStartOfHour(ts) AS h, countIf(state = \'failed\') AS failed','FROM open_banking.ais WHERE ts >= now() - INTERVAL 6 HOUR GROUP BY h','ORDER BY h'];
+const SQL2=['SELECT country, sum(amount) AS total, uniqExact(client_id) AS clients','FROM gateway.transfers WHERE created_at >= today() - 30','GROUP BY country ORDER BY total DESC'];
+const SQL3=['SELECT date, account_id, argMax(balance, ts) AS balance','FROM wallet.ledger WHERE date >= \'2026-07-01\'','GROUP BY date, account_id'];
+const FLEET=[
+ {n:'clickhouse3',host:'pay-ch-node-1:9000',memT:64,mem:59.6,cores:16,cpu:14.9,lag:0,parts:'1.2k',ver:'24.11.1',up:'46d07h',poll:0.6,users:[
+  {u:'r_redash → grigol.gankava',p:'grigol.gankava',mem:16.3,cpu:3.10,q:[{id:'8f1c',t:'8m31s',run:true,redash:'#7438 Gateway transfers',sql:SQL2,usual:'42 s (318× / 7 d)',est:'1.9 B rows · 412 parts · 23 k marks',read:'41.2 GB / 1.9 B rows',prog:57,peak:'8.9'}]},
+  {u:'r_redash → j.petrova',p:'j.petrova',mem:8.23,cpu:0.70,q:[{id:'c3e5',t:'6m40s',run:true,redash:'#8585 AML dashboard',sql:SQL1,usual:'1m05s (44× / 7 d)',est:'3.0 B rows · 880 parts · 61 k marks',read:'62.3 GiB / 3.0 B rows',prog:95}]},
+  {u:'airflow',mem:3.53,cpu:5.00,q:[{id:'a91d',t:'18s',run:false,redash:'',sql:['INSERT INTO final.statement_daily_agg SELECT … FROM staging.statement_daily'],usual:'22 s (96× / 7 d)',est:'120 M rows · 31 parts',read:'4.1 GiB / 120 M rows',prog:80}]},
+  {u:'haris',mem:1.22,cpu:0.30,q:[{id:'77b2',t:'24s',run:false,redash:'',sql:['SELECT * FROM system.query_log WHERE event_time > now() - 3600 LIMIT 100'],usual:'3 s (12× / 7 d)',est:'2.4 M rows · 6 parts',read:'310 MiB / 2.4 M rows',prog:90}]}]},
+ {n:'clickhouse-bi',host:'pay-ch-bi-1:9000',memT:64,mem:43.0,cores:16,cpu:11.5,lag:0,parts:'640',ver:'24.11.1',up:'12d03h',poll:0.8,users:[
+  {u:'r_redash → j.petrova',p:'j.petrova',mem:21.2,cpu:1.90,q:[{id:'c3e59c27'.slice(0,4),t:'6m40s',run:true,redash:'#8585 AML dashboard',sql:SQL1,usual:'1m05s (44× / 7 d)',est:'3.0 B rows · 880 parts · 61 k marks',read:'62.3 GiB / 3.0 B rows',prog:95}]},
+  {u:'r_redash → m.kairys',p:'m.kairys',mem:9.00,cpu:2.90,q:[{id:'e64b',t:'2m12s',run:true,redash:'#7711 FX exposure',sql:['SELECT ccy, sumIf(amount, side = \'buy\') - sumIf(amount, side = \'sell\') AS exposure','FROM statistics.fx_exposure WHERE ts >= now() - INTERVAL 1 DAY GROUP BY ccy'],usual:'38 s (210× / 7 d)',est:'640 M rows · 92 parts · 8 k marks',read:'11.0 GiB / 640 M rows',prog:71}]},
+  {u:'airflow',mem:6.00,cpu:3.40,q:[{id:'0b1e',t:'41s',run:false,redash:'',sql:['INSERT INTO final.wallet_balances SELECT … FROM wallet.ledger'],usual:'50 s (48× / 7 d)',est:'300 M rows · 40 parts',read:'9.8 GiB / 300 M rows',prog:62}]}]},
+ {n:'clickhouse7',host:'pay-ch-node-7:9000',memT:128,mem:76.7,cores:32,cpu:14.2,lag:12,parts:'2.4k',ver:'24.10.2',up:'3d19h',poll:1.9,users:[
+  {u:'r_redash → r.simonyte',p:'r.simonyte',mem:51.4,cpu:2.20,q:[{id:'4d9a',t:'8m56s',run:true,redash:'#8091 July close pack',sql:SQL3,usual:'4m10s (9× / 7 d)',est:'6.2 B rows · 1.4 k parts · 140 k marks',read:'190 GiB / 6.2 B rows',prog:77}]},
+  {u:'airflow',mem:4.10,cpu:6.00,q:[{id:'9c2f',t:'2m04s',run:true,redash:'',sql:['OPTIMIZE TABLE wallet.ledger_daily FINAL'],usual:'1m50s (7× / 7 d)',est:'—',read:'—',prog:0}]}]},
+ {n:'clickhouse2',host:'pay-ch-node-2:9000',memT:64,mem:26.7,cores:16,cpu:4.6,lag:0,parts:'890',ver:'24.11.1',up:'46d07h',poll:0.7,users:[
+  {u:'r_redash → m.kairys',p:'m.kairys',mem:15.4,cpu:1.20,q:[{id:'b7e1',t:'4m38s',run:true,redash:'#7711 FX exposure',sql:['SELECT ccy, sum(amount) FROM statistics.fx_exposure WHERE ts >= now() - INTERVAL 7 DAY GROUP BY ccy'],usual:'38 s (210× / 7 d)',est:'4.4 B rows · 640 parts · 55 k marks',read:'77 GiB / 4.4 B rows',prog:64}]},
+  {u:'d.zaleckas',mem:3.20,cpu:0.80,q:[{id:'5a30',t:'18s',run:false,redash:'',sql:['SELECT count() FROM gateway.refunds WHERE state = \'open\''],usual:'2 s (30× / 7 d)',est:'8 M rows · 4 parts',read:'90 MiB / 8 M rows',prog:95}]}]},
+ {n:'clickhouse5',host:'pay-ch-node-5:9000',memT:64,mem:24.0,cores:16,cpu:0.6,lag:0,parts:'410',ver:'24.11.1',up:'0d00h26m',poll:0.5,isNew:true,users:[]},
+ {n:'ch4',host:'pay-ch-node-4:9000',memT:64,mem:13.6,cores:16,cpu:2.5,lag:0,parts:'520',ver:'24.11.1',up:'46d07h',poll:0.6,users:[{u:'r_redash → a.vaitkus',p:'a.vaitkus',mem:2.1,cpu:0.5,q:[{id:'1f77',t:'51s',run:true,redash:'#8470 Merchant risk · rollup',sql:['SELECT merchant_id, max(risk) FROM risk.merchant_scores GROUP BY merchant_id'],usual:'40 s (60× / 7 d)',est:'200 M rows · 20 parts',read:'5 GiB / 200 M rows',prog:88}]}]},
+ {n:'ch6',host:'pay-ch-node-6:9000',memT:64,mem:12.4,cores:16,cpu:1.5,lag:0,parts:'480',ver:'24.11.1',up:'46d07h',poll:0.6,users:[{u:'airflow',mem:1.0,cpu:0.3,q:[{id:'3c0d',t:'9s',run:false,redash:'',sql:['SELECT count() FROM final.kyc_cases'],usual:'8 s (96× / 7 d)',est:'12 M rows · 3 parts',read:'100 MiB / 12 M rows',prog:99}]}]},
+ {n:'ch8',host:'pay-ch-node-8:9000',memT:64,mem:6.9,cores:16,cpu:1.4,lag:0,parts:'300',ver:'24.11.1',up:'46d07h',poll:0.6,users:[]},
+ {n:'ch9',host:'pay-ch-node-9:9000',memT:64,mem:4.9,cores:16,cpu:1.2,lag:0,parts:'280',ver:'24.11.1',up:'46d07h',poll:0.6,users:[]}];
+// 60 minutes of each node's worst memory share per minute (index 59 = now)
+const HIST={};
+FLEET.forEach(nd=>{const now=nd.mem/nd.memT*100;const a=[];for(let i=0;i<60;i++){const m=59-i;let v;
+ if(nd.n==='clickhouse3')v=m>25?52+rnd()*4:now-(m*1.6)+rnd()*3;
+ else if(nd.n==='clickhouse-bi')v=now-6+8*Math.sin(i/4)+rnd()*3;
+ else if(nd.n==='clickhouse7')v=now-4+6*Math.sin(i/3)+rnd()*2;
+ else if(nd.n==='clickhouse5')v=i<34?NaN:now-4+rnd()*4;
+ else v=now-3+rnd()*6;
+ a.push(isNaN(v)?NaN:Math.max(2,Math.min(99,v)))}HIST[nd.n]=a});
+function spark(nd,w){const h=HIST[nd.n];const out=[];for(let i=0;i<w;i++){const v=h[59-Math.floor((w-1-i)/2)];out.push(isNaN(v)?NaN:Math.max(1,Math.min(99,v+(rnd()-0.5)*4)))}return out}
+const SPARK={};FLEET.forEach(nd=>SPARK[nd.n]=spark(nd,48));
+const TAPE=[
+ [0.5,'w','QUERY','ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of its limit)'],
+ [0.7,'r','QUERY','m.kairys\'s query on clickhouse-bi at 95% of its 9.0 GiB memory limit'],
+ [1.2,'w','QUERY','runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx_exposure'],
+ [1.6,'w','QUERY','ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed'],
+ [2.1,'r','QUEUE','Redash queries backed up: 13 waiting, oldest 3m01s'],
+ [2.3,'r','QUERY','m.kairys\'s query on clickhouse-bi at 95% of its 9.0 GiB memory limit'],
+ [2.8,'g','NODE','ch6 answering again'],
+ [3.0,'w','QUERY','runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB'],
+ [3.3,'r','NODE','ch6 unreachable — connection timed out after 1.5 s'],
+ [4.1,'w','QUEUE','Redash scheduled_queries backed up: 3 waiting, oldest 1m01s'],
+ [5.0,'','NODE','clickhouse5 joined the fleet'],
+ [6.2,'r','NODE','clickhouse3 CPU 92.1% (≥ 90%)'],
+ [7.4,'r','NODE','clickhouse3 memory 90.3% (≥ 90%) · the server itself holds 46%'],
+ [9.0,'w','QUERY','runaway r.simonyte on clickhouse7 — 5m02s running · 51.3 GiB · SELECT · wallet.ledger'],
+ [11.5,'w','QUERY','runaway j.petrova on clickhouse-bi — 2m46s running · 21.2 GiB · SELECT · open_banking.ais'],
+ [14.0,'w','NODE','clickhouse7 replica lag 12 s (≥ 10 s)'],
+ [18.0,'w','QUERY','runaway grigol.gankava on clickhouse3 — 30s running · 9.8 GiB · SELECT · gateway.transfers'],
+ [23.0,'r','QUERY','m.kairys\'s query on clickhouse-bi at 96% of its 9.0 GiB memory limit'],
+ [24.0,'r','QUERY','m.kairys\'s query on clickhouse-bi at 97% of its 9.0 GiB memory limit'],
+ [25.0,'r','QUERY','m.kairys\'s query on clickhouse-bi at 95% of its 9.0 GiB memory limit'],
+ [26.0,'r','QUERY','m.kairys\'s query on clickhouse-bi at 98% of its 9.0 GiB memory limit'],
+ [31.0,'w','QUEUE','Redash queries: 9 waiting, oldest 1m12s'],
+ [44.0,'w','NODE','clickhouse-bi memory 75.4% (≥ 75%)'],
+ [58.0,'','NODE','9 nodes polled at start · all answered']];
+const QUEUE={host:'redash.example.net',ver:'10.1.0',workers:7,busy:6,
+ queues:[{n:'queries',run:4,wait:13,oldest:'3m43s',sev:'r',w:'●●●● 4/4 busy',stale:3,hist:'▇█▇▆██▅██'},{n:'scheduled_queries',run:2,wait:3,oldest:'1m01s',sev:'w',w:'●● 2/2 busy',stale:0,hist:'▃▃▃▃▃▃▃▃▃'}],
+ running:[{id:'run-1',t:'6m38s',run:true,who:'grigol.gankava',q:'#7438 Gateway transfers',src:'clickhouse3',ch:'→ clickhouse3 16.3G 3.1c 57%',node:'clickhouse3',qid:'8f1c'},
+  {id:'run-2',t:'5m38s',run:true,who:'j.petrova',q:'#8585 AML dashboard',src:'clickhouse-bi',ch:'→ clickhouse-bi 21.2G 1.9c 95%',node:'clickhouse-bi',qid:'c3e5'},
+  {id:'run-3',t:'4m38s',run:true,who:'m.kairys',q:'#7711 FX exposure',src:'clickhouse2',ch:'→ clickhouse2 15.4G 1.2c 64%',node:'clickhouse2',qid:'b7e1'},
+  {id:'run-4',t:'4m23s',run:true,who:'r.simonyte',q:'#8091 July close pack',src:'clickhouse7',ch:'→ clickhouse7 51.4G 2.2c 77%',node:'clickhouse7',qid:'4d9a'},
+  {id:'run-5',t:'2m51s',who:'d.zaleckas',q:'#6120 Gateway refunds · open',src:'gateway-mysql',ch:'mysql · not ClickHouse'},
+  {id:'run-6',t:'51s',who:'a.vaitkus',q:'#8470 Merchant risk · rollup',src:'Query Results',ch:'runs inside Redash'}],
+ waiting:[{id:'w-1',t:'3m43s',sev:'r',who:'r.simonyte',q:'#8093 July close pack · by country',src:'clickhouse-bi'},{id:'w-2',t:'3m12s',sev:'r',who:'j.petrova',q:'#8113 AML dashboard · by country',src:'clickhouse-bi'},{id:'w-3',t:'2m58s',sev:'w',who:'m.kairys',q:'#7712 FX exposure · intraday',src:'clickhouse2'},{id:'w-4',t:'1m40s',sev:'w',who:'t.rimkus',q:'#8201 Merchant onboarding funnel',src:'clickhouse-bi'},{id:'w-5',t:'58s',sev:'',who:'a.vaitkus',q:'#8471 Merchant risk · daily',src:'clickhouse3'}],
+ stale:[{id:'st-1',t:'163d',why:'no worker holds it',who:'o.kuznetsova',q:'#5520 Card disputes'},{id:'st-2',t:'171d',why:'cancelled',who:'j.petrova',q:'#6002 KYC backlog'},{id:'st-3',t:'177d',why:'over a day old',who:'m.kairys',q:'#4418 FX hedges'}]};
+const AF={host:'airflow.example.net',ver:'2.10.2',
+ running:[{d:'test_clickhouse_connection',kind:'manual · Jan 15',t:'262d04h',tasks:'0/1',bar:'━━━━━━━━',note:'stuck since Jan 15 · ↻ ping_clickhouse to retry',sev:'r'},{d:'statement_daily_agg_reload',kind:'manual · 13:39',t:'2h12m',tasks:'4/7',bar:'━━━━╸━━━',note:'▸ reload_partitions · ▲ 2.1× usual',sev:''}],
+ queued:[{d:'gateway_transfers_backfill',kind:'manual · 15:47',t:'4m12s',note:'waiting to start'}],
+ failed:[{d:'replication_app_consistency_check',kind:'scheduled · 13:00',t:'8m06s',note:'ended 13:08 · 2h ago  at check_consistency'},{d:'kyc_onboarding_tables',kind:'scheduled · 12:30',t:'10m48s',note:'ended 12:40 · 3h ago  at build_cohorts'},{d:'cbk_accounts_report',kind:'scheduled · 07:15',t:'3m36s',note:'ended 07:18 · 8h ago  at upload_report · 3rd failure this week'}],
+ activity:[{d:'gateway_transfers_backfill',s:'triggered',runs:'1',tl:'·······················◌',last:'queued',took:'—',next:'—'},{d:'clickhouse_replication_check',s:'every 15m',runs:'96',tl:'▪'.repeat(24),last:'7m ago',took:'1m44s',next:'in 7m'},{d:'postgres_blacklist_etl',s:'every 30m',runs:'48',tl:'▪'.repeat(24),last:'22m ago',took:'6m47s',next:'in 7m'},{d:'posthog_warehouse_refresh',s:':20 hourly',runs:'24',tl:'▪'.repeat(24),last:'32m ago',took:'3m29s',next:'in 27m'},{d:'cbk_accounts_report',s:':15 every 2h',runs:'12 ✖1',tl:'·▪·▪·▪·▪·▪·▪·▪·✖·▪·▪·▪·▪',last:'37m ago',took:'4m00s',next:'in 1h'},{d:'single_table_reconcile',s:':10 every 4h',runs:'6',tl:'···▪···▪···▪···▪···▪···▪',last:'42m ago',took:'24m12s',next:'in 3h'},{d:'redash_scheduler_monitoring',s:'1h',runs:'24',tl:'▪'.repeat(24),last:'52m ago',took:'44s',next:'in 7m'},{d:'statement_daily_agg_reload',s:'triggered',runs:'1',tl:'·····················▸━━',last:'running',took:'—',next:'—'},{d:'dbt_daily_models',s:'1 day',runs:'1',tl:'········▪━━━············',last:'7h ago',took:'1h57m',next:'in 16h'}],
+ gantt:[['extract_statements','━━━━✔','done 13:52 · 13m'],['build_partitions','    ━━━━━━━✔','done 14:19 · 27m'],['validate_counts','           ━━✔','done 14:27 · 8m'],['reload_partitions','             ━━━━━━━━━━━━━━▸','running 1h05m · ▲ 2.1× usual (median 31m)'],['refresh_views','                           ◌','queued'],['notify','                           ◌','queued'],['ping_clickhouse','✖↻ ✖↻ ✖','3 tries · failed · up for retry']]};
+const JIRA={host:'jira.example.net',ver:'9.12.1',me:'Sam Example',
+ cols:[{n:'IN PROGRESS',t:[{k:'DATA-2207',s:'Product metrics integration — PostHog + ClickHouse → portal (PoC)',pr:'High',col:'11d',due:'',log:''},{k:'DATA-2804',s:'Reload mv_statement_daily_agg for 198 dates missing rows of 18 currency accounts',pr:'Medium',col:'8h',due:'',log:'1h30m'},{k:'DATA-2850',s:'STATEMENT_DAILY_AGG: upstream moves drifted 131 historical EUR dates',pr:'—',col:'12h',due:'due tomorrow',dsev:'w',log:''},{k:'DATA-2849',s:'airflow-dags: extract duplicated Google auth and parsing helpers into utils (MR !809)',pr:'—',col:'15h',due:'',log:'30m'}]},
+  {n:'IN REVIEW',t:[{k:'DATA-2647',s:'Client account balances as a daily warehouse table (private/business, EUR buckets)',pr:'ASAP',psev:'r',col:'4d',due:'overdue 2d',dsev:'r',log:'7h12m'},{k:'DATA-1817',s:'Replicate gateway.bank_transfer_data (transfer origin rows) to DS 31',pr:'High',col:'2d',due:'',log:'2h'},{k:'DATA-2788',s:'cbk_accounts_report: close the duplicate-upload race and fix verdict handling (MR !805)',pr:'High',col:'2d',due:'',log:'3h'},{k:'DATA-2773',s:'KYC onboarding tables for funnel cohorts and questionnaire decisions',pr:'High',col:'2d',due:'',log:'4h'}]},
+  {n:'FEEDBACK',t:[{k:'DATA-1289',s:'Daily per-covenantee history of statement vs accounting balance',pr:'High',col:'12d',due:'',log:'4h'}]},
+  {n:'DONE · last 7 days',t:[{k:'DATA-2638',s:'Enrich accounting_monitoring.statement_mismatches with operation details',pr:'URGENT',psev:'r',col:'✔ 2h',due:'',log:'2h'},{k:'DATA-2737',s:'Google Chat failure alerts for the 10 highest-impact enabled DAGs',pr:'High',col:'✔ 2d',due:'',log:'2h'},{k:'DATA-2650',s:'Add all gateway.bank_account columns to the ClickHouse reporting table',pr:'URGENT',psev:'r',col:'✔ 3d',due:'',log:'30m'}]}],
+ cal:[['Mon','     █    █    ▓    █'],['Tue','     ▓    █    █    ▒'],['Wed','     ·    ▓    █     '],['Thu','█    ▒    █    █     '],['Fri','█    ▓    ░    ▓     ']]};
+const SESS=[
+ {n:7,kind:'✻',what:'claude',name:'billing export',dir:'~/work/billing',br:'main',state:'● working',sev:'g',last:'Running the tests… (esc to interrupt)',lines:['› make the invoice export stream its rows instead of building one big Vec','','● I\'ll read the exporter first.','','● Read(src/export/invoice.rs)','  └ 214 lines','','● Update(src/export/invoice.rs)','  └ 18 lines added, 31 removed','','✻ Running the tests… (esc to interrupt)']},
+ {n:8,kind:'▣',what:'opencode',name:'late partitions',dir:'~/work/pipelines',br:'fix-late-parts',state:'! approval',sev:'w',last:'Allow Bash(cargo test)? [y/n]',lines:['› find why the partition for 2026-10-11 is missing','','▣ I will check the loader\'s log first.','','? Allow Bash(cargo test)?  [y/n]']},
+ {n:9,kind:'▦',what:'sql · clickhouse3',name:'sql · clickhouse3',dir:'—',br:'',state:'○ idle',sev:'',last:'1000 rows · 0.4 s · read 2.1 GiB',lines:['SELECT user, count() AS queries, formatReadableSize(sum(memory_usage)) AS mem','FROM system.processes GROUP BY user ORDER BY sum(memory_usage) DESC;','','user          queries  mem','r_redash            2  24.5 GiB','airflow             1  3.53 GiB','haris               1  1.22 GiB','','3 rows · 0.02 s · read 4 rows']},
+ {n:10,kind:'❯',what:'terminal',name:'make totals',dir:'~/work/reports',br:'add-weekly',state:'○ idle',sev:'',last:'$',lines:['$ make totals','cargo run --release -- --week 41','   Compiling totals v0.3.1','    Finished release [optimized] in 4.21s','week 41: 1,204 invoices · 3.2 M EUR','$ ']}];
+// ───────── state, buffer, helpers ─────────
+const VIEWS=[{id:'home',name:'home'},{id:'fleet',name:'fleet'},{id:'queue',name:'queue'},{id:'airflow',name:'airflow'},{id:'jira',name:'jira'},{id:'sessions',name:'sessions'}];
+const SUBS=['nodes','map','heat','tape'];
+const S={view:'home',sub:'nodes',cur:{home:0,fleet:0,queue:0,airflow:0,jira:0,sessions:0,map:0,tape:0,heat:0},expanded:new Set(['clickhouse3','clickhouse-bi']),qexp:new Set(),fold:true,sort:'pressure',zoom:false,density:'comfortable',
+ filter:{on:false,q:''},palette:null,explain:null,float:{open:false,prefix:false,which:false,input:'',sess:0,lines:null,full:false},wiz:null,dialog:null,tour:null,toasts:[],replay:0,paused:false,t:0,prev:'home',note:null,utc:false,prayer:true,profile:'prod',cancelled:new Set(),notes:[],lastTick:0};
+class Buf{constructor(w,h){this.w=w;this.h=h;this.c=[];for(let y=0;y<h;y++){const r=[];for(let x=0;x<w;x++)r.push({ch:' ',fg:'',bg:''});this.c.push(r)}this.hits=[]}
+ put(x,y,s,fg=''){if(y<0||y>=this.h)return x;s=String(s);for(let i=0;i<s.length;i++){const xx=x+i;if(xx<0||xx>=this.w)continue;const c=this.c[y][xx];c.ch=s[i];c.fg=fg}return x+s.length}
+ putr(x,y,s,fg=''){return this.put(x-String(s).length,y,s,fg)}
+ seg(x,y,segs){for(const [t,f] of segs)x=this.put(x,y,t,f||'');return x}
+ bg(x,y,w,h,bg){for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++){if(yy<0||yy>=this.h||xx<0||xx>=this.w)continue;this.c[yy][xx].bg=bg}}
+ clear(x,y,w,h,bg=''){for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++){if(yy<0||yy>=this.h||xx<0||xx>=this.w)continue;const c=this.c[yy][xx];c.ch=' ';c.fg='';c.bg=bg}}
+ hit(x,y,w,h,fn){this.hits.push({x,y,w,h,fn})}
+ html(){let out='';for(const r of this.c){let cur=null,run='';for(const c of r){const k=(c.fg+' '+c.bg).trim();if(k!==cur){if(cur!==null)out+=wrap(cur,run);cur=k;run=''}run+=c.ch}out+=wrap(cur,run)+'\n'}return out}}
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const wrap=(k,s)=>k?`<span class="${k}">${esc(s)}</span>`:esc(s);
+const tr=(s,w)=>{s=String(s);return s.length<=w?s:(w>1?s.slice(0,w-1)+'…':s.slice(0,w))};
+const rp=(s,w)=>{s=tr(s,w);return s+' '.repeat(Math.max(0,w-s.length))};
+const lp=(s,w)=>{s=tr(String(s),w);return ' '.repeat(Math.max(0,w-s.length))+s};
+const f1=x=>(Math.round(x*10)/10).toFixed(1);
+const pctS=(a,b)=>f1(a/b*100)+'%';
+const sevNode=p=>p>=90?'r':p>=75?'w':'';
+const sevUser=p=>p>=40?'r':p>=20?'w':'';
+const sevQ=q=>q.run?'r':'';
+const bold=s=>s?(s==='d'?'d':s+'b'):'b';
+const CLOCK0=15*3600+52*60+7;
+function clock(){let s=CLOCK0+S.t-(S.utc?7*3600:0);s=((s%86400)+86400)%86400;const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return [h,m,x].map(v=>String(v).padStart(2,'0')).join(':')}
+function clockAt(minBack){const s=CLOCK0+S.t-minBack*60;const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')}
+function untilMaghrib(){const left=17*3600+50*60-(CLOCK0+S.t);const h=Math.floor(left/3600),m=Math.floor(left%3600/60);return h>0?`${h}h${String(m).padStart(2,'0')}m`:`${m}m`}
+// replay: the numbers at that minute, from the minute history
+const memOf=nd=>S.replay?nd.memT*(isNaN(HIST[nd.n][59-S.replay])?0:HIST[nd.n][59-S.replay])/100:nd.mem;
+const cpuOf=nd=>S.replay?nd.cpu*Math.max(0.2,memOf(nd)/Math.max(1,nd.mem)):nd.cpu;
+const scale=nd=>S.replay?memOf(nd)/Math.max(0.1,nd.mem):1;
+const memPct=nd=>memOf(nd)/nd.memT*100, cpuPct=nd=>cpuOf(nd)/nd.cores*100;
+const pressure=nd=>Math.max(memPct(nd),cpuPct(nd));
+const runaways=nd=>nd.users.reduce((a,u)=>a+u.q.filter(q=>q.run).length,0);
+const queriesOf=nd=>nd.users.reduce((a,u)=>a+u.q.length,0);
+const healthy=nd=>memPct(nd)<35&&cpuPct(nd)<35&&runaways(nd)===0&&nd.lag<10;
+function sortedNodes(){const a=FLEET.slice();const k=S.sort;a.sort((x,y)=>k==='name'?x.n.localeCompare(y.n):k==='mem'?memPct(y)-memPct(x):k==='cpu'?cpuPct(y)-cpuPct(x):(pressure(y)-pressure(x))||(runaways(y)-runaways(x))||x.n.localeCompare(y.n));return a}
+// bullet bar: filled ━ with a ╸ cap, ┊ ticks at 70 and 90 %
+function bullet(p,w,sev){const segs=[];const fill=Math.min(w,Math.round(p/100*w*2)/2);const full=Math.floor(fill),half=fill-full>0;const t70=Math.floor(0.7*w),t90=Math.floor(0.9*w);let s='';for(let i=0;i<w;i++){let ch='━';if(i===t70||i===t90)ch='┊';if(i<full)ch=(i===t70||i===t90)?'┊':'━';else if(i===full&&half)ch='╸';s+=ch}
+ segs.push([s.slice(0,full+(half?1:0)),sev||'a']);segs.push([s.slice(full+(half?1:0)),'d']);return segs}
+// stacked share bar, largest-remainder rounding so the cells sum to w
+const TEX=['█','▓','▒','▒','▒'];
+function shares(nd,w){const sc=scale(nd);const parts=nd.users.map((u,i)=>({tex:TEX[Math.min(i,4)],v:u.mem*sc/nd.memT}));const used=parts.reduce((a,p)=>a+p.v,0);const srv=Math.max(0,memOf(nd)/nd.memT-used);parts.push({tex:'░',v:srv});parts.push({tex:'·',v:Math.max(0,1-used-srv)});
+ const raw=parts.map(p=>p.v*w);const fl=raw.map(Math.floor);let rem=w-fl.reduce((a,b)=>a+b,0);const order=raw.map((r,i)=>[r-fl[i],i]).sort((a,b)=>b[0]-a[0]);for(let k=0;k<order.length&&rem>0;k++){fl[order[k][1]]++;rem--}
+ let off=0;return parts.map((p,i)=>{const o={tex:p.tex,off,len:fl[i]};off+=fl[i];return o})}
+const SPK='▁▂▃▄▅▆▇█';
+const sparkStr=(vals)=>vals.map(v=>isNaN(v)?' ':SPK[Math.min(7,Math.floor(v/100*8))]).join('');
+const heatCh=v=>isNaN(v)?' ':v<40?'░':v<70?'▒':v<90?'▓':'█';
+const heatCls=v=>isNaN(v)?'d':v>=90?'r':v>=70?'w':'d';
+function rule(b,x,y,w,title,fg='b',right=''){b.put(x,y,'─'.repeat(w),'d');if(title){b.put(x+1,y,' '+title+' ',fg)}if(right)b.putr(x+w-1,y,' '+right+' ','d')}
+function box(b,x,y,w,h,title,fg='b',bottom=''){b.clear(x,y,w,h,'pan');b.bg(x+1,y+h,w,1,'sh');b.bg(x+w,y+1,1,h,'sh');
+ b.put(x,y,'╭'+'─'.repeat(w-2)+'╮','d');for(let i=1;i<h-1;i++){b.put(x,y+i,'│','d');b.put(x+w-1,y+i,'│','d')}b.put(x,y+h-1,'╰'+'─'.repeat(w-2)+'╯','d');
+ if(title)b.put(x+2,y,' '+title+' ',fg);if(bottom)b.put(x+2,y+h-1,' '+bottom+' ','d')}
+function toast(t,sev=''){S.toasts.push({t,sev,at:S.t+(sev==='r'?10:5)});render()}
+// ───────── chrome: masthead, day line, crumbs, band, footer ─────────
+function crumbs(){const c=['home'];if(S.view!=='home'){c.push(S.view);if(S.view==='fleet')c.push(S.sub)}const r=curRow();if(r&&r.name&&S.view!=='home')c.push(r.name);if(S.zoom)c.push('inspector');return c.join(' › ')}
+function chrome(b){const d=S.density;let y=0;
+ if(d!=='focus'){b.put(1,0,'❖','a');b.put(3,0,'cobserve','b');b.put(12,0,'· '+S.profile,'d');b.hit(1,0,10,1,()=>go('home'));
+  let x=W>=100?23:14;VIEWS.forEach((v,i)=>{const cur=S.view===v.id;if(W>=100){b.put(x,0,String(i),cur?'ab':'d');b.put(x+2,0,v.name,cur?'u':'');b.hit(x,0,v.name.length+3,1,()=>go(v.id));x+=v.name.length+(W>=150?6:4)}else{b.put(x,0,String(i)+' '+v.name.slice(0,W<90&&v.id==='sessions'?4:9),cur?'u':'d');b.hit(x,0,v.name.length+3,1,()=>go(v.id));x+=v.name.length+3}});
+  const ck=clock()+' '+(S.utc?'UTC':'WIB');if(S.replay){b.putr(W-1,0,`◷ ${clockAt(S.replay)} · replay −${S.replay}m   `,'wb')}else if(S.paused){b.putr(W-1,0,'○ paused   '+ck+' ','d')}else{const s=`● live   ${ck} `;b.putr(W-1,0,s,'');b.put(W-1-s.length,0,'●','g')}
+  b.hit(W-20,0,19,1,()=>{S.utc=!S.utc;render()});
+  if(d==='compact'&&S.prayer){b.putr(W-24,0,`● Maghrib in ${untilMaghrib()}  `,'d')}
+  y=1;if(d==='comfortable'&&S.prayer){dayline(b,1);y=2}}
+ // crumbs line
+ b.put(1,y,crumbs(),'d');b.put(1,y,'home',S.view==='home'?'':'d');
+ if(S.view==='fleet'&&!S.zoom){const t=SUBS.map(s=>s===S.sub?s:s).join(' · ')+' ‹tab›';const cx=Math.floor(W/2)-Math.floor(t.length/2);let xx=cx;SUBS.forEach((s,i)=>{b.put(xx,y,s,s===S.sub?'u':'d');b.hit(xx,y,s.length,1,()=>{S.sub=s;S.zoom=false;render()});xx+=s.length;if(i<3){b.put(xx,y,' · ','d');xx+=3}});b.put(xx,y,' ‹tab›','d')}
+ if(S.filter.on||S.filter.q){const q=S.filter.q+(S.filter.on?'█':'');const n=rowsOf(S.view).length;b.putr(W-1,y,`/ ${q} · ${n} rows · esc clears `,'ab')}else{const t=W>=100?': command   / filter   ? keys ':': cmd  / filter ';b.putr(W-1,y,t,'d');b.hit(W-1-t.length,y,10,1,openPalette)}
+ y++;
+ if(S.view!=='home'&&d!=='focus'){band(b,y);y++}
+ return y}
+function dayline(b,y){const P=[['Subuh','04:21'],['Terbit','05:33'],['Dzuhur','11:45'],['Ashar','14:48'],['Maghrib','17:50'],['Isya','18:59']];const fill=Math.max(1,Math.floor((W-96)/6));let x=1;b.put(x,y,'━'.repeat(Math.min(3,fill)),'a');x+=Math.min(3,fill)+1;
+ P.forEach((p,i)=>{const past=i<4;const nxt=i===4;const lab=W<100?p[0].slice(0,W<90?4:6)+' '+p[1]:p[0]+' '+p[1];b.put(x,y,lab,nxt?'b':past?'':'d');x+=lab.length;if(nxt){const s=' · in '+untilMaghrib();b.put(x,y,s,'ab');x+=s.length}x+=1;
+  if(i===3){const half=Math.floor(fill/2);b.put(x,y,'━'.repeat(half)+'●'+'┄'.repeat(fill-half),'a');x+=fill+1}else if(i<5){b.put(x,y,(past?'━':'┄').repeat(fill),past?'a':'d');x+=fill}x+=1});
+ b.put(x-1,y,'┄┄','d');if(W>=140)b.putr(W-1,y,'Jakarta ','d')}
+function band(b,y){const mem=FLEET.reduce((a,n)=>a+memOf(n),0),memT=FLEET.reduce((a,n)=>a+n.memT,0),cpu=FLEET.reduce((a,n)=>a+cpuOf(n),0),cores=FLEET.reduce((a,n)=>a+n.cores,0);const hot=FLEET.filter(n=>sevNode(pressure(n))).length,ra=FLEET.reduce((a,n)=>a+runaways(n),0),q=FLEET.reduce((a,n)=>a+queriesOf(n),0);
+ let x=1;x=b.put(x,y,'FLEET ','b');if(W>=100){x=b.put(x,y,'mem ','d');x=b.seg(x,y,bullet(mem/memT*100,W>=150?14:10,sevNode(mem/memT*100)));x=b.put(x+1,y,`${pctS(mem,memT)} ${Math.round(mem)}/${memT} GiB`,'');x=b.put(x+3,y,'cpu ','d');x=b.seg(x,y,bullet(cpu/cores*100,W>=150?14:10,''));x=b.put(x+1,y,`${pctS(cpu,cores)} ${Math.round(cpu)}/${cores} cores`,'');x=b.put(x+3,y,`${q} q · `,'d');x=b.put(x,y,`${ra} !`,ra?'r':'d')}
+ else{x=b.put(x,y,`${pctS(mem,memT)} ${Math.round(mem)}/${memT} GiB · ${pctS(cpu,cores)} ${Math.round(cpu)}/${cores} c · `,'');x=b.put(x,y,`${ra} !`,'r')}
+ const rx=W>=100?Math.max(x+2,W-34):x+2;b.put(rx,y,'│','d');let z=b.put(rx+2,y,'REDASH ','b');z=b.put(z,y,'16 wait · ','');b.put(z,y,W>=100?'3m43s ✖':'3m43s','r');b.hit(rx,y,W-rx,1,()=>go('queue'));b.hit(0,y,rx-1,1,()=>go('fleet'))}
+function footer(b,hints,status){const y=H-1;let x=1;hints.slice(0,W<100?4:5).forEach(([k,d,fn])=>{if(x+k.length+d.length+5>W-(status?status.length+2:0))return;b.put(x,y,k,'ab');b.put(x+k.length+1,y,d,'d');if(fn)b.hit(x,y,k.length+d.length+1,1,fn);x+=k.length+d.length+4});if(status)b.putr(W-1,y,status,'d')}
+function toasts(b){S.toasts=S.toasts.filter(t=>t.at>S.t);S.toasts.slice(-3).reverse().forEach((t,i)=>{const w=Math.min(W-4,t.t.length+3);const x=W-w-1,y=H-2-i;b.clear(x,y,w,1,'pan');b.put(x+1,y,tr(t.t,w-3),t.sev==='r'?'r':t.sev==='w'?'w':t.sev==='g'?'g':'');b.put(x+w-1,y,'▕','d')})}
+// ───────── rows of every view (the resource lists) ─────────
+function homeRows(){const r=[];sortedNodes().forEach(nd=>{const p=pressure(nd),sv=sevNode(p);if(!sv&&!runaways(nd))return;const srv=Math.max(0,memOf(nd)/nd.memT-nd.users.reduce((a,u)=>a+u.mem*scale(nd),0)/nd.memT)*100;const top=nd.users.slice().sort((a,b)=>b.mem-a.mem)[0];
+  let txt=`memory ${pctS(memOf(nd),nd.memT)} ${f1(memOf(nd))}/${nd.memT} GiB · CPU ${pctS(cpuOf(nd),nd.cores)} ${f1(cpuOf(nd))}/${nd.cores}`;txt+=srv>top?.mem*scale(nd)/nd.memT*100?` · the server itself holds ${f1(srv)}%`:` · ${top.p||top.u} holds ${pctS(top.mem*scale(nd),nd.memT)}`;if(nd.n==='clickhouse-bi'&&!S.replay)txt=`memory ${pctS(memOf(nd),nd.memT)} ${f1(memOf(nd))}/${nd.memT} GiB ↗ full in ~18m · j.petrova holds 33.1%`;
+  r.push({sev:sv||'w',src:'FLEET',subj:nd.n,txt,go:'node',name:nd.n,node:nd})});
+ r.splice(1,0,{sev:'r',src:'QUEUE',subj:'queries',txt:'16 waiting · oldest 3m43s · 4/4 workers hold a runaway (ch3 ch-bi ch7)',go:'queue',name:'queries'});
+ r.splice(2,0,{sev:'r',src:'AIRFLOW',subj:'test_clickhouse_connection',txt:'running 262d04h · stuck since Jan 15 · 0/1 tasks',go:'airflow',name:'test_clickhouse_connection',idx:0});
+ r.push({sev:'w',src:'QUEUE',subj:'j.petrova',txt:'#8585 AML dashboard · 5m38s · 21.2 GiB on clickhouse-bi · 95% done',go:'queue',name:'j.petrova',idx:1});
+ r.push({sev:'w',src:'AIRFLOW',subj:'cbk_accounts_report',txt:'failed 07:15 at upload_report · 3rd failure this week',go:'airflow',name:'cbk_accounts_report',idx:5});
+ r.push({sev:'w',src:'JIRA',subj:'DATA-2647',txt:'overdue 2d · ASAP · in review 4d · 7h12m logged',go:'jira',name:'DATA-2647',idx:5});
+ r.push({sev:'',src:'LOCAL',subj:'this Mac',txt:'Claude plan · week 71% 142/200 h · battery 34% · 12 GiB of 32 used',go:'local',name:'this Mac'});
+ const o={r:0,w:1,'':2};r.sort((a,b)=>o[a.sev]-o[b.sev]);return r}
+function fleetRows(){const r=[];const ns=sortedNodes();const folded=[];ns.forEach(nd=>{if(S.fold&&healthy(nd)){folded.push(nd);return}
+  r.push({type:'node',node:nd,name:nd.n});if(!S.expanded.has(nd.n))return;const sh=shares(nd,30);
+  nd.users.forEach((u,i)=>{r.push({type:'user',node:nd,user:u,name:(u.p||u.u),seg:sh[i],last:i===nd.users.length-1});if(S.qexp.has(nd.n+'/'+u.u))u.q.forEach(q=>r.push({type:'query',node:nd,user:u,q,name:q.id}))});
+  r.push({type:'server',node:nd,name:'server',seg:sh[nd.users.length]})});
+ if(folded.length)r.push({type:'fold',nodes:folded,name:''});return r}
+function mapRows(){return sortedNodes().map(nd=>({type:'node',node:nd,name:nd.n}))}
+function tapeRows(){const r=[];const minute=TAPE.map(e=>e[0]);let k=0;while(k<TAPE.length){const e=TAPE[k];if(e[0]>=23&&e[0]<=26){r.push({sev:'r',time:clockAt(26)+'–'+clockAt(23),kind:'QUERY',txt:'m.kairys on clickhouse-bi · 4× runaway → killed at 99% · peak 8.9 GiB  ▸ 12 events',name:'burst'});while(k<TAPE.length&&TAPE[k][0]<=26)k++;continue}
+  r.push({sev:e[1],time:clockAt(e[0]),kind:e[2],txt:e[3],name:e[2].toLowerCase()});k++}
+ S.notes.forEach(n=>r.unshift({sev:'',time:n.at,kind:'NOTE',txt:n.t,name:'note'}));return r}
+function queueRows(){const r=[];QUEUE.running.forEach(j=>r.push({type:'run',j,name:j.who}));QUEUE.waiting.forEach(j=>r.push({type:'wait',j,name:j.who}));QUEUE.stale.forEach(j=>r.push({type:'stale',j,name:j.who}));return r}
+function afRows(){const r=[];AF.running.forEach(x=>r.push({type:'run',x,name:x.d}));AF.queued.forEach(x=>r.push({type:'queued',x,name:x.d}));AF.failed.forEach(x=>r.push({type:'failed',x,name:x.d}));AF.activity.forEach(x=>r.push({type:'dag',x,name:x.d}));return r}
+function jiraRows(){const r=[];JIRA.cols.forEach(c=>c.t.forEach(t=>r.push({type:'ticket',col:c.n,t,name:t.k})));return r}
+function sessRows(){const r=SESS.map((s,i)=>({type:'sess',s,i,name:s.name}));r.push({type:'new',name:'+ new session'});r.push({type:'past',name:'↻ past conversations'});return r}
+function rawRows(v){return v==='home'?homeRows():v==='fleet'?(S.sub==='map'?mapRows():S.sub==='tape'?tapeRows():S.sub==='heat'?mapRows():fleetRows()):v==='queue'?queueRows():v==='airflow'?afRows():v==='jira'?jiraRows():sessRows()}
+function rowText(r){return [r.name,r.subj,r.txt,r.user&&r.user.u,r.q&&r.q.sql.join(' '),r.j&&(r.j.q+' '+r.j.src),r.x&&r.x.d,r.t&&r.t.s,r.s&&(r.s.dir+' '+r.s.what),r.kind].filter(Boolean).join(' ').toLowerCase()}
+function rowsOf(v){const rows=rawRows(v);const q=S.filter.q.toLowerCase();return q?rows.filter(r=>rowText(r).includes(q)):rows}
+const curKey=()=>S.view==='fleet'?S.sub==='nodes'?'fleet':S.sub:S.view;
+function curIdx(){const rows=rowsOf(S.view);let i=S.cur[curKey()]||0;i=Math.max(0,Math.min(rows.length-1,i));S.cur[curKey()]=i;return i}
+function curRow(){const rows=rowsOf(S.view);return rows[curIdx()]}
+function move(d){const rows=rowsOf(S.view);const k=curKey();S.cur[k]=Math.max(0,Math.min(rows.length-1,(S.cur[k]||0)+d));render()}
+function listDraw(b,x,y,w,h,rows,cur,draw){// scroll so the cursor stays in view; returns rows drawn
+ const top=Math.max(0,Math.min(cur-Math.floor(h/2),rows.length-h));for(let i=0;i<h&&top+i<rows.length;i++){const r=rows[top+i],yy=y+i,sel=top+i===cur;if(sel){b.bg(x,yy,w,1,'sel');b.put(x,yy,'▌','a')}draw(r,yy,sel,top+i);b.hit(x,yy,w,1,()=>{const k=curKey();if(S.cur[k]===top+i)enter();else{S.cur[k]=top+i;render()}})}
+ if(top>0)b.putr(x+w-1,y,`▲ ${top} more `,'d');if(top+h<rows.length)b.putr(x+w-1,y+h-1,`▼ ${rows.length-top-h} more `,'d')}
+// ───────── HOME ─────────
+function viewHome(b,y0){const bodyH=H-1-y0;const narrow=W<100;let y=y0;const rows=homeRows();const cur=curIdx();
+ const mem=FLEET.reduce((a,n)=>a+memOf(n),0),memT=FLEET.reduce((a,n)=>a+n.memT,0),cpu=FLEET.reduce((a,n)=>a+cpuOf(n),0),cores=FLEET.reduce((a,n)=>a+n.cores,0),hot=FLEET.filter(n=>sevNode(pressure(n))).length,ra=FLEET.reduce((a,n)=>a+runaways(n),0),q=FLEET.reduce((a,n)=>a+queriesOf(n),0);
+ if(!narrow){const cw=Math.floor((W-2)/4);const cards=[
+   ['FLEET · 9 nodes · '+hot+' hot',[[['mem ','d'],...bullet(mem/memT*100,cw-24,sevNode(mem/memT*100)),[` ${pctS(mem,memT)} ${Math.round(mem)}/${memT}G`,'']],[[ 'cpu ','d'],...bullet(cpu/cores*100,cw-24,''),[` ${pctS(cpu,cores)} ${Math.round(cpu)}/${cores} c`,'']],[[`${q} queries · `,''],[`${ra} !`,'r'],['  lag ≤12s','d']]],'fleet'],
+   ['REDASH · 16 waiting',[[['oldest 3m43s ✖','r'],[' · 3 stale','d']],[['●●●●●●○ 6/7 workers busy','w']],[['▇████▇▆██','r'],[' waiting · 4 min','d']]],'queue'],
+   ['AIRFLOW · last 24 h',[[['217 runs · ✔ 211 · ',''],['✖ 3','r']],[['▸ 2 running · ◌ 1 · ↻ 1','']],[['✖ 1 stuck for 262 d','r']]],'airflow'],
+   ['JIRA · mine',[[['5 open · ',''],['1 overdue ✖','r']],[['today 5h10 of 7h30 logged','']],[['due this week 3','']]],'jira']];
+  cards.forEach((c,i)=>{const x=1+i*cw;rule(b,x,y,cw-1,c[0],'b');c[1].forEach((line,k)=>b.seg(x+1,y+1+k,line.map(s=>[tr(s[0],cw-2),s[1]])));b.hit(x,y,cw-1,4,()=>go(c[2]))});y+=5}
+ else{b.seg(1,y,[['FLEET ','b'],[`${pctS(mem,memT)} mem · ${pctS(cpu,cores)} cpu · `,''],[`${ra} !`,'r']]);b.seg(1,y+1,[['REDASH ','b'],['16 waiting · ',''],['oldest 3m43s ✖','r']]);b.seg(1,y+2,[['AIRFLOW ','b'],['217 runs · ',''],['✖ 3 · 1 stuck','r']]);b.seg(1,y+3,[['JIRA ','b'],['5 open · ',''],['1 overdue ✖','r']]);y+=5}
+ const listH=narrow?Math.min(rows.length,bodyH-8):Math.min(rows.length,8);rule(b,1,y,W-2,`WHAT'S WRONG NOW · ${rows.length} · worst first`,'b');y++;
+ listDraw(b,0,y,W,listH,rows,cur,(r,yy,sel)=>{const g=r.sev==='r'?'✖':r.sev==='w'?'▲':'●';b.put(1,yy,g,r.sev||'g');b.put(3,yy,rp(r.src,8),'d');b.put(12,yy,rp(r.subj,narrow?14:28),r.src==='FLEET'?'b':r.src==='JIRA'||r.src==='AIRFLOW'?'':'p');const tx=narrow?27:41;b.put(tx,yy,tr(r.txt,W-tx-10),'');b.putr(W-1,yy,'⏎ '+(r.go==='node'?'node':r.go==='queue'?'job':r.go==='airflow'?'run':r.go==='jira'?'ticket':r.go)+' ','d')});y+=listH+1;
+ // density strip
+ const sw=Math.min(60,W-56);const cnt={r:new Array(60).fill(0),w:new Array(60).fill(0)};TAPE.forEach(e=>{const m=Math.min(59,Math.floor(e[0]));if(e[1]==='r')cnt.r[m]++;else if(e[1]==='w')cnt.w[m]++});
+ const strip=(a)=>{let s='';for(let i=0;i<sw;i++){const m=Math.floor((sw-1-i)*60/sw);const v=a[m];s+=v?SPK[Math.min(7,v*2)]:'▁'}return s};
+ if(y+3<=H-1){rule(b,1,y,W-2,`LAST 60 MIN · events per minute`,'b',`${clockAt(60)} ──── ${clockAt(30)} ──── now`);y++;b.put(1,y,'✖','r');b.put(3,y,strip(cnt.r),'r');b.put(4+sw,y,`${cnt.r.reduce((a,c)=>a+c,0)} ✖ · burst ${clockAt(26)}–${clockAt(23)} · m.kairys runaway ×4`,'d');y++;b.put(1,y,'▲','w');b.put(3,y,strip(cnt.w),'w');b.put(4+sw,y,`${cnt.w.reduce((a,c)=>a+c,0)} ▲`,'d');y+=2}
+ if(!narrow&&y+6<=H-5){heatmap(b,y,Math.min(5,H-5-y-1),Math.min(60,W-40));y+=Math.min(5,H-5-y-1)+2}
+ // drawer
+ const r=rows[cur];if(r&&y+3<=H-1){if(r.node)nodeDrawer(b,y,H-1-y,r.node,1,W-2,true);else{rule(b,1,y,W-2,r.subj+' · '+r.src.toLowerCase(),'b','e explain · ⏎ open');b.put(1,y+1,tr(r.txt,W-2),'');b.put(1,y+2,tr(r.go==='queue'?'running 5m38s → clickhouse-bi · c3e5 ! runaway · ⏎ jumps to the job':r.go==='airflow'?'⏎ its tasks here · o in Airflow · y copies its link':r.go==='jira'?'from Jurgita Petrova · made Sep 27 · due 2026-10-02 · ⏎ in full here · o in Jira':'CPU 31% of 10 cores · memory 12/32 GiB · pressure normal · ⏎ opens local',W-2),'d')}}
+ footer(b,[['↑↓','move'],['⏎','go there',enter],['e','explain',explain],['/','find',startFilter],[':','command',openPalette]],`9/9 nodes · 0.8 s · read-only`)}
+function heatmap(b,y,h,cols,full){const ns=sortedNodes();rule(b,1,y,W-2,`FLEET · max memory per minute · ░ <40%  ▒ <70%  ▓ <90%  █ ≥90%`,'b',S.replay?`◷ ${clockAt(S.replay)}`:`${clockAt(cols)} → now`);y++;
+ const shown=full?ns:ns.filter(n=>!(S.fold&&healthy(n)));const rest=ns.filter(n=>!shown.includes(n));const lines=Math.min(h-1,shown.length);
+ for(let i=0;i<lines;i++){const nd=shown[i];b.put(1,y+i,rp(nd.n,15),'b');for(let c=0;c<cols;c++){const v=HIST[nd.n][60-cols+c];b.put(17+c,y+i,heatCh(v),heatCls(v))}if(S.replay){const cx=17+cols-1-S.replay;if(cx>=17)b.bg(cx,y+i,1,1,'sel')}b.put(18+cols,y+i,`${lp(pctS(memOf(nd),nd.memT),6)}  ${f1(memOf(nd))}/${nd.memT} GiB`,sevNode(memPct(nd)));b.hit(1,y+i,W-2,1,()=>{go('fleet');selectNode(nd.n)})}
+ if(rest.length&&lines<h){const m=Math.max(...rest.map(memPct));b.put(1,y+lines,rp(`${rest.length} nodes ≤ ${Math.round(m)}%`,15),'d');b.put(17,y+lines,'░'.repeat(cols),'d');b.put(18+cols,y+lines,`all ≤ ${Math.round(m)}%`,'d');b.putr(W-1,y+lines,'␣ unfold ','d');b.hit(1,y+lines,W-2,1,()=>{S.fold=!S.fold;render()})}}
+// ───────── FLEET: nodes · map · heat · tape ─────────
+function selectNode(name){S.sub='nodes';S.expanded.add(name);const rows=fleetRows();const i=rows.findIndex(r=>r.type==='node'&&r.node.n===name);if(i>=0)S.cur.fleet=i;render()}
+function selectQuery(node,qid){S.sub='nodes';S.expanded.add(node);const nd=FLEET.find(n=>n.n===node);const u=nd&&nd.users.find(u=>u.q.some(q=>q.id===qid));if(u)S.qexp.add(node+'/'+u.u);const rows=fleetRows();const i=rows.findIndex(r=>r.type==='query'&&r.q.id===qid);S.cur.fleet=i>=0?i:0;render()}
+function fleetCols(tw,narrow,wide){const c=[['name',narrow?27:30]];if(!narrow)c.push(['share',wide?24:30]);c.push(['mem',6],['gib',8]);if(wide)c.push(['cpubar',12]);c.push(['cpu',6],['cores',8],['q',5],['longest',8]);if(!narrow)c.push(['spark',8]);const cx={};let x=1;c.forEach(([k,w])=>{cx[k]=[x,w];x+=w+(k==='name'?1:2)});return cx}
+function viewFleet(b,y0){if(S.sub==='map')return viewMap(b,y0);if(S.sub==='heat')return viewHeat(b,y0);if(S.sub==='tape')return viewTape(b,y0);
+ const bodyH=H-1-y0,narrow=W<100,wide=W>=150;const rows=fleetRows().filter(r=>!S.filter.q||rowText(r).includes(S.filter.q.toLowerCase()));const cur=curIdx();const r=rows[cur];
+ if(S.zoom){if(r&&r.node)nodeDrawer(b,y0,bodyH,r.node,1,W-2,false,r);footer(b,[['esc','back'],['e','explain',explain],['c','SQL on it'],['y','copy link']],'inspector · f zoom');return}
+ const tx=wide?23:0,tw=wide?W-48-23:W;const cx=fleetCols(tw,narrow,wide);
+ if(wide){sidePanels(b,y0,bodyH)}
+ let y=y0;const hdr=(k,t,al)=>{if(!cx[k])return;const [x,w]=cx[k];b.put(tx+(al?x+w-t.length:x),y,t,'d')};
+ hdr('name','NODE · USER → PERSON');hdr('share','SHARE OF NODE · mem');hdr('mem',narrow?'MEM % of GiB':'MEM ▼',true);hdr('gib',narrow?'':'GiB',true);hdr('cpubar','CPU ━━┊━┊');hdr('cpu',narrow?'CPU % of cores':'CPU ▼',true);hdr('cores',narrow?'':'cores',true);hdr('q','Q');hdr('longest','LONGEST',true);hdr('spark','4 MIN');y++;
+ const insH=4,drawerH=narrow||wide?0:12;const treeH=bodyH-1-insH-drawerH-(drawerH?1:0)-1;
+ listDraw(b,tx,y,tw,treeH,rows,cur,(r,yy)=>drawFleetRow(b,tx,yy,r,cx,narrow));y+=treeH+1;
+ // insights
+ const ins=insights();rule(b,tx+1,y,tw-2,`INSIGHTS · ${ins.length} · tab to go to one`,'b');y++;ins.slice(0,insH-1).forEach((it,i)=>{b.put(tx+1,y+i,it.g,it.sev);b.put(tx+3,y+i,rp(it.subj,15),'b');b.put(tx+19,y+i,tr(it.txt,tw-30),'');if(it.more)b.putr(tx+tw-1,y+i,it.more+' ','d');b.hit(tx,y+i,tw,1,()=>selectNode(it.subj))});y+=insH;
+ if(drawerH&&r){nodeDrawer(b,y,drawerH,r.node,tx+1,tw-2,false,r)}
+ if(wide&&r&&r.node)inspector(b,W-46,y0,46,bodyH,r);
+ const f=[['↑↓','move'],['⏎',r&&r.type==='query'?'inspector':'open',enter],['e','explain',explain],['f','zoom',()=>{S.zoom=!S.zoom;render()}],['/','filter',startFilter],[':','command',openPalette]];footer(b,narrow?[['↑↓',''],['⏎','',enter],['/','',startFilter],[':','',openPalette],['?','',()=>openPalette(true)]]:f,narrow?'9/9 · 0.8 s · read-only':'9/9 nodes · 0.8 s · read-only')}
+function drawFleetRow(b,tx,y,r,cx,narrow){const put=(k,t,fg,al)=>{if(!cx[k])return;const [x,w]=cx[k];b.put(tx+(al?x+w-String(t).length:x),y,tr(t,w),fg)};const nd=r.node;
+ if(r.type==='fold'){b.put(tx+1,y,'▸ ',"d");b.put(tx+3,y,`${r.nodes.length} healthy folded · ${r.nodes.map(n=>n.n).join(' ')} · all ≤ ${Math.round(Math.max(...r.nodes.map(memPct)))}%`,'d');b.putr(tx+(cx.spark?cx.spark[0]+cx.spark[1]:cx.longest[0]+cx.longest[1]),y,'␣ unfold','d');return}
+ const sc=scale(nd),mp=memPct(nd),cp=cpuPct(nd),sv=sevNode(Math.max(mp,cp));
+ if(r.type==='node'){const ex=S.expanded.has(nd.n);put('name',(ex?'▾ ':'▸ ')+nd.n+(nd.isNew?' NEW':'')+(nd.lag>=10?` lag ${nd.lag}s`:''),'b');if(nd.isNew)b.put(tx+cx.name[0]+nd.n.length+3,y,'NEW','g');if(nd.lag>=10)b.put(tx+cx.name[0]+nd.n.length+3,y,`lag ${nd.lag}s`,'w');
+  if(cx.share){const w=cx.share[1];const sh=shares(nd,w);let s='';sh.forEach(p=>s+=p.tex.repeat(p.len));b.put(tx+cx.share[0],y,s,sv||'a')}
+  put('mem',pctS(memOf(nd),nd.memT),sevNode(mp),true);put('gib',`${f1(memOf(nd))}/${nd.memT}`,'',true);if(cx.cpubar)b.seg(tx+cx.cpubar[0],y,bullet(cp,cx.cpubar[1],sevNode(cp)));put('cpu',pctS(cpuOf(nd),nd.cores),sevNode(cp),true);put('cores',`${f1(cpuOf(nd))}/${nd.cores}`,'',true);
+  const ra=runaways(nd);put('q',`${queriesOf(nd)}${ra?' !'+ra:''}`,ra?'r':'');const lg=nd.users.flatMap(u=>u.q).sort((a,b)=>tsec(b.t)-tsec(a.t))[0];put('longest',lg?lg.t+(lg.run?' !':''):'—',lg&&lg.run?'r':lg?'':'d',true);
+  if(cx.spark)b.put(tx+cx.spark[0],y,sparkStr(SPARK[nd.n].slice(-8)),sv||'d');b.hit(tx+cx.name[0],y,cx.name[1],1,()=>{if(S.expanded.has(nd.n))S.expanded.delete(nd.n);else S.expanded.add(nd.n);render()})}
+ else if(r.type==='user'){const u=r.user;const up=u.mem*sc/nd.memT*100,ucp=u.cpu*sc/nd.cores*100;b.put(tx+1,y,r.last&&!S.qexp.has(nd.n+'/'+u.u)?'├':'├','d');const parts=u.u.split(' → ');b.put(tx+3,y,tr(parts[0],cx.name[1]-2),parts[1]?'d':'');if(parts[1]){const p0=parts[0]+' → ';b.put(tx+3+p0.length-2,y,'→','d');b.put(tx+3+p0.length,y,tr(parts[1],cx.name[1]-2-p0.length),'p')}
+  if(cx.share){const sg=r.seg;const w=cx.share[1];const off=Math.round(sg.off*w/30),len=Math.round(sg.len*w/30);b.put(tx+cx.share[0]+off,y,sg.tex.repeat(Math.max(0,Math.min(len,w-off))),sv||'a')}
+  put('mem',f1(up)+'%',sevUser(up),true);put('gib',f1(u.mem*sc),'',true);if(cx.cpubar)b.seg(tx+cx.cpubar[0],y,bullet(ucp,cx.cpubar[1],''));put('cpu',f1(ucp)+'%','',true);put('cores',(u.cpu*sc).toFixed(2),'',true);put('q',String(u.q.length),'');const lg=u.q[0];put('longest',lg.t+(lg.run?' !':''),lg.run?'r':'',true)}
+ else if(r.type==='query'){const q=r.q;b.put(tx+1,y,'│  └','d');b.put(tx+6,y,q.id,'a');b.put(tx+11,y,tr((q.redash?q.redash+' · ':'')+q.sql[0],(cx.share?cx.share[0]+cx.share[1]:cx.mem[0])-12),'d');put('mem',f1(r.user.mem*sc/nd.memT*100)+'%','',true);put('gib',f1(r.user.mem*sc),'',true);put('cpu',f1(r.user.cpu*sc/nd.cores*100)+'%','',true);put('cores',(r.user.cpu*sc).toFixed(2),'',true);put('q',q.prog?q.prog+'%':'—','d');put('longest',q.t+(q.run?' !':''),q.run?'r':'',true)}
+ else if(r.type==='server'){b.put(tx+1,y,'└','d');b.put(tx+3,y,'server · caches · merges','d');const used=nd.users.reduce((a,u)=>a+u.mem*sc,0),usedC=nd.users.reduce((a,u)=>a+u.cpu*sc,0);const sm=Math.max(0,memOf(nd)-used),scp=Math.max(0,cpuOf(nd)-usedC);
+  if(cx.share){const sg=r.seg;const w=cx.share[1];const off=Math.round(sg.off*w/30),len=Math.round(sg.len*w/30);b.put(tx+cx.share[0]+off,y,'░'.repeat(Math.max(0,Math.min(len,w-off))),sv||'a')}
+  put('mem',pctS(sm,nd.memT),'d',true);put('gib',f1(sm),'d',true);put('cpu',pctS(scp,nd.cores),'d',true);put('cores',scp.toFixed(2),'d',true)}}
+const tsec=t=>{const m=t.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);return (+m[1]||0)*3600+(+m[2]||0)*60+(+m[3]||0)};
+function insights(){const out=[];sortedNodes().forEach(nd=>{const mp=memPct(nd),cp=cpuPct(nd),sv=sevNode(Math.max(mp,cp));const srv=Math.max(0,memOf(nd)-nd.users.reduce((a,u)=>a+u.mem*scale(nd),0));const ra=nd.users.flatMap(u=>u.q.filter(q=>q.run).map(q=>({u,q})));
+  if(sv){out.push({g:sv==='r'?'✖':'▲',sev:sv,subj:nd.n,txt:`memory ${pctS(memOf(nd),nd.memT)} · CPU ${pctS(cpuOf(nd),nd.cores)} · ${srv/nd.memT>0.4?`the server itself holds ${pctS(srv,nd.memT)}`:`${nd.users[0]?.p||nd.users[0]?.u||'nobody'} holds ${pctS((nd.users[0]?.mem||0)*scale(nd),nd.memT)}`}`+(nd.n==='clickhouse-bi'?' ↗ full in ~18m':''),more:ra.length?`+${ra.length} more`:''})}
+  else if(ra.length){const x=ra[0];out.push({g:'▲',sev:'w',subj:nd.n,txt:`${x.u.p||x.u.u} ${x.q.t} · ${f1(x.u.mem*scale(nd))} GiB · ${x.q.sql[0].replace(/^SELECT .*?FROM /,'').split(' ')[0]}`+(nd.lag>=10?` · lag ${nd.lag} s`:''),more:ra.length>1?`+${ra.length-1} more`:''})}});
+ return out.length?out:[{g:'●',sev:'g',subj:'fleet',txt:'all quiet · 9 of 9 nodes answered',more:''}]}
+function nodeDrawer(b,y,h,nd,x,w,short,r){const sc=scale(nd),mp=memPct(nd),cp=cpuPct(nd);const q=r&&r.q?r.q:nd.users.flatMap(u=>u.q.map(q=>({...q,u}))).sort((a,b)=>tsec(b.t)-tsec(a.t))[0];const u=r&&r.user?r.user:(q&&q.u);
+ rule(b,x,y,w,`${nd.n} · ${nd.host}`,'b',short?'e explain · ⏎ open':'e explain · f zoom · c SQL on it');y++;
+ const bw=Math.min(28,Math.floor((w-52)/2));let xx=b.put(x,y,`MEM ${f1(memOf(nd))}/${nd.memT} GiB `,'');xx=b.put(xx,y,pctS(memOf(nd),nd.memT)+'  ',sevNode(mp));xx=b.seg(xx,y,bullet(mp,bw,sevNode(mp)));xx=b.put(xx+3,y,`CPU ${f1(cpuOf(nd))}/${nd.cores} cores `,'');xx=b.put(xx,y,pctS(cpuOf(nd),nd.cores)+'  ',sevNode(cp));b.seg(xx,y,bullet(cp,bw,sevNode(cp)));y++;
+ if(short){const used=nd.users.reduce((a,u)=>a+u.mem*sc,0);b.put(x,y,tr(`queries ${pctS(used,nd.memT)} + server ${pctS(Math.max(0,memOf(nd)-used),nd.memT)} · ${queriesOf(nd)} running (${runaways(nd)} !) · free ${f1(nd.memT-memOf(nd))} GiB = ${(Math.max(0,nd.memT-memOf(nd))/24).toFixed(1)}× a 24.0 GiB query · ${sparkStr(SPARK[nd.n].slice(-8))} → ${mp>80?'steady':'rising'}`,w),'');y++;
+  const ins=insights().filter(i=>i.subj===nd.n);b.put(x,y,tr(ins.map(i=>i.g+' '+i.txt).join(' · ')||'● nothing to report',w),ins.length?ins[0].sev:'g');return}
+ const h4=HIST[nd.n];b.put(x+bw-(bw>20?18:12),y,`▲ 4 min ago ${f1(isNaN(h4[55])?0:h4[55]*nd.memT/100)} GiB`,'d');b.put(x+Math.floor(0.7*bw)+16-((bw>20)?0:0),y,'70% 90%','d');y++;
+ // area chart of the last 4 minutes, CPU as dots over it
+ const cw=Math.min(w-28,60);const vals=SPARK[nd.n].slice(-cw);const cpuv=vals.map(v=>Math.max(0,Math.min(99,v*cp/Math.max(1,mp)+(rnd()-0.5)*6)));const lab=[`${nd.memT}`,`${nd.memT/2}`,'0'];
+ for(let row=0;row<3;row++){const yy=y+row;b.put(x,yy,lp(lab[row],4)+(row<2?' ┤ ':' ┼─'),'d');for(let c=0;c<cw;c++){const v=vals[c];if(isNaN(v))continue;const lvl=Math.round(v/100*24);const r2=2-row;let ch=' ';if(lvl>=(r2+1)*8)ch='█';else if(lvl>r2*8)ch=SPK[lvl-r2*8-1];if(ch!==' ')b.put(x+7+c,yy,ch,'d');if(Math.min(2,Math.floor(cpuv[c]/100*3))===r2)b.put(x+7+c,yy,'•','b')}
+  if(row===2)b.put(x+7+cw,yy,`  -4m ──── -2m ──── now   [ ] window`,'d')}
+ b.put(x+9+cw,y,`▄ mem ${f1(memOf(nd))} GiB · hi ${f1(Math.max(...vals.filter(v=>!isNaN(v)))*nd.memT/100)}`,'d');b.put(x+9+cw,y+1,`• cpu ${f1(cpuOf(nd))} cores · hi ${f1(Math.max(...cpuv)*nd.cores/100)}`,'d');y+=3;
+ if(h>=10&&q){y++;b.put(x,y,'▎','a');b.put(x+2,y,tr(`${q.id} · ${u.u} ${q.redash?'· '+q.redash:''} · ${q.t} · ${f1(u.mem*sc)} GiB · ${u.cpu*sc} cores · usually ${q.usual}`,w-2),'');y++;q.sql.slice(0,h-9).forEach((l,i)=>{b.put(x,y+i,'▎','a');b.put(x+2,y+i,tr(l,w-2),'d')});y+=Math.min(q.sql.length,h-9);if(y<H-2)b.putr(x+w,y-1,`E estimate · would read ${q.est}`,'d')}}
+function inspector(b,x,y,w,h,r){const nd=r.node;b.put(x-1,y,'│','d');for(let i=1;i<h;i++)b.put(x-1,y+i,'│','d');rule(b,x,y,w-1,`${nd.n} · ${nd.host.split(':')[0]}`,'b');y++;
+ const mp=memPct(nd),cp=cpuPct(nd);let xx=b.put(x,y,`MEM ${f1(memOf(nd))}/${nd.memT} GiB `,'');xx=b.put(xx,y,pctS(memOf(nd),nd.memT)+' ',sevNode(mp));b.seg(xx,y,bullet(mp,w-28,sevNode(mp)));y++;xx=b.put(x,y,`CPU ${f1(cpuOf(nd))}/${nd.cores} c   `,'');xx=b.put(xx,y,pctS(cpuOf(nd),nd.cores)+' ',sevNode(cp));b.seg(xx,y,bullet(cp,w-28,sevNode(cp)));y++;
+ b.put(x,y,tr(`free ${f1(nd.memT-memOf(nd))} GiB = ${(Math.max(0,nd.memT-memOf(nd))/24).toFixed(1)}× a 24 GiB query`,w-1),'d');y++;
+ const cw=w-10;const vals=SPARK[nd.n].slice(-cw);for(let row=0;row<3;row++){b.put(x,y+row,lp(['64','32','0'][row],3)+(row<2?' ┤':' ┼'),'d');for(let c=0;c<cw;c++){const v=vals[c];if(isNaN(v))continue;const lvl=Math.round(v/100*24),r2=2-row;let ch=' ';if(lvl>=(r2+1)*8)ch='█';else if(lvl>r2*8)ch=SPK[lvl-r2*8-1];if(ch!==' ')b.put(x+6+c,y+row,ch,'d')}}y+=3;b.put(x+6,y,'-4m ─────────── now','d');y+=2;
+ rule(b,x,y,w-1,'insights','b');y++;insights().filter(i=>i.subj===nd.n).forEach(i=>{if(y>=H-2)return;b.put(x,y,i.g,i.sev);b.put(x+2,y,tr(i.txt,w-3),'');y++});
+ const q=r.q||nd.users.flatMap(u=>u.q.map(q=>({...q,u}))).sort((a,b)=>tsec(b.t)-tsec(a.t))[0];const u=r.user||(q&&q.u);if(q&&y<H-4){y++;rule(b,x,y,w-1,`SQL · ${q.id} · ${u.p||u.u}`,'b');y++;q.sql.forEach(l=>{if(y<H-2){b.put(x,y,tr(l,w-1),'d');y++}});if(y<H-2){b.put(x,y,tr(`usually ${q.usual}`,w-1),'');y++}if(y<H-2)b.put(x,y,tr(`E estimate · ${q.est}`,w-1),'d')}}
+function sidePanels(b,y,h){const mem=FLEET.reduce((a,n)=>a+memOf(n),0),memT=FLEET.reduce((a,n)=>a+n.memT,0),cpu=FLEET.reduce((a,n)=>a+cpuOf(n),0),cores=FLEET.reduce((a,n)=>a+n.cores,0);const P=[['[1] fleet',[`9 nodes · ${FLEET.filter(n=>sevNode(pressure(n))).length} hot`,`mem ${pctS(mem,memT)} ${Math.round(mem)}/${memT} GiB`,`cpu ${pctS(cpu,cores)} ${Math.round(cpu)}/${cores} c`],'fleet'],['[2] redash',['16 waiting · 3m43s ✖','6/7 busy · 3 stale'],'queue'],['[3] airflow',['217 runs · ✖ 3 · ▸ 2','✖ 1 stuck 262 d'],'airflow'],['[4] jira',['5 open · 1 overdue ✖','today 5h10 of 7h30'],'jira']];
+ P.forEach(p=>{if(y>=H-2)return;rule(b,0,y,22,p[0],'b');y++;p[1].forEach(l=>{b.put(0,y,tr(l,22),l.includes('✖')?'r':'');y++});b.hit(0,y-p[1].length-1,22,p[1].length+1,()=>go(p[2]))})}
+function viewMap(b,y0){const rows=mapRows();const cur=curIdx();const cw=W>=150?36:W>=100?29:38;const per=Math.max(1,Math.floor((W-2)/cw));rule(b,1,y0,W-2,`MAP · ${rows.length} nodes · sorted by ${S.sort} ▼ · ←→↑↓ move · ⏎ open · s sort`,'b');
+ rows.forEach((r,i)=>{const nd=r.node,x=1+(i%per)*cw,y=y0+1+Math.floor(i/per)*5;if(y+4>H-1)return;const mp=memPct(nd),cp=cpuPct(nd),sv=sevNode(Math.max(mp,cp));if(i===cur){b.bg(x,y,cw-1,4,'sel');b.put(x,y,'▌','a');b.put(x,y+1,'▌','a');b.put(x,y+2,'▌','a');b.put(x,y+3,'▌','a')}
+  b.put(x+1,y,sv==='r'?'✖':sv==='w'?'▲':'●',sv||'g');b.put(x+3,y,nd.n+(nd.isNew?' NEW':''),'b');b.putr(x+cw-2,y,`${queriesOf(nd)}q${runaways(nd)?' !'+runaways(nd):''}`,runaways(nd)?'r':'d');
+  let xx=b.put(x+1,y+1,'mem ','d');xx=b.seg(xx,y+1,bullet(mp,cw-14,sevNode(mp)));b.putr(x+cw-2,y+1,pctS(memOf(nd),nd.memT),sevNode(mp));xx=b.put(x+1,y+2,'cpu ','d');b.seg(xx,y+2,bullet(cp,cw-14,sevNode(cp)));b.putr(x+cw-2,y+2,pctS(cpuOf(nd),nd.cores),sevNode(cp));b.put(x+1,y+3,sparkStr(SPARK[nd.n].slice(-(cw-10))),sv||'d');if(nd.lag>=10)b.putr(x+cw-2,y+3,`lag ${nd.lag}s`,'w');b.hit(x,y,cw-1,4,()=>{if(S.cur.map===i)enter();else{S.cur.map=i;render()}})});
+ const r=rows[cur];if(r){const dy=H-6;if(dy>y0+2+Math.ceil(rows.length/per)*5)nodeDrawer(b,dy,4,r.node,1,W-2,true)}
+ footer(b,[['←→↑↓','move'],['⏎','open in nodes',enter],['c','SQL on it'],['s','sort',()=>cycleSort()],[':','command',openPalette]],'9/9 nodes · 0.8 s · read-only')}
+function viewHeat(b,y0){heatmap(b,y0,H-2-y0,Math.min(60,W-40),true);footer(b,[['[',']','replay a minute'],['t','live'],['⏎','open node',enter],['␣','fold',()=>{S.fold=!S.fold;render()}]],S.replay?`◷ replay −${S.replay}m`:'9/9 nodes · 0.8 s · read-only')}
+function viewTape(b,y0){const rows=rowsOf('fleet');const cur=curIdx();let y=y0;const sw=Math.min(60,W-40);const cnt={r:new Array(60).fill(0),w:new Array(60).fill(0)};TAPE.forEach(e=>{const m=Math.min(59,Math.floor(e[0]));if(e[1]==='r')cnt.r[m]++;else if(e[1]==='w')cnt.w[m]++});const strip=a=>{let s='';for(let i=0;i<sw;i++){const v=a[Math.floor((sw-1-i)*60/sw)];s+=v?SPK[Math.min(7,v*2)]:'▁'}return s};
+ rule(b,1,y,W-2,`TAPE · ${rows.length} lines · newest first · n note · y export`,'b',`${clockAt(60)} ──── now`);y++;b.put(1,y,'✖','r');b.put(3,y,strip(cnt.r),'r');b.put(5+sw,y,`${cnt.r.reduce((a,c)=>a+c,0)} ✖`,'d');y++;b.put(1,y,'▲','w');b.put(3,y,strip(cnt.w),'w');b.put(5+sw,y,`${cnt.w.reduce((a,c)=>a+c,0)} ▲`,'d');y+=2;
+ const lh=H-1-y-4;listDraw(b,0,y,W,lh,rows,cur,(r,yy)=>{b.put(1,yy,r.sev==='r'?'✖':r.sev==='w'?'▲':r.sev==='g'?'✔':r.kind==='NOTE'?'✎':'●',r.sev||(r.kind==='NOTE'?'a':'g'));b.put(3,yy,r.time,'d');b.put(4+r.time.length,yy,rp(r.kind,6),'d');b.put(W<100?17:19,yy,tr(r.txt,W-21),r.kind==='NOTE'?'':'')});y+=lh;
+ const r=rows[cur];if(r){rule(b,1,y,W-2,`${r.time} WIB · ${r.kind}`,'b');b.put(1,y+1,tr(r.txt,W-2),'');b.put(1,y+2,r.kind==='NODE'?'⏎ goes to the node':r.kind==='QUEUE'?'⏎ opens the queue':r.kind==='NOTE'?'your note · y exports the tape with it':'⏎ goes to the query, if it still runs','d')}
+ footer(b,[['↑↓','scroll'],['⏎','go to it',enter],['n','note',noteStart],['y','export report',()=>toast('✓ incident report · 2.1 KB markdown copied · ~/incidents/2026-10-13-1552.md','g')],[':','command',openPalette]],'9/9 nodes · 0.8 s · read-only')}
+// ───────── QUEUE · AIRFLOW · JIRA · SESSIONS, the same grammar ─────────
+function section(b,y,title,fg='b'){rule(b,1,y,W-2,title,fg);return y+1}
+function viewQueue(b,y0){const rows=rowsOf('queue');const cur=curIdx();let y=y0;const narrow=W<100;
+ b.put(1,y,`${QUEUE.host} · Redash ${QUEUE.ver} · ${QUEUE.workers} workers, ${QUEUE.busy} busy`,'d');b.putr(W-1,y,'read 0s ago ','d');y+=2;
+ if(!narrow){b.put(1,y,rp('QUEUE',20)+lp('RUNNING',8)+lp('WAITING',9)+lp('OLDEST',9)+'  '+rp('WORKERS',20)+lp('STALE',6)+'   WAITING · last 4 min','d');y++;QUEUE.queues.forEach(q=>{b.put(1,y,rp(q.n,20),'b');b.put(21,y,lp(q.run,8)+lp(q.wait,9),'');b.put(38,y,lp(q.oldest+(q.sev==='r'?' ✖':' ▲'),9),q.sev);b.put(49,y,rp(q.w,20),q.sev==='r'?'w':'');b.put(69,y,lp(q.stale||'·',6),q.stale?'w':'d');b.put(78,y,q.hist,q.sev);y++});b.put(1,y,'default · emails · periodic · schemas  idle','d');y+=2}
+ const groups=[['run',`RUNNING · ${QUEUE.running.length} on a worker`],['wait',`WAITING · 16 in the queues · ${QUEUE.waiting.length} named`],['stale',`STALE · ${QUEUE.stale.length} in the started list, no worker`]];
+ const drawerH=narrow?0:4;const lh=H-1-y-drawerH-(drawerH?1:0);let line=0;const cells=[];rows.forEach((r,i)=>{if(i===0||rows[i-1].type!==r.type)cells.push({hdr:groups.find(g=>g[0]===r.type)[1]});cells.push({r,i})});
+ const top=Math.max(0,Math.min(cells.findIndex(c=>c.i===cur)-Math.floor(lh/2),cells.length-lh));
+ for(let k=0;k<lh&&top+k<cells.length;k++){const c=cells[top+k],yy=y+k;if(c.hdr){rule(b,1,yy,W-2,c.hdr,'b');continue}const r=c.r,j=r.j,sel=c.i===cur;if(sel){b.bg(0,yy,W,1,'sel');b.put(0,yy,'▌','a')}b.hit(0,yy,W,1,()=>{if(S.cur.queue===c.i)enter();else{S.cur.queue=c.i;render()}});
+  const canc=S.cancelled.has(j.id);if(r.type==='run'){b.put(3,yy,lp(j.t,7)+(canc?' ⊘':j.run?' !':'  '),canc?'d':j.run?'r':'');b.put(13,yy,rp(j.who,15),'p');b.put(29,yy,tr(j.q,narrow?22:34),'');if(!narrow){b.put(64,yy,rp(j.src,15),'d');b.put(80,yy,tr(j.ch,W-81),j.node?'':'d')}}
+  else if(r.type==='wait'){b.put(3,yy,lp(j.t,7)+(j.sev==='r'?' ✖':j.sev==='w'?' ▲':'  '),j.sev);b.put(13,yy,rp(j.who,15),'p');b.put(29,yy,tr(j.q,narrow?22:48),'');if(!narrow)b.put(78,yy,j.src,'d')}
+  else{b.put(3,yy,lp(j.t,7)+'  ','d');b.put(13,yy,rp(j.who,15),'p');b.put(29,yy,tr(j.q,30),'d');b.put(60,yy,j.why,'w')}}
+ y+=lh+1;const r=rows[cur];if(drawerH&&r){const j=r.j;rule(b,1,y,W-2,`job · ${r.type==='run'?'queries':r.type} · ${j.who}`,'b');b.put(1,y+1,tr(r.type==='run'?'6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is full':r.type==='wait'?`${QUEUE.waiting.indexOf(j)} jobs ahead of it · nothing to kill: it has not reached ClickHouse yet`:`stale: ${j.why} · takes no worker · a Redash admin can clear it`,W-2),'');b.put(1,y+2,tr(r.type==='run'&&j.node?`running ${j.t} → ${j.node} · ${j.qid} ! runaway · ⏎ jumps to the query on fleet · x cancels the job in Redash`:r.type==='run'?`${j.ch} · nothing to jump to`:'x cancels it in Redash · ⏎ nothing to jump to',W-2),'d');b.put(1,y+3,tr(`${j.who}@example.net · ${j.src||'—'} · ${j.q} · job ${j.id}`,W-2),'d')}
+ footer(b,[['↑↓','move'],['⏎','jump to ClickHouse',enter],['x','cancel job',cancelAsk],['/','filter',startFilter],[':','command',openPalette]],'redash 3 s · read 0 s ago')}
+function viewAirflow(b,y0){const rows=rowsOf('airflow');const cur=curIdx();let y=y0;const narrow=W<100;
+ b.put(1,y,`${AF.host} · Airflow ${AF.ver} · scheduler ● 2s · triggerer ● 4s`,'d');b.putr(W-1,y,'read 0s ago ','d');y++;b.seg(2,y,[['last 24 h   217 runs  ',''],['✔ 211','g'],['  ','' ],['✖ 3','r'],['     ▸ 2 running  ◌ 1 queued  ↻ 1 retrying     13 of 13 DAGs ran · 3 paused','']]);y+=2;
+ const r=rows[cur];if(S.zoom&&r){ganttPage(b,y0,r);return}
+ const groups={run:`RUNNING · ${AF.running.length} · 1 stuck`,queued:`QUEUED · ${AF.queued.length}`,failed:`FAILED · ${AF.failed.length} in the last 24 h`,dag:`ACTIVITY · ${AF.activity.length} DAGs ran in the last 24 h`};const cells=[];rows.forEach((r,i)=>{if(i===0||rows[i-1].type!==r.type){cells.push({hdr:groups[r.type]});if(r.type==='dag')cells.push({hdr2:true})}cells.push({r,i})});
+ const drawerH=narrow?0:Math.min(9,Math.max(4,H-28));const lh=H-1-y-drawerH-(drawerH?1:0);const top=Math.max(0,Math.min(cells.findIndex(c=>c.i===cur)-Math.floor(lh/2),cells.length-lh));
+ for(let k=0;k<lh&&top+k<cells.length;k++){const c=cells[top+k],yy=y+k;if(c.hdr){rule(b,1,yy,W-2,c.hdr,'b');continue}if(c.hdr2){b.put(3,yy,rp('DAG',34)+rp('SCHEDULE',15)+lp('RUNS',6)+'   '+(W>=150?'18    21    00    03    06    09    12    15 ':'18    00    06    12    ')+(narrow?'':' LAST RUN     TOOK     NEXT'),'d');continue}
+  const r=c.r,x=r.x,sel=c.i===cur;if(sel){b.bg(0,yy,W,1,'sel');b.put(0,yy,'▌','a')}b.hit(0,yy,W,1,()=>{if(S.cur.airflow===c.i)enter();else{S.cur.airflow=c.i;render()}});
+  if(r.type==='dag'){b.put(3,yy,rp(x.d,34),'');b.put(37,yy,rp(x.s,15),'d');b.put(52,yy,lp(x.runs,6),x.runs.includes('✖')?'r':'');const tl=W>=150?x.tl.split('').map(ch=>ch+ch).join(''):x.tl;b.put(61,yy,tl,x.tl.includes('✖')?'r':x.tl.includes('▸')?'g':'d');for(let i=0;i<tl.length;i++){const ch=tl[i];if(ch==='✖')b.put(61+i,yy,ch,'r');else if(ch==='▸'||ch==='━')b.put(61+i,yy,ch,'g');else if(ch==='◌')b.put(61+i,yy,ch,'w')}if(!narrow){b.put(62+tl.length,yy,lp(x.last,9)+lp(x.took,9)+lp(x.next,8),x.last==='running'?'g':'d')}}
+  else{const g=r.type==='run'?(x.sev==='r'?'✖':'▸'):r.type==='queued'?'◌':'✖';b.put(3,yy,g,r.type==='failed'||x.sev==='r'?'r':r.type==='queued'?'w':'g');b.put(5,yy,rp(x.d,34),'');b.put(40,yy,rp(x.kind,20),'d');b.put(60,yy,lp(x.t,8),x.sev==='r'?'r':'');if(x.tasks)b.put(70,yy,x.tasks+' '+x.bar,x.sev==='r'?'r':'');b.put(x.tasks?84:70,yy,tr(x.note,W-85),x.sev==='r'?'r':x.note.includes('▲')?'w':'d')}}
+ y+=lh+1;if(drawerH&&r){const x=r.x;if(r.type==='run'&&x.d==='statement_daily_agg_reload'||r.type==='dag'&&x.d==='statement_daily_agg_reload'){gantt(b,y,drawerH,1,W-2)}else{rule(b,1,y,W-2,`${x.d} · ${r.type==='dag'?x.s:x.kind}`,'b');b.put(1,y+1,tr(r.type==='run'?`running · ${x.note} · started ${x.kind.split('· ')[1]} · for ${x.t}`:r.type==='failed'?`failed · ${x.note} · ⏎ its tasks, then the log at its end`:r.type==='queued'?`queued ${x.t} · ${x.note} · the scheduler has not picked it up`:`${x.runs} runs today · last ${x.last} · took ${x.took} · next ${x.next} · usually ${x.took}`,W-2),'');b.put(1,y+2,'⏎ its tasks here · o in Airflow · y copies its link · r reads again','d')}}
+ footer(b,[['↑↓','move'],['⏎','tasks · Gantt',enter],['o','in Airflow',()=>toast('↗ opened in the browser: airflow.example.net/dags/…')],['y','copy link',()=>toast('✓ link copied','g')],[':','command',openPalette]],'airflow 15 s · read 0 s ago')}
+function gantt(b,y,h,x,w){rule(b,x,y,w,`statement_daily_agg_reload · 13:39 → running 2h12m · 4/7 tasks · usually 1h48m (median of 30)`,'b','esc back');y++;b.put(x+1,y,rp('task',22)+'13          14          15          16','d');y++;AF.gantt.slice(0,h-2).forEach(g=>{b.put(x+1,y,rp(g[0],22),'');const s=g[1];for(let i=0;i<s.length;i++){const ch=s[i];if(ch===' ')continue;b.put(x+23+i,y,ch,ch==='✖'?'r':ch==='✔'?'g':ch==='▸'||ch==='━'?'g':ch==='◌'?'w':'w')}b.put(x+23+s.length+2,y,tr(g[2],w-26-s.length),g[2].includes('▲')?'w':g[2].includes('failed')?'r':'d');y++})}
+function ganttPage(b,y,r){gantt(b,y,H-2-y,1,W-2);b.put(1,H-3,'⏎ on a task opens its log at its end · esc goes back · o opens the run in Airflow','d');footer(b,[['esc','back'],['⏎','task log'],['o','in Airflow'],['y','copy link']],'airflow 15 s')}
+function viewJira(b,y0){const rows=rowsOf('jira');const cur=curIdx();let y=y0;const narrow=W<100;const r=rows[cur];
+ b.put(1,y,`${JIRA.host} · Jira ${JIRA.ver} · ${JIRA.me}`,'d');b.putr(W-1,y,'read 0s ago ','d');y++;b.seg(2,y,[['In progress 4  ›  In Review 4  ›  Feedback 1  ›  Done 3 in 7 days     ',''],['✖ 1 overdue','r'],['  ',''],['▲ 1 due soon','w']]);y+=2;
+ if(S.zoom&&r){ticketPage(b,y,r);return}
+ if(!narrow&&H>=30){b.put(2,y,'LOGGED · October 2026   16h30m in 2 working days · 8h15m a working day · today 0h','b');b.putr(W-1,y,'t by ticket ','d');y++;b.put(6,y,'8½  8','d');y++;b.put(2,y,'9h │','d');b.put(6,y,'▇▇ ▆▆','a');y++;b.put(5,y,'│','d');b.put(6,y,'██ ██','a');y++;b.put(6,y,' 1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31','d');y+=2}
+ b.put(3,y,rp('KEY',11)+rp('SUMMARY',narrow?40:W-66)+(narrow?'':rp('PRIORITY',10)+rp('IN COLUMN',11)+rp('DUE',14)+'LOGGED'),'d');y++;
+ const cells=[];rows.forEach((r,i)=>{if(i===0||rows[i-1].col!==r.col)cells.push({hdr:`${r.col} · ${JIRA.cols.find(c=>c.n===r.col).t.length}`});cells.push({r,i})});const drawerH=narrow?0:4;const lh=H-1-y-drawerH-(drawerH?1:0);const top=Math.max(0,Math.min(cells.findIndex(c=>c.i===cur)-Math.floor(lh/2),cells.length-lh));
+ for(let k=0;k<lh&&top+k<cells.length;k++){const c=cells[top+k],yy=y+k;if(c.hdr){rule(b,1,yy,W-2,c.hdr,'b');continue}const t=c.r.t,sel=c.i===cur;if(sel){b.bg(0,yy,W,1,'sel');b.put(0,yy,'▌','a')}b.hit(0,yy,W,1,()=>{if(S.cur.jira===c.i)enter();else{S.cur.jira=c.i;render()}});b.put(3,yy,rp(t.k,11),'a');b.put(14,yy,'DE ','d');b.put(17,yy,tr(t.s,(narrow?40:W-66)-3),'');if(!narrow){b.put(14+W-66,yy,rp(t.pr,10),t.psev||'');b.put(24+W-66,yy,lp(t.col,9)+'  ',t.col.startsWith('✔')?'g':'d');b.put(35+W-66,yy,rp(t.due,14),t.dsev||'');b.put(49+W-66,yy,lp(t.log,6),'d')}}
+ y+=lh+1;if(drawerH&&r){const t=r.t;rule(b,1,y,W-2,`${t.k} · Task · ${t.pr} · ${r.col.split(' ·')[0]} for ${t.col}`,'b');b.put(1,y+1,tr('DE - '+t.s,W-2),'');b.put(1,y+2,tr(`from Jurgita Petrova · made Sep 27 · updated 3d ago${t.due?' · '+t.due:''}${t.log?' · '+t.log+' logged':''}`,W-2),t.dsev||'d');b.put(1,y+3,tr(`https://jira.example.net/browse/${t.k} · ⏎ in full here · o in Jira · y copies the link · r reads again`,W-2),'d')}
+ footer(b,[['↑↓','move'],['⏎','ticket in full',enter],['t','time by ticket',()=>toast('t · the month by ticket (not in the simulation)')],['o','in Jira',()=>toast('↗ opened in the browser: jira.example.net/browse/…')],[':','command',openPalette]],'jira 60 s · read 0 s ago')}
+function ticketPage(b,y,r){const t=r.t;rule(b,1,y,W-2,`${t.k} · ${t.pr} · ${r.col.split(' ·')[0]} for ${t.col}`,'b','esc back');y++;b.put(1,y,tr('DE - '+t.s,W-2),'b');y+=2;b.put(1,y,'Description','b');y++;['Build the daily warehouse table of client account balances, split private/business, with EUR buckets','(<100, 100–1k, 1k–10k, >10k). Source: final.wallet_balances + final.evp_lt_accounts. Validate against the','Redash report #6120 for three dates before the DAG is scheduled.'].forEach(l=>{b.put(1,y,tr(l,W-2),'');y++});y++;b.put(1,y,'Sub-tasks','b');y++;b.put(1,y,'✔ DATA-2648  table DDL and partitioning     ✔ DATA-2649  backfill 2025-01 → today     ○ DATA-2651  Redash validation','d');y+=2;
+ b.put(1,y,'This month · hours logged on any ticket  ░ <2h  ▒ <5h  ▓ <7h30  █ ≥7h30','b');y++;b.put(7,y,'W40  W41  W42  W43  W44','d');y++;JIRA.cal.forEach(c=>{b.put(1,y,c[0],'d');b.put(7,y,c[1],'a');y++});y++;b.put(1,y,'Comments · 2','b');y++;b.put(1,y,tr('Jurgita Petrova · 3d ago · "Review notes in the MR; the EUR bucket edges need the same rounding as the accounting report."',W-2),'d');footer(b,[['esc','back'],['o','in Jira'],['y','copy link',()=>toast('✓ link copied','g')],['r','read again']],'jira 60 s')}
+function viewSessions(b,y0){const rows=rowsOf('sessions');const cur=curIdx();let y=y0;const narrow=W<100;const lw=narrow?W:Math.min(34,Math.floor(W/3));
+ b.put(1,y,'SESSIONS','b');b.put(11,y,`${SESS.length}`,'d');b.putr(lw-1,y,'✻ 287M today · ≈ $191 · 5h 1h26m ','d');y++;
+ const lh=Math.min(rows.length*2,H-1-y-5);listDraw(b,0,y,lw,rows.length,rows,cur,(r,yy,sel)=>{if(r.type==='sess'){const s=r.s;b.put(2,yy,s.kind,s.what==='claude'?'a':'');b.put(5,yy,rp(s.name,lw-14),sel?'b':'');b.putr(lw-1,yy,String(s.n),'d');b.put(lw-12,yy,s.state,s.sev||'d')}else{b.put(2,yy,r.type==='new'?'+':'↻','a');b.put(5,yy,r.name,'d')}});
+ // detail lines under each session (folder · branch) drawn as a second line when room
+ const r=rows[cur];const px=lw+2;if(!narrow){b.put(px-1,y,'│','d');for(let i=1;i<H-2-y;i++)b.put(px-1,y+i,'│','d');
+  if(r&&r.type==='sess'){const s=r.s;b.put(px,y,`${s.kind} ${s.what} · ${s.dir}${s.br?' ⎇ '+s.br:''} · ${s.state}`,'b');s.lines.forEach((l,i)=>{if(y+2+i<H-3)b.put(px,y+2+i,tr(l,W-px-1),l.startsWith('›')?'':l.startsWith('?')?'w':'d')});b.put(px,H-3,'⏎ opens it full · ctrl+\\ floats it over any view · x x closes it','d')}
+  else if(r){b.put(px,y,r.type==='new'?'a new session: Claude, OpenCode, a terminal or SQL on a server':'conversations Claude Code and OpenCode had anywhere, newest first','b');b.put(px,y+2,r.type==='new'?'⏎ picks its folder in a small file explorer; ctrl+\\ c · o · t · q start one directly':'⏎ takes one up in a new session, as a copy when it is still open elsewhere','d')}}
+ if(narrow&&r&&r.type==='sess'){const s=r.s;const dy=y+rows.length+1;b.put(1,dy,tr(`${s.what} · ${s.dir} · ${s.state}`,W-2),'d');b.put(1,dy+1,tr(s.last,W-2),'')}
+ footer(b,[['⏎','open',enter],['ctrl+\\','float it',()=>floatToggle()],['n','new'],['/','find one',startFilter],[':','command',openPalette]],'4 sessions · 1 waiting for approval')}
+// ───────── overlays: palette, explain, floating session, wizard, dialog, tour ─────────
+function actionList(){const scope=S.view;const A=[];const a=(l,d,k,run,sc)=>A.push({l,d,k,run,sc:sc||'all'});
+ VIEWS.forEach((v,i)=>a(v.name,v.id==='home'?'what is wrong now, across every source':`the ${v.name} view`,String(i),()=>go(v.id)));
+ a('explain this number','the value under the cursor · its §5 formula','e',explain);
+ a('explain estimate · this query','EXPLAIN ESTIMATE → rows · parts · marks · nothing runs','E',()=>toast('E estimate · would read 1.9 B rows · 412 parts · 23 k marks'),'fleet');
+ a('export incident report','markdown with every denominator → clipboard and ~/incidents/','y',()=>toast('✓ incident report · 2.1 KB markdown copied','g'));
+ a('expand all nodes','unfold every node in the tree','→',()=>{FLEET.forEach(n=>S.expanded.add(n.n));S.fold=false;go('fleet')},'fleet');
+ a('fold the healthy nodes','one line for the nodes under every threshold','␣',()=>{S.fold=!S.fold;render()},'fleet');
+ a('pivot · user → node','who is burning the fleet','u',()=>toast('u · pivot user → node (not in the simulation)'),'fleet');
+ a('sort · pressure → memory → CPU → name','the order of the nodes','s',cycleSort,'fleet');
+ a('SQL on this node','a read-only query session on the node under the cursor','c',()=>{S.float.sess=2;floatToggle(true)},'fleet');
+ a('cancel this Redash job','asks first; what Redash\'s Cancel button does','x',cancelAsk,'queue');
+ a('zoom the inspector','the inspector takes the whole body','f',()=>{S.zoom=!S.zoom;render()});
+ a('density · comfortable → compact → focus','how much chrome stays on screen','+',cycleDensity);
+ a('filter this list','substring over everything in the rows','/',startFilter);
+ a('find a session','by name, folder, kind, server or number','ctrl+\\ /',()=>{go('sessions');startFilter()});
+ a('new session · claude','pick its folder, then it starts there','ctrl+\\ n',()=>toast('+ new session · the folder picker (not in the simulation)'));
+ a('float the session','the session on screen over any view','ctrl+\\',()=>floatToggle());
+ a('setup · clickhouse','seeds, cluster, login → Keychain','',()=>openWizard(0));
+ a('setup · redash','admin API key and Redis, for the queue','',()=>openWizard(1));
+ a('setup · airflow (expired?)','the login was refused 4m58s ago · re-enter','',()=>openWizard(2));
+ a('setup · jira','a personal access token','',()=>openWizard(3));
+ a('theme · light ↔ dark','Tarum: the cloth before and after the dye','',toggleTheme);
+ a('clock · local ↔ UTC','the servers\' own time','',()=>{S.utc=!S.utc;render()});
+ a('prayer line · on / off','the day line under the masthead','',()=>{S.prayer=!S.prayer;render()});
+ a('snooze notifications · 1 h','or until Subuh tomorrow','z',()=>toast('◷ notifications snoozed until '+clockAt(-60)+' · z again to wake them'));
+ a('note on the tape','a line of yours, kept with the events','n',noteStart);
+ a('replay · back one minute','the screen as it was','[',()=>{S.replay=Math.min(59,S.replay+1);render()});
+ a('replay · forward one minute','',']',()=>{S.replay=Math.max(0,S.replay-1);render()});
+ a('back to live','leave the replay','t',()=>{S.replay=0;render()});
+ a('pause polling','the numbers stop, the clock does not','p',()=>{S.paused=!S.paused;render()});
+ a('read now','ask every source again','r',()=>{toast('reading…');setTimeout(()=>toast('✓ read · 9/9 nodes · 0.8 s','g'),600)});
+ a('tour · the screen in 6 steps','60 seconds over the live screen','',startTour);
+ a('keys for this screen','what works here, now','?',()=>openPalette(true));
+ a('quit','q, or ctrl+c','q',()=>toast('q would quit · this is a simulation'));
+ return A.filter(x=>x.sc==='all'||x.sc===scope)}
+function channelItems(ch){const it=[];const push=(l,d,run)=>it.push({l,d,k:'',run});
+ if(ch==='nodes')FLEET.forEach(n=>push(n.n,`${pctS(memOf(n),n.memT)} mem · ${pctS(cpuOf(n),n.cores)} cpu · ${queriesOf(n)} queries`,()=>{go('fleet');selectNode(n.n)}));
+ if(ch==='people'){const ps={};FLEET.forEach(n=>n.users.forEach(u=>{const p=u.p||u.u;ps[p]=ps[p]||[];ps[p].push(n.n)}));Object.entries(ps).forEach(([p,ns])=>push(p,'on '+ns.join(', '),()=>{go('fleet');S.filter.q=p;S.cur.fleet=0;render()}))}
+ if(ch==='queries')FLEET.forEach(n=>n.users.forEach(u=>u.q.forEach(q=>push(q.id+' · '+(u.p||u.u),tr(q.sql[0],60),()=>{go('fleet');selectQuery(n.n,q.id)}))));
+ if(ch==='jobs')QUEUE.running.concat(QUEUE.waiting).forEach((j,i)=>push(j.q,`${j.who} · ${j.t}`,()=>{go('queue');S.cur.queue=i;render()}));
+ if(ch==='dags')AF.activity.forEach((x,i)=>push(x.d,`${x.s} · last ${x.last}`,()=>{go('airflow');S.cur.airflow=AF.running.length+AF.queued.length+AF.failed.length+i;render()}));
+ if(ch==='tickets')jiraRows().forEach((r,i)=>push(r.t.k,tr(r.t.s,60),()=>{go('jira');S.cur.jira=i;render()}));
+ if(ch==='sessions')SESS.forEach((s,i)=>push(`${s.n} ${s.name}`,`${s.what} · ${s.dir}`,()=>{S.float.sess=i;floatToggle(true)}));
+ if(ch==='tape')tapeRows().forEach((r,i)=>push(r.time+' '+r.kind,tr(r.txt,70),()=>{go('fleet');S.sub='tape';S.cur.tape=i;render()}));
+ return it}
+const CHANNELS=['actions','nodes','people','queries','jobs','dags','tickets','sessions','tape'];
+function fz(q,s){q=q.toLowerCase();s=s.toLowerCase();if(!q)return{ok:true,idx:[],score:0};const idx=[];let j=0,score=0,last=-2;for(let i=0;i<s.length&&j<q.length;i++){if(s[i]===q[j]){idx.push(i);score+=(i===last+1?0:2)+(i===0||s[i-1]===' '?0:1);last=i;j++}}return{ok:j===q.length,idx,score}}
+function openPalette(help){S.palette={q:'',sel:0,ch:0,help:!!help};render()}
+function paletteItems(){const p=S.palette;const base=p.ch===0?actionList().filter(a=>!p.help||a.k):channelItems(CHANNELS[p.ch]);const scored=base.map(it=>({it,m:fz(p.q,it.l)})).filter(x=>x.m.ok).sort((a,b)=>a.m.score-b.m.score);return scored}
+function drawPalette(b){const p=S.palette;const w=Math.min(W-4,78),x=Math.floor((W-w)/2),items=paletteItems().slice(0,8);const h=items.length+5;const y=Math.max(2,Math.floor((H-h)/3));box(b,x,y,w,h,p.help?`? keys · ${S.view}`:': ','b');b.put(x+2,y+1,'› ','a');b.put(x+4,y+1,(p.q||'')+'█','');if(!p.q)b.put(x+5,y+1,p.help?'type to filter the keys of this screen':'type two or three letters · tab for nodes, people, queries, jobs…','d');b.put(x,y+2,'├'+'─'.repeat(w-2)+'┤','d');
+ p.sel=Math.max(0,Math.min(items.length-1,p.sel));items.forEach((s,i)=>{const yy=y+3+i,sel=i===p.sel;if(sel){b.bg(x+1,yy,w-2,1,'sel');b.put(x+1,yy,'▌','a')}const lab=rp(s.it.l,30);let xx=x+3;for(let c=0;c<lab.length;c++)xx=b.put(xx,yy,lab[c],s.m.idx.includes(c)?'ab':'');b.put(x+34,yy,tr(s.it.d,w-40),'d');if(s.it.k)b.putr(x+w-2,yy,s.it.k,'ab');b.hit(x+1,yy,w-2,1,()=>{p.sel=i;paletteRun()})});
+ if(!items.length)b.put(x+3,y+3,'nothing matches · esc','d');b.put(x,y+h-2,'├'+'─'.repeat(w-2)+'┤','d');let cx=x+2;b.put(cx,y+h-1,' ↑↓ choose   ⏎ run   tab channel › ','d');cx+=34;CHANNELS.forEach((c,i)=>{if(cx+c.length>x+w-2)return;b.put(cx,y+h-1,c,i===p.ch?'u':'d');b.hit(cx,y+h-1,c.length,1,()=>{p.ch=i;p.sel=0;render()});cx+=c.length+3})}
+function paletteRun(){const it=paletteItems()[S.palette.sel];S.palette=null;if(it)it.it.run();render()}
+function paletteKey(e){const p=S.palette;if(e.key==='Escape'){S.palette=null}else if(e.key==='Enter'){return paletteRun()}else if(e.key==='Tab'){p.ch=(p.ch+(e.shiftKey?CHANNELS.length-1:1))%CHANNELS.length;p.sel=0}else if(e.key==='ArrowDown')p.sel++;else if(e.key==='ArrowUp')p.sel=Math.max(0,p.sel-1);else if(e.key==='Backspace')p.q=p.q.slice(0,-1);else if(e.key.length===1&&!e.ctrlKey&&!e.metaKey)p.q+=e.key;render()}
+// explain this number: the §5 provenance of the value under the cursor
+function provenance(){const r=curRow();if(!r)return null;const nd=r.node;if(!nd)return{title:'explain · '+(r.subj||r.name),lines:[['queue.oldest_wait_s = now − min(enqueued_at) over the queued jobs',''],['                   = 15:52:07 − 15:48:24 = 3m43s',''],['',''],['enqueued_at  15:48:24   rq:job:w-1 · enqueued_at     redis (LRANGE + HGETALL, read-only','d'],['workers      4/4 busy   rq_status.workers[].state   GET /api/admin/queries/rq_status','d'],['polled 1 s ago · redash.example.net · answered in 0.3 s','d'],['',''],['DESIGN.md §6.3 · threshold §7: ≥ 60 s amber, ≥ 180 s red','d']]};
+ const sc=scale(nd);if(r.type==='user'||r.type==='query'){const u=r.user;return{title:`explain · ${f1(u.mem*sc/nd.memT*100)}%`,lines:[['user.mem_pct = Σ memory_usage(queries of user on node) ÷ node.mem_total × 100',''],[`             = ${f1(u.mem*sc)} GiB ÷ ${nd.memT}.0 GiB × 100 = ${f1(u.mem*sc/nd.memT*100)} %`,''],['',''],[`memory_usage ${lp(f1(u.mem*sc)+' GiB',9)}   ${u.q.length} row${u.q.length>1?'s':''}, is_initial_query = 1   system.processes`,'d'],[`mem_total    ${lp(nd.memT+'.0 GiB',9)}   OSMemoryTotal (§6.1 chain)    system.asynchronous_metrics`,'d'],[`cores(q)     ${lp((u.cpu*sc).toFixed(2),9)}   Δ cpu_time_us ÷ Δ wall_us (delta form, 2nd poll on)   ProfileEvents`,'d'],[`polled 2 s ago · ${nd.host.split(':')[0]}:8123 · answered in ${nd.poll} s`,'d'],['',''],['DESIGN.md §5.1, §5.2 · FleetLens liveQueriesFleet.ts','d']]}}
+ if(r.type==='server'){const used=nd.users.reduce((a,u)=>a+u.mem*sc,0);return{title:`explain · ${pctS(Math.max(0,memOf(nd)-used),nd.memT)}`,lines:[['server.mem_pct = node.mem_pct − Σ user.mem_pct',''],[`               = ${pctS(memOf(nd),nd.memT)} − ${pctS(used,nd.memT)} = ${pctS(Math.max(0,memOf(nd)-used),nd.memT)}  (clamped ≥ 0)`,''],['',''],['invariant, unit-tested: Σ user.mem_pct + server.mem_pct == node mem% (±0.1)','d'],['what is in it: caches (mark, uncompressed), merges, dictionaries, the server\'s own allocations','d'],[`polled 2 s ago · ${nd.host.split(':')[0]}:8123`,'d'],['',''],['DESIGN.md §5.3 · the closing row','d']]}}
+ return{title:`explain · ${pctS(memOf(nd),nd.memT)}`,lines:[['node.mem_pct = node.mem_used ÷ node.mem_total × 100',''],[`             = ${f1(memOf(nd))} GiB ÷ ${nd.memT}.0 GiB × 100 = ${pctS(memOf(nd),nd.memT)}`,''],['',''],[`mem_used     ${lp(f1(memOf(nd))+' GiB',9)}   MemoryResident                system.asynchronous_metrics`,'d'],[`mem_total    ${lp(nd.memT+'.0 GiB',9)}   OSMemoryTotal (§6.1 chain)    system.asynchronous_metrics`,'d'],[`cpu          ${lp(pctS(cpuOf(nd),nd.cores),9)}   OS*TimeNormalized × cores     system.asynchronous_metrics`,'d'],[`polled 2 s ago · ${nd.host.split(':')[0]}:8123 · answered in ${nd.poll} s${S.replay?' · replay: minute '+clockAt(S.replay)+' from history.sqlite':''}`,'d'],['',''],['DESIGN.md §5.3 · FleetLens fleetMetrics.ts','d']]}}
+function explain(){const p=provenance();if(!p){toast('nothing under the cursor to explain');return}S.explain=p;render()}
+function drawExplain(b){const p=S.explain;const w=Math.min(W-6,84),x=Math.min(W-w-1,Math.max(1,Math.floor(W/4)));const h=p.lines.length+2;const y=Math.max(3,Math.min(H-h-2,Math.floor(H/3)));box(b,x,y,w,h,p.title,'b','⏎ ask Claude about it · y copy · esc');p.lines.forEach((l,i)=>b.put(x+2,y+1+i,tr(l[0],w-4),l[1]||(i<2?'':'d')))}
+// floating session pane
+function floatToggle(open){const f=S.float;f.open=open===undefined?!f.open:open;f.prefix=false;f.which=false;if(f.lines===null)f.lines=SESS[0].lines.slice();render()}
+function floatAsk(q,ans){const f=S.float;if(!f.open)floatToggle(true);f.lines=(f.lines||[]).concat(['','› '+q,'']);render();setTimeout(()=>{f.lines=f.lines.concat(ans);render()},700)}
+function drawFloat(b,y0){const f=S.float;const s=SESS[f.sess];const full=f.full;const w=full?W-2:Math.max(60,Math.floor(W*0.8)),h=full?H-y0-2:Math.max(10,Math.floor((H-y0-2)*0.72)),x=full?1:Math.floor((W-w)/2),y=full?y0:y0+1;
+ const others=SESS.filter((o,i)=>i!==f.sess).map(o=>`${o.n} ${o.kind} ${o.what.split(' ')[0]}`).join(' · ')+' · + new';box(b,x,y,w,h,`${s.n} ${s.what} · ${s.dir}${s.br?' ⎇ '+s.br:''} · ${s.state}`,'b');b.putr(x+w-2,y,' '+tr(others,w-50)+' ','d');
+ const lines=(f.sess===0?f.lines:s.lines)||[];const body=h-4;const start=Math.max(0,lines.length-body);for(let i=0;i<body&&start+i<lines.length;i++){const l=lines[start+i];b.put(x+2,y+1+i,tr(l,w-4),l.startsWith('›')?'':l.startsWith('?')?'w':l.startsWith('●')||l.startsWith('✻')||l.startsWith('▣')?'a':'d')}
+ b.put(x+2,y+h-3,'─'.repeat(w-4),'d');b.put(x+2,y+h-2,'❯ ','a');b.put(x+4,y+h-2,f.input+'█','');
+ const hint=f.prefix?'ctrl+\\ · then: 1-5 a view · 7-9 ↑↓ a session · f full · / find · n new · x x close · esc back':'ctrl+\\ hide · ctrl+\\ 1-5 a view · ctrl+\\ 7-9 ↑↓ a session · ctrl+\\ f full · ctrl+\\ / find';b.put(x+2,y+h-1,' '+tr(hint,w-6)+' ',f.prefix?'ab':'d');
+ if(f.prefix&&f.which){const W2=[['1-5','a view of the monitor'],['7-9 ↑↓','a session'],['/','find one by name'],['n','new session · same kind'],['c o t q','new claude · opencode · terminal · query'],['f','full · back to floating'],['r','rename'],['x x','close'],['esc','back to the session'],['ctrl+\\','hide the pane']];const ww=46,hh=W2.length+2,xx=x+w-ww-2,yy=y+h-hh-1;box(b,xx,yy,ww,hh,'ctrl+\\ then','ab');W2.forEach((k,i)=>{b.put(xx+2,yy+1+i,rp(k[0],9),'ab');b.put(xx+12,yy+1+i,k[1],'')})}}
+function floatKey(e){const f=S.float;if(e.ctrlKey&&e.key==='\\'||e.key==='\\'&&!f.prefix&&f.input===''){if(f.prefix){floatToggle(false)}else{f.prefix=true;f.which=false;setTimeout(()=>{if(f.prefix){f.which=true;render()}},250)}render();return}
+ if(f.prefix){f.prefix=false;f.which=false;if(/^[0-5]$/.test(e.key)){f.open=false;go(VIEWS[+e.key].id);return}if(/^[7-9]$/.test(e.key)){f.sess=Math.min(SESS.length-1,+e.key-7)}else if(e.key==='ArrowDown')f.sess=(f.sess+1)%SESS.length;else if(e.key==='ArrowUp')f.sess=(f.sess+SESS.length-1)%SESS.length;else if(e.key==='f')f.full=!f.full;else if(e.key==='/'){f.open=false;go('sessions');startFilter();return}else if(e.key==='n')toast('+ new session · the folder picker (not in the simulation)');else if(e.key==='x')toast('x x · closes the session (not in the simulation)');render();return}
+ if(e.key==='Escape'){f.open=false}else if(e.key==='Enter'){if(f.input.trim()){const q=f.input;f.input='';floatAsk(q,['● I\'ll look at the numbers first.','','  This is a simulation: in cobserve the pane is your own claude, signed in with your plan,','  with the fleet\'s read-only SQL and the §5 numbers in its context.'])}}else if(e.key==='Backspace')f.input=f.input.slice(0,-1);else if(e.key.length===1&&!e.ctrlKey&&!e.metaKey)f.input+=e.key;render()}
+// setup wizard, cancel dialog, notes, tour
+const WIZ=[{t:'ClickHouse',q:'Where is ClickHouse?',why:['One or more HTTP addresses, comma-separated. cobserve reads system.clusters from them','to discover the rest of the fleet. Nothing is ever written to ClickHouse.'],f:[['seeds','http://pay-ch-node-1:8123',''],['cluster','ch_paysera',''],['user','cobserve_ro',''],['password','••••••••••••','→ macOS Keychain · service cobserve · account ch:prod'],['timeout','5000 ms','over the VPN a poll takes 0.6–5 s; 1500 marks nodes ↯']],check:'9 nodes answered in 0.8 s · pay-ch-node-3 refused the password'},
+ {t:'Redash',q:'Where is Redash?',why:['The admin API key is on an admin\'s profile page. Redis is optional: without it the','waiting jobs are a count, with it they have names and ages.'],f:[['url','https://redash.example.net',''],['api key','••••••••••••••••','→ Keychain · redash:prod'],['redis','redis://redis-host:6379/0','optional · read-only · LRANGE + HGETALL'],['domain','example.net','people there are shown by name alone']],check:'Redash 10.1.0 · 7 workers · 16 waiting · Redis answered'},
+ {t:'Airflow',q:'Where is Airflow?',why:['The login of its web UI: the API is signed into with the login form, because an Airflow','whose auth_backends is the default refuses Basic auth. A refused login waits 5 minutes.'],f:[['url','https://airflow.example.net',''],['user','sam.example',''],['password','','→ Keychain · airflow:prod']],check:'Airflow 2.10.2 · signed in · 13 DAGs readable'},
+ {t:'Jira',q:'Where is Jira?',why:['A personal access token: Profile → Personal Access Tokens → Create token. GET only;','nothing here can change a ticket.'],f:[['url','https://jira.example.net',''],['token','••••••••••••••••••••','→ Keychain · jira:prod'],['columns','In progress, In Review, Feedback, Done','left to right · the last is where finished tickets go']],check:'Jira 9.12.1 · Sam Example · 12 tickets · board 430'},
+ {t:'The day',q:'Where are you?',why:['Prayer times are computed here from the sun, by Kemenag\'s criteria. A city 300 km from','the zone\'s is minutes off, so name yours.'],f:[['city','Jakarta','or PRAYER_AT=lat,lon'],['remind','10 min before','0 for none'],['notify','desktop + bell','or bell · off']],check:'Jakarta · Maghrib today 17:50 · next reminder 17:40'}];
+function openWizard(step){S.wiz={step:step||0,field:0,vals:WIZ.map(s=>s.f.map(f=>f[1])),msg:'',busy:false};S.palette=null;render()}
+function drawWizard(b){const z=S.wiz;const st=WIZ[z.step];const w=Math.min(W-4,96),h=12+st.f.length,x=Math.floor((W-w)/2),y=Math.max(2,Math.floor((H-h)/2));box(b,x,y,w,h,`setup · ${z.step+1} of ${WIZ.length} · ${st.t}`,'b');let yy=y+2;b.put(x+3,yy,st.q,'b');yy++;st.why.forEach(l=>{b.put(x+3,yy,tr(l,w-6),'d');yy++});yy++;
+ st.f.forEach((f,i)=>{const sel=i===z.field;b.put(x+3,yy,rp(f[0],10),sel?'ab':'d');b.put(x+13,yy,'› ','a');const v=z.vals[z.step][i];b.put(x+15,yy,v+(sel?'█':''),'');if(f[2])b.put(x+15+Math.max(22,v.length+2)+4,yy,tr(f[2],w-50),'d');b.hit(x+3,yy,w-6,1,()=>{z.field=i;render()});yy++});yy++;
+ b.put(x+3,yy,z.msg,z.busy?'d':z.msg.startsWith('✓')?'g':z.msg?'w':'d');yy++;
+ b.put(x+3,y+h-2,`⏎ ${z.step<WIZ.length-1?'next: '+WIZ[z.step+1].t:'finish'}    tab next field    esc skip this step    d try it with a generated fleet`,'d')}
+function wizardKey(e){const z=S.wiz;if(z.busy)return;const st=WIZ[z.step];if(e.key==='Escape'){if(z.step<WIZ.length-1){z.step++;z.field=0;z.msg='';toast('skipped · :setup '+st.t.toLowerCase()+' later')}else{S.wiz=null;toast('✓ setup saved · ~/.config/cobserve/config.toml · secrets in the Keychain','g')}}
+ else if(e.key==='d'){S.wiz=null;toast('✓ a generated fleet · FAKE=1 · look around, ? for keys','g')}
+ else if(e.key==='Tab'){z.field=(z.field+(e.shiftKey?st.f.length-1:1))%st.f.length}
+ else if(e.key==='Enter'){z.busy=true;z.msg='checking…';render();setTimeout(()=>{z.busy=false;z.msg='✓ '+st.check;render();setTimeout(()=>{if(z.step<WIZ.length-1){z.step++;z.field=0;z.msg=''}else{S.wiz=null;toast('✓ setup saved · ~/.config/cobserve/config.toml · secrets in the Keychain','g')}render()},900)},700);return}
+ else if(e.key==='Backspace'){z.vals[z.step][z.field]=z.vals[z.step][z.field].slice(0,-1)}
+ else if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){z.vals[z.step][z.field]+=e.key}render()}
+function cancelAsk(){if(S.view!=='queue'){toast('x · cancel is on the queue view only');return}const r=curRow();if(!r){return}S.dialog={j:r.j,type:r.type};render()}
+function drawDialog(b){const d=S.dialog,j=d.j;const w=Math.min(W-4,86),h=9,x=Math.floor((W-w)/2),y=Math.floor((H-h)/2);box(b,x,y,w,h,`Cancel Redash job ${j.id} · ${j.who}?`,'rb');const L=[`${j.q} · ${j.src||'—'} · ${d.type==='run'?'running':d.type}` + ' ' + j.t,d.type==='run'&&j.node?`Its query on ${j.node} keeps running: Redash's cancel does not reach it, and cobserve never sends KILL QUERY.`:d.type==='run'?'It is stopped on its worker; the next job starts.':d.type==='wait'?'It leaves the queue and never runs; the person can run it again from Redash.':'It leaves the started list; no worker holds it anyway.','This cannot be undone. The job can be run again from Redash.'];L.forEach((l,i)=>b.put(x+3,y+2+i,tr(l,w-6),i===1?'w':''));b.put(x+3,y+h-2,'[y] cancel the job     [esc] keep it','ab');b.hit(x+3,y+h-2,18,1,()=>dialogKey({key:'y'}));b.hit(x+26,y+h-2,12,1,()=>dialogKey({key:'Escape'}))}
+function dialogKey(e){const d=S.dialog;if(e.key==='y'){S.cancelled.add(d.j.id);S.dialog=null;toast(`⊘ cancel sent · ${d.j.q}${d.j.node?' · its query runs on in '+d.j.node:''}`,'w');S.notes.push({at:clock().slice(0,5),t:`cancelled Redash job ${d.j.id} (${d.j.who} · ${d.j.q})${d.j.node?' · its ClickHouse query runs on in '+d.j.node:''}`})}else if(e.key==='Escape'||e.key==='n'){S.dialog=null;toast('kept · nothing was sent')}render()}
+function noteStart(){S.note='';render()}
+function drawNote(b){const y=H-1;b.clear(0,y,W,1,'pan');b.put(1,y,'note › ','ab');b.put(8,y,S.note+'█','');b.putr(W-1,y,'⏎ keeps it on the tape · esc ','d')}
+function noteKey(e){if(e.key==='Escape')S.note=null;else if(e.key==='Enter'){if(S.note.trim()){S.notes.push({at:clock().slice(0,5),t:S.note});toast('✎ note kept on the tape · y exports it with the report','g')}S.note=null}else if(e.key==='Backspace')S.note=S.note.slice(0,-1);else if(e.key.length===1&&!e.ctrlKey&&!e.metaKey)S.note+=e.key;render()}
+const TOUR=[{v:'home',row:0,t:['The masthead: the profile, six views on the digits 0–5, and the clock.','● green means the numbers are live; ◷ amber means you are replaying.']},{v:'home',row:2,t:['The crumbs say where you are. esc always goes back one level, never out.','Right of them, the three doors: `:` palette, `/` filter, `?` the keys of this screen.']},{v:'home',row:5,t:['HOME lists what is wrong now, across every source, worst first.','⏎ on a line goes to the thing itself. Every percentage prints its denominator.']},{v:'fleet',row:5,t:['FLEET: node → user → query. The share bar under a node is the §5.3 invariant made visible:','the users\' segments and the server\'s own always fill the node\'s bar, with nothing left over.']},{v:'fleet',row:-1,t:['Press e on any number for its formula, inputs and source table. ⏎ there asks Claude about it.','f zooms the inspector; + cycles density; ctrl+\\ floats a session over whatever you are looking at.']},{v:'home',row:-1,t:['That is the tour. `:` opens the palette with everything else, `?` the keys of the screen you are on.','Press :tour any time to see it again.']}];
+function startTour(){S.tour={i:0};S.palette=null;go(TOUR[0].v);render()}
+function drawTour(b){const t=S.tour,st=TOUR[t.i];const w=Math.min(W-6,92),x=Math.floor((W-w)/2),h=5,y=st.row>=0&&st.row<H-10?st.row+2:H-9;if(st.row>=0)b.bg(0,st.row,W,1,'sel');box(b,x,y,w,h,`tour · ${t.i+1} of ${TOUR.length}`,'ab','any key advances · esc skips');st.t.forEach((l,i)=>b.put(x+3,y+1+i,tr(l,w-6),''))}
+function tourKey(e){const t=S.tour;if(e.key==='Escape'||t.i>=TOUR.length-1){S.tour=null;try{localStorage.setItem('cobserve-sim-tour','done')}catch(_){}toast('✓ tour done · :tour brings it back','g');render();return}t.i++;go(TOUR[t.i].v);render()}
+// ───────── navigation, keys, mouse, render loop ─────────
+function go(v){if(v==='local'){toast('0 local · this Mac (not in the simulation) · it is a card on HOME and :local');return}if(S.view!==v)S.prev=S.view;S.view=v;S.zoom=false;S.filter={on:false,q:''};render()}
+function cycleSort(){const o=['pressure','mem','cpu','name'];S.sort=o[(o.indexOf(S.sort)+1)%4];toast('sort · '+S.sort);render()}
+function cycleDensity(){const o=['comfortable','compact','focus'];S.density=o[(o.indexOf(S.density)+1)%3];toast('density · '+S.density)}
+function startFilter(){S.filter.on=true;render()}
+function toggleTheme(){const r=document.documentElement;const dark=r.getAttribute('data-theme')==='dark'||(!r.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);r.setAttribute('data-theme',dark?'light':'dark');toast('theme · '+(dark?'light · mori, the cloth before the dye':'dark · soga and tarum'))}
+function enter(){const r=curRow();if(!r)return;const v=S.view;
+ if(v==='home'){if(r.go==='node'){go('fleet');selectNode(r.name)}else if(r.go==='queue'){go('queue');S.cur.queue=r.idx||0}else if(r.go==='airflow'){go('airflow');S.cur.airflow=r.idx||0}else if(r.go==='jira'){go('jira');S.cur.jira=r.idx||0}else go('local')}
+ else if(v==='fleet'){if(S.sub==='nodes'){if(r.type==='node'){if(S.expanded.has(r.node.n))S.expanded.delete(r.node.n);else S.expanded.add(r.node.n)}else if(r.type==='user'){const k=r.node.n+'/'+r.user.u;if(S.qexp.has(k))S.qexp.delete(k);else S.qexp.add(k)}else if(r.type==='query'){S.zoom=true}else if(r.type==='fold'){S.fold=false}else if(r.type==='server')explain()}
+  else if(S.sub==='map'||S.sub==='heat'){const n=r.node.n;S.sub='nodes';selectNode(n)}else if(S.sub==='tape'){if(r.kind==='NODE'){const m=r.txt.match(/^(\S+)/);const nd=FLEET.find(n=>n.n===m[1]);if(nd){S.sub='nodes';selectNode(nd.n)}else toast('that node is not in the fleet any more')}else if(r.kind==='QUEUE')go('queue');else if(r.kind==='QUERY'){S.sub='nodes';selectNode('clickhouse-bi')}else toast('a note: nothing to go to')}}
+ else if(v==='queue'){const j=r.j;if(j.node&&j.qid){go('fleet');selectQuery(j.node,j.qid)}else toast((j.ch||'nothing')+' · nothing to jump to')}
+ else if(v==='airflow'){S.zoom=!S.zoom}
+ else if(v==='jira'){S.zoom=!S.zoom}
+ else if(v==='sessions'){if(r.type==='sess'){S.float.sess=r.i;floatToggle(true);S.float.full=true}else toast(r.type==='new'?'+ new session · the folder picker (not in the simulation)':'↻ past conversations (not in the simulation)')}
+ render()}
+function back(){if(S.zoom){S.zoom=false}else if(S.filter.q||S.filter.on){S.filter={on:false,q:''}}else if(S.view==='fleet'&&S.sub!=='nodes'){S.sub='nodes'}else if(S.view!=='home'){go('home');return}render()}
+function onKey(e){const k=e.key;const handled=['Tab',' ','/','?',':','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Backspace','Escape','PageUp','PageDown','Home','End','\\'];
+ if(e.metaKey&&!['\\'].includes(k))return;if(e.ctrlKey&&k!=='\\')return;
+ if(S.tour){e.preventDefault();return tourKey(e)}
+ if(S.wiz){if(handled.includes(k)||k.length===1)e.preventDefault();return wizardKey(e)}
+ if(S.palette){if(handled.includes(k)||k.length===1)e.preventDefault();return paletteKey(e)}
+ if(S.dialog){e.preventDefault();return dialogKey(e)}
+ if(S.explain){e.preventDefault();if(k==='Enter'){S.explain=null;floatAsk(`explain: ${S.explain?'':''}the number under the cursor — ${provenance().title.replace('explain · ','')} — what should I look at?`,['● The arithmetic is §5: that share is the sum of the user\'s running queries over the node\'s','  total. Two things to check: whether the server\'s own share (caches, merges) is the larger','  part, and whether the longest query is far beyond its usual time (E1 fingerprint).','','  In cobserve this is your own claude, with the drawer\'s numbers and the read-only SQL in its prompt.'])}else if(k==='y'){S.explain=null;toast('✓ formula and inputs copied','g')}else S.explain=null;render();return}
+ if(S.float.open){if(handled.includes(k)||k.length===1)e.preventDefault();return floatKey(e)}
+ if(S.note!==null){if(handled.includes(k)||k.length===1)e.preventDefault();return noteKey(e)}
+ if(S.filter.on){if(k==='Escape'){S.filter={on:false,q:''}}else if(k==='Enter'){S.filter.on=false}else if(k==='Backspace')S.filter.q=S.filter.q.slice(0,-1);else if(k==='ArrowDown'||k==='ArrowUp'){S.filter.on=false;move(k==='ArrowDown'?1:-1);return}else if(k.length===1&&!e.ctrlKey)S.filter.q+=k;e.preventDefault();render();return}
+ if(handled.includes(k))e.preventDefault();
+ if(/^[0-5]$/.test(k))return go(VIEWS[+k].id);
+ if(k==='Tab'){if(S.view==='fleet'){S.sub=SUBS[(SUBS.indexOf(S.sub)+(e.shiftKey?3:1))%4];S.zoom=false;render()}else toast('tab · sub-views live on fleet: nodes · map · heat · tape');return}
+ if(k==='ArrowDown'||k==='j')return move(1);if(k==='ArrowUp'||k==='k')return move(-1);if(k==='PageDown')return move(10);if(k==='PageUp')return move(-10);if(k==='Home')return move(-999);if(k==='End')return move(999);
+ if(k==='ArrowRight'||k==='l'){if(S.view==='fleet'&&S.sub==='map')return move(1);const r=curRow();if(r&&r.type==='node'){S.expanded.add(r.node.n);render()}return}
+ if(k==='ArrowLeft'||k==='h'){if(S.view==='fleet'&&S.sub==='map')return move(-1);const r=curRow();if(r&&r.node){S.expanded.delete(r.node.n);render()}return}
+ if(k==='Enter')return enter();if(k==='Escape'||k==='Backspace')return back();
+ if(k==='/')return startFilter();if(k===':')return openPalette(false);if(k==='?')return openPalette(true);
+ if(k==='e')return explain();if(k==='E'){toast('E estimate · would read 1.9 B rows · 412 parts · 23 k marks · nothing ran');return}
+ if(k==='f'){S.zoom=!S.zoom;render();return}if(k==='+'||k==='=')return cycleDensity();
+ if(k==='\\')return floatToggle();
+ if(k===' '){S.fold=!S.fold;render();return}if(k==='s')return cycleSort();if(k==='u'){toast('u · pivot user → node (not in the simulation)');return}
+ if(k==='c'){S.float.sess=2;floatToggle(true);return}
+ if(k==='x')return cancelAsk();if(k==='y'){toast('✓ link copied · '+(S.view==='airflow'?'airflow.example.net/dags/…':S.view==='jira'?'jira.example.net/browse/…':S.view==='queue'?'redash.example.net/queries/…':'the row\'s Grafana link'),'g');return}
+ if(k==='n')return noteStart();if(k==='z'){toast('◷ notifications snoozed for 1 h · z again to wake them');return}
+ if(k==='['){S.replay=Math.min(59,S.replay+1);render();return}if(k===']'){S.replay=Math.max(0,S.replay-1);render();return}if(k==='t'){S.replay=0;render();return}
+ if(k==='p'){S.paused=!S.paused;render();return}if(k==='r'){toast('reading…');setTimeout(()=>toast('✓ read · 9/9 nodes · 0.8 s','g'),600);return}
+ if(k==='q'){toast('q would quit · this is a simulation');return}if(k==='-'){const p=S.prev;go(p);return}
+ if(k==='W'){toast('W · wall mode with big numbers (not in the simulation)');return}}
+let buf;
+function render(){buf=new Buf(W,H);const y0=chrome(buf);const v=S.view;
+ if(v==='home')viewHome(buf,y0);else if(v==='fleet')viewFleet(buf,y0);else if(v==='queue')viewQueue(buf,y0);else if(v==='airflow')viewAirflow(buf,y0);else if(v==='jira')viewJira(buf,y0);else viewSessions(buf,y0);
+ if(S.float.open)drawFloat(buf,y0);if(S.explain)drawExplain(buf);if(S.palette)drawPalette(buf);if(S.dialog)drawDialog(buf);if(S.wiz)drawWizard(buf);if(S.note!==null)drawNote(buf);if(S.tour)drawTour(buf);toasts(buf);
+ $('#term').innerHTML=buf.html()}
+function fit(){const sc=$('.screen');const avail=sc.clientWidth;const fs=Math.max(7,Math.min(15,Math.floor(avail/(W*0.6)*10)/10));$('#term').style.fontSize=fs+'px'}
+function setSize(w,h){W=w;H=h;['s80','s120','s160'].forEach(id=>$('#'+id).setAttribute('aria-pressed',String(id==='s'+w)));S.zoom=false;fit();render()}
+$('#s80').onclick=()=>setSize(80,24);$('#s120').onclick=()=>setSize(120,36);$('#s160').onclick=()=>setSize(160,48);$('#btheme').onclick=()=>{toggleTheme();render()};$('#btour').onclick=()=>{$('#term').focus();startTour()};
+$('#term').addEventListener('click',ev=>{const t=$('#term');t.focus();const rect=t.getBoundingClientRect();const cs=getComputedStyle(t);const lh=parseFloat(cs.lineHeight);const cw=rect.width/W;const x=Math.floor((ev.clientX-rect.left)/cw),y=Math.floor((ev.clientY-rect.top-6)/lh);
+ if(S.tour){tourKey({key:' '});return}
+ const hits=buf.hits.filter(h=>x>=h.x&&x<h.x+h.w&&y>=h.y&&y<h.y+h.h);const h=hits[hits.length-1];if(h)h.fn()});
+$('#term').addEventListener('wheel',ev=>{if(S.float.open||S.palette)return;ev.preventDefault();move(ev.deltaY>0?1:-1)},{passive:false});
+document.addEventListener('keydown',ev=>{if(document.activeElement!==$('#term')&&ev.target!==document.body)return;onKey(ev)});
+window.addEventListener('resize',()=>{fit();render()});
+setInterval(()=>{S.t++;if(!S.paused&&S.t%2===0&&!S.replay){FLEET.forEach(n=>{n.mem=Math.max(0.5,Math.min(n.memT-0.2,n.mem+(rnd()-0.5)*0.3));n.cpu=Math.max(0.1,Math.min(n.cores,n.cpu+(rnd()-0.5)*0.2))});FLEET.forEach(nd=>{const a=SPARK[nd.n];a.push(Math.max(1,Math.min(99,nd.mem/nd.memT*100+(rnd()-0.5)*3)));a.shift()})}render()},1000);
+fit();render();$('#term').focus();
+try{if(!localStorage.getItem('cobserve-sim-tour'))setTimeout(()=>toast('first time here? the "tur 6 langkah" button, or :tour'),800)}catch(_){}
+</script>
