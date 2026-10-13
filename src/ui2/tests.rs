@@ -651,6 +651,114 @@ fn a_click_focuses_a_second_opens() {
     assert_eq!((app.shell.focus, app.shell.chosen.as_deref()), (PanelId::Nodes, Some("clickhouse-bi")));
 }
 
+#[test]
+fn the_setup_wizard_asks_checks_and_skips() {
+    let mut app = app_after(5);
+    crate::ui2::wizard::open(&mut app, 0);
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-wizard");
+    let top = got.iter().position(|r| r.contains("╭─ setup · 1 of 5 · ClickHouse ─")).expect("the box");
+    assert_eq!(Some(top), want.iter().position(|r| r.contains("╭─ setup · 1 of 5 · ClickHouse ─")));
+    assert_eq!(col(&got[top], "╭─ setup"), col(&want[top], "╭─ setup"));
+    for (dy, text) in [(2, "Where is ClickHouse?"), (3, "One or more HTTP addresses, comma-separated."), (6, "seeds     › "), (9, "password  › "), (10, "timeout   › ")] {
+        assert_eq!(col(&got[top + dy], text), col(&want[top + dy], text), "row {dy}: {}", got[top + dy]);
+    }
+    assert!(got[top + 15].contains("⏎ next: Redash    tab next field    esc skip this step"), "{}", got[top + 15]);
+    // Typing goes into the field; a secret is never shown.
+    app.update(key(KeyCode::Tab));
+    app.update(key(KeyCode::Tab));
+    app.update(key(KeyCode::Tab));
+    for c in "s3cret".chars() {
+        app.update(ch(c));
+    }
+    let got = render(&app, 120, 36);
+    assert!(got[top + 9].contains("password  › ••••••█") && !got.join("").contains("s3cret"), "{}", got[top + 9]);
+    // ⏎ asks main for a live check; its answer is shown, and ⏎ again goes on.
+    app.update(key(KeyCode::Enter));
+    assert_eq!(app.shell.setup_asks.len(), 1);
+    assert_eq!(app.shell.setup_asks[0].0, 0);
+    app.update(Event::SetupChecked(0, Ok("ClickHouse 24.10 on node answered in 0.3 s".into())));
+    assert!(render(&app, 120, 36).join("\n").contains("✔ ClickHouse 24.10 on node answered in 0.3 s · ⏎ goes on"));
+    app.update(key(KeyCode::Enter));
+    assert_eq!(app.shell.wizard.as_ref().map(|w| w.step), Some(1), "on to Redash");
+    // esc skips a step; the setup closes without saving when nothing is finished here.
+    app.update(key(KeyCode::Esc));
+    assert_eq!(app.shell.wizard.as_ref().map(|w| w.step), Some(2));
+    app.shell.wizard = None;
+}
+
+#[test]
+fn the_tour_lights_a_row_and_advances() {
+    let mut app = app_after(5);
+    app.shell.tour = Some(0);
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-tour");
+    assert_eq!(col(&got[2], "╭─ tour · 1 of 6 ─"), col(&want[2], "╭─ tour · 1 of 6 ─"), "{}", got[2]);
+    assert!(got[3].contains("One screen, eight panels, numbered 1–8."), "{}", got[3]);
+    assert!(got[6].contains("╰─ any key advances · esc skips ─"), "{}", got[6]);
+    app.update(ch('x'));
+    assert_eq!(app.shell.tour, Some(1));
+    let got = render(&app, 120, 36);
+    assert!(got.iter().any(|r| r.contains("FLEET and REDASH")), "the second box");
+    app.shell.tour = Some(5);
+    app.shell.toasts.clear();
+    app.shell.tour = None;
+}
+
+#[test]
+fn replay_steps_back_and_comes_back_live() {
+    let mut app = app_after(120);
+    let live = render(&app, 120, 36);
+    app.update(ch('['));
+    app.update(ch('['));
+    assert_eq!(app.shell.replay, 2);
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-dash-replay");
+    assert!(trimmed(&got[0]).ends_with("· replay −2m"), "{}", got[0]);
+    assert!(want[0].contains("◷ 15:40 · replay −12m"));
+    assert!(got[0].contains("◷ 15:50 · replay −2m"), "the minute's clock: {}", got[0]);
+    assert_ne!(got[2..5], live[2..5], "the big number is the minute's");
+    app.update(ch(']'));
+    assert_eq!(app.shell.replay, 1);
+    app.update(ch('t'));
+    assert_eq!(app.shell.replay, 0);
+    assert_eq!(render(&app, 120, 36)[0], live[0]);
+    for _ in 0..10 {
+        app.update(ch('['));
+    }
+    assert!(app.shell.replay <= 4, "no further back than the history reaches: {}", app.shell.replay);
+}
+
+#[test]
+fn this_machine_zoomed_and_on_the_status_bar() {
+    let mut app = app_after(5);
+    app.update(Event::Local(Box::new(crate::fake::local(1, MOMENT as f64 - 2.0))));
+    app.update(Event::Local(Box::new(crate::fake::local(2, MOMENT as f64))));
+    let wide = render(&app, 160, 48);
+    assert!(wide[47].contains("this Mac · cpu ") && wide[47].contains(" GiB   all · "), "{}", wide[47]);
+    assert!(!render(&app, 120, 36)[35].contains("this Mac"), "not under 140 columns");
+    app.update(ch('0'));
+    assert!(app.shell.local);
+    let got = render(&app, 120, 36);
+    assert!(got[1].starts_with("╭ 0 LOCAL · "), "{}", got[1]);
+    app.update(key(KeyCode::Esc));
+    assert!(!app.shell.local);
+}
+
+#[test]
+fn theme_and_prayer_from_the_palette() {
+    let mut app = app_after(3);
+    for name in ["theme", "prayer"] {
+        let a = crate::action::ACTIONS.iter().find(|a| a.id == name).unwrap();
+        (a.run)(&mut app, "");
+    }
+    assert!(app.shell.light.is_some());
+    assert!(app.prayers.place.is_none() && !render(&app, 120, 36)[0].contains("━●┄"), "the day line is off");
+    let a = crate::action::ACTIONS.iter().find(|a| a.id == "prayer").unwrap();
+    (a.run)(&mut app, "");
+    assert!(app.prayers.place.is_some());
+}
+
 /// `cargo test ui2::tests::dump -- --ignored --nocapture`: the screen at a size, to look at.
 #[test]
 #[ignore]
@@ -699,6 +807,10 @@ fn every_size_renders_without_a_panic() {
         app.shell.filter = (round % 13 == 0).then(|| crate::ui2::state::Filter { query: "ch".into(), typing: true });
         app.shell.note = (round % 17 == 0).then(|| "a note".to_string());
         app.shell.float = (round % 19 == 0).then(|| crate::ui2::state::Float { full: round % 2 == 0, ..Default::default() });
+        app.shell.wizard = (round % 23 == 0).then(|| crate::ui2::wizard::Wizard::open(round % 5));
+        app.shell.tour = (round % 29 == 0).then_some(round % 6);
+        app.shell.local = round % 31 == 0;
+        app.shell.replay = (round % 37 == 0) as u8;
         views::sync(&mut app);
         let rows = render(&app, w, h);
         assert_eq!(rows.len(), h as usize);

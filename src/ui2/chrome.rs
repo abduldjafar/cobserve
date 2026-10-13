@@ -16,6 +16,10 @@ use ratatui::style::Modifier;
 /// What sits at the right of the top bar: the clock and whether the numbers are live.
 fn clock_text(app: &App) -> (String, ClockState) {
     let now = app.now();
+    if app.shell.replay > 0 {
+        let then = now - i64::from(app.shell.replay) * 60;
+        return (format!("◷ {} · replay −{}m  ", app.time.format(then, "%H:%M"), app.shell.replay), ClockState::Replay);
+    }
     let ck = format!("{} {}", app.time.hms(now), app.time.label(now));
     if app.paused {
         (format!("○ paused   {ck} "), ClockState::Paused)
@@ -32,6 +36,7 @@ enum ClockState {
     Live,
     Paused,
     Stale,
+    Replay,
 }
 
 pub fn top_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
@@ -53,7 +58,7 @@ pub fn top_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
         ClockState::Paused => {
             p.put(start, y, &right, theme.muted());
         }
-        ClockState::Stale => {
+        ClockState::Stale | ClockState::Replay => {
             p.put(start, y, &right, theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
         }
     }
@@ -133,6 +138,19 @@ pub fn top_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
     }
 }
 
+/// This machine in a few words, for the status bar from 140 columns: `this Mac · cpu 31% · mem
+/// 12/32 GiB` (LOCAL has no panel; `0` zooms it).
+pub fn local_line(app: &App) -> Option<String> {
+    let sample = app.local.latest.as_ref()?;
+    if sample.error.is_some() {
+        return None;
+    }
+    let cpu = app.local.cpu.map(|c| format!("cpu {}", fmt::pct0(c.busy_pct)));
+    let mem = sample.memory.map(|m| format!("mem {:.0}/{:.0} GiB", fmt::gib(m.used()), fmt::gib(m.total)));
+    let parts: Vec<String> = std::iter::once("this Mac".to_string()).chain(cpu).chain(mem).collect();
+    (parts.len() > 1).then(|| parts.join(" · "))
+}
+
 /// The poll line: `<preset> · 9/9 nodes · 0.8 s · read-only`.
 pub fn poll_line(app: &App, with_preset: bool) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -162,6 +180,10 @@ pub fn status_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
             poll.map_or("read-only".to_string(), |ms| format!("poll {:.1} s · read-only", f64::from(ms) / 1000.0))
         }
         _ => poll_line(app, app.shell.zoom.is_none()),
+    };
+    let status = match local_line(app).filter(|_| w >= 140) {
+        Some(local) => format!("{local}   {status}"),
+        None => status,
     };
     // A filter in progress takes the right end: `/ query · esc clears`.
     if let Some(f) = &app.shell.filter {

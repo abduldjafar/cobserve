@@ -32,6 +32,8 @@ mod model;
 mod prayer;
 mod provenance;
 mod saved;
+mod setup;
+mod plain;
 mod pty;
 mod severity;
 mod sources;
@@ -80,6 +82,9 @@ async fn main() -> color_eyre::Result<()> {
     };
     // Before any source starts: every person they attribute is displayed with it (§6.4).
     attrib::set_home_domain(config.email_domain.clone());
+    if args.plain {
+        return run_plain(config).await;
+    }
 
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -113,6 +118,42 @@ async fn main() -> color_eyre::Result<()> {
 
     restore_terminal();
     result
+}
+
+/// `--plain`: the same sources, no terminal; the panels' summaries printed after every poll.
+async fn run_plain(config: Config) -> color_eyre::Result<()> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
+    let mut app = App::new();
+    app.shell.on = true;
+    app.poll_interval = config.poll;
+    let zone_table = clock::zone_table();
+    let zone = clock::zone_now();
+    app.update(Event::Zone(zone.clone(), prayer_place(&config, zone.as_deref(), zone_table.as_deref())));
+    let (_cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
+    let (_airflow_tx, airflow_rx) = mpsc::unbounded_channel::<()>();
+    let (_jira_tx, jira_rx) = mpsc::unbounded_channel::<()>();
+    let asks = Asks { cancels: cancel_rx, airflow: airflow_rx, jira: jira_rx };
+    let targets = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let _details = spawn_sources(&config, tx.clone(), targets, asks);
+    spawn_signal_watch(tx.clone());
+    for warning in &config.warnings {
+        eprintln!("cobserve: {warning}");
+    }
+    while let Some(event) = rx.recv().await {
+        let poll = matches!(event, Event::Snapshot(_));
+        if let Event::Notice(text) = &event {
+            eprintln!("cobserve: {text}");
+        }
+        if matches!(event, Event::Quit) {
+            break;
+        }
+        app.update(event);
+        if poll {
+            app.tick_at(std::time::SystemTime::now());
+            println!("{}", plain::summary(&app));
+        }
+    }
+    Ok(())
 }
 
 /// Asked of the terminal before anything reads keys: where it speaks the kitty keyboard
@@ -164,6 +205,10 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     let mut app = App::new();
     app.caps = caps;
     app.shell.on = next_shell;
+    // The new shell's first start shows the tour once (`:tour` any time after).
+    if next_shell && !config.fake && ui2::overlay::tour::marker().is_some_and(|m| !m.exists()) {
+        app.shell.tour = Some(0);
+    }
     app.shell.profile = if config.fake { "fake".to_string() } else { config.clickhouse.cluster.clone() };
     app.poll_interval = config.poll;
     app.modified_enter = modified_enter;
@@ -321,6 +366,14 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(280)).await;
                 let _ = tx.send(Event::Tick);
+            });
+        }
+        // The setup wizard's live checks, each a task of its own.
+        for (step, pairs) in std::mem::take(&mut app.shell.setup_asks) {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = sources::setup_check::check(step, pairs).await;
+                let _ = tx.send(Event::SetupChecked(step, result));
             });
         }
         // Keys for Claude go out now, not a frame later.

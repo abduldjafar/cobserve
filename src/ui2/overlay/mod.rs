@@ -7,3 +7,5 @@ pub mod float;
 pub mod note;
 pub mod palette;
 pub mod toast;
+pub mod tour;
+pub mod wizard;

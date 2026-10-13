@@ -248,6 +248,8 @@ pub fn scroll_into_view(offset: usize, selected: Option<usize>, height: usize, l
 
 #[derive(Debug)]
 pub enum Event {
+    /// The setup wizard's live check of a step: what answered, or why not.
+    SetupChecked(usize, Result<String, String>),
     Key(KeyEvent),
     /// One second, for the UTC clock (§7).
     Tick,
@@ -1178,6 +1180,7 @@ impl App {
                     self.tree.filter = input.clone();
                 }
             }
+            Event::SetupChecked(step, result) => crate::ui2::wizard::checked(self, step, result),
             Event::Quit => self.quit = true,
         }
         self.sync_view_state();

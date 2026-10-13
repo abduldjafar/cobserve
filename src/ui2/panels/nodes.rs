@@ -15,12 +15,19 @@ use crate::ui2::PanelId;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
+/// A node's memory and CPU shares — the replayed minute's while replaying.
+pub fn shares(app: &App, n: &NodeView<'_>) -> (Option<f64>, Option<f64>) {
+    let h = app.history.node(n.name());
+    (crate::ui2::replay::value(app, n.mem_pct, h.map(|h| &h.mem_pct)), crate::ui2::replay::value(app, n.cpu_pct, h.map(|h| &h.cpu_pct)))
+}
+
 /// A node's severity: the worse of its memory and CPU (§7); a node without numbers is red.
-pub fn node_sev(n: &NodeView<'_>) -> Severity {
+pub fn node_sev(app: &App, n: &NodeView<'_>) -> Severity {
     if !n.node.reachable {
         return Severity::Crit;
     }
-    severity::node(n.mem_pct).max(severity::node(n.cpu_pct))
+    let (mem, cpu) = shares(app, n);
+    severity::node(mem).max(severity::node(cpu))
 }
 
 /// The sparkline of a node's memory over the history, `cells` wide, worst of each slice.
@@ -52,7 +59,7 @@ fn tile_box(p: &mut Painter<'_>, theme: &Theme, r: Rect, sev: Severity, chosen: 
 
 /// A dashboard tile (`19×5`, `20×5`, `16×4`), drawn `w` wide (the tile's width less its gap).
 fn tile(p: &mut Painter<'_>, app: &App, theme: &Theme, n: &NodeView<'_>, r: Rect, chosen: bool) {
-    let sev = node_sev(n);
+    let sev = node_sev(app, n);
     tile_box(p, theme, r, sev, chosen);
     tile_title(p, theme, app, n.name(), r, chosen);
     let (x, y, w, h) = (r.x, r.y, r.width, r.height);
@@ -64,7 +71,7 @@ fn tile(p: &mut Painter<'_>, app: &App, theme: &Theme, n: &NodeView<'_>, r: Rect
         }
         return;
     }
-    let mp = n.mem_pct;
+    let mp = shares(app, n).0;
     let bw = iw.saturating_sub(5);
     let (fill, empty) = bar::share(mp.unwrap_or(0.0), bw);
     let after = p.put(x + 2, y + 1, &fill, style_of(theme, sev, theme.accent()));
@@ -168,7 +175,7 @@ fn scroll_row(nodes: &[&NodeView<'_>], chosen: Option<&str>, per: u16, rows: u16
 }
 
 fn big_tile(p: &mut Painter<'_>, app: &App, theme: &Theme, n: &NodeView<'_>, r: Rect, chosen: bool) {
-    let sev = node_sev(n);
+    let sev = node_sev(app, n);
     tile_box(p, theme, r, sev, chosen);
     tile_title(p, theme, app, n.name(), r, chosen);
     let (x, y, w) = (r.x, r.y, r.width);

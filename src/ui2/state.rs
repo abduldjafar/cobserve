@@ -66,7 +66,7 @@ pub struct Float {
 /// After this long in the prefix the which-key box shows; a fast hand never sees it.
 pub const WHICH_KEY_AFTER: Duration = Duration::from_millis(250);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellState {
     /// The new shell is the one on screen (`UI=2`); the old one otherwise.
     pub on: bool,
@@ -95,6 +95,19 @@ pub struct ShellState {
     pub pending_prompt: Option<(u64, String, SystemTime)>,
     /// The F-key fallback has been told once.
     pub fkeys_told: bool,
+    pub wizard: Option<crate::ui2::wizard::Wizard>,
+    /// The live checks the wizard asked for: the step and its fields. `main.rs` takes them.
+    pub setup_asks: Vec<(usize, Vec<(String, String)>)>,
+    /// `:tour`: which of its boxes.
+    pub tour: Option<usize>,
+    /// `[` `]`: minutes back; 0 is live.
+    pub replay: u8,
+    /// `:theme`: the other variant than the environment's, while asked for.
+    pub light: Option<bool>,
+    /// `:local` / `0` from the grid: this machine, zoomed.
+    pub local: bool,
+    /// `:prayer off` kept the place here, for `:prayer on`.
+    pub prayer_place: Option<crate::prayer::Place>,
     /// The size the last frame was drawn at, for the mouse.
     pub last_size: std::cell::Cell<(u16, u16)>,
     /// Wake the loop a moment from now (the which-key box is due): `main.rs` takes it.
@@ -127,6 +140,13 @@ impl Default for ShellState {
             fkeys_told: false,
             wake: false,
             last_size: std::cell::Cell::new((120, 36)),
+            wizard: None,
+            setup_asks: Vec::new(),
+            tour: None,
+            replay: 0,
+            light: None,
+            local: false,
+            prayer_place: None,
             tiles_per_row: std::cell::Cell::new(1),
             zoom_tiles_per_row: std::cell::Cell::new(1),
         }

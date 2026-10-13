@@ -34,7 +34,7 @@ mod day;
 pub(crate) mod detail;
 pub(crate) mod drawer;
 pub(crate) mod jira;
-mod local;
+pub(crate) mod local;
 mod loom;
 mod map;
 mod nodes;

@@ -88,13 +88,24 @@ missing. `e`'s `⏎` and `⏎`/`\` on a person in NODE type a prompt into a Clau
 if need be, the prompt typed once it is up, never sent). The mouse came with it: a click focuses,
 a second opens, the wheel moves the cursor, clicks inside a zoomed view or the pane are theirs.
 
-## Phase 5 — wizard, tour, replay stub, `--plain` (M)
+## Phase 5 — wizard, tour, replay stub, `--plain` (M) — done
 
 `:setup` with the five steps writing `~/.config/cobserve/config.toml` and secrets to the Keychain
 (`keyring`), with the announced `0600` fallback and env vars still winning; `:tour`; `[` `]` `t`
 over the 4-minute history (the full hour comes with feature A1); `cobserve --plain` printing the
 panel summaries as text every poll; `:local`.
 Acceptance: `120x36-wizard.txt`, `120x36-tour.txt`, `120x36-dash-replay.txt`.
+
+As built: `setup.rs` keeps the variables themselves (`NAME = "value"`, so the file is what one
+would export) and the four secrets in the Keychain through `security-framework` — the crate
+`keyring` itself wraps on macOS — or, where that fails, in `secrets.toml` at 0600, which the toast
+names. `Config::load` asks the environment first, then the store; what `:setup` keeps is used from
+the next start. The live checks run in `sources/setup_check.rs` (read-only: `SELECT version()`,
+Redash's queue status, Airflow's `/health`, Jira's `myself`; the day is computed). `d` is `ctrl+d`,
+since `d` is a letter of a field. The replay moves the clock, the FLEET numbers and graph cursor,
+and the tiles; the other panels stay live until feature A1 stores their minutes. `:local` (and `0`
+on the grid) zooms today's view 0; its line joins the status bar from 140 columns. `:theme` and
+`:prayer` came with the palette's settings.
 
 ## Phase 6 — real data, parity, the swap (S–M)
 

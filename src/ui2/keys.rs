@@ -36,6 +36,18 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
     if key.kind != KeyEventKind::Press {
         return;
     }
+    // Tour → wizard → palette → … (`04-architecture.md` *Events*).
+    if let Some(step) = app.shell.tour {
+        if key.code == KeyCode::Esc || step + 1 >= crate::ui2::overlay::tour::STEPS.len() {
+            crate::ui2::tour_done(app);
+        } else {
+            app.shell.tour = Some(step + 1);
+        }
+        return;
+    }
+    if app.shell.wizard.is_some() {
+        return crate::ui2::wizard::key(app, key);
+    }
     if app.shell.palette.is_some() {
         return palette_key(app, key);
     }
@@ -74,6 +86,18 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
         return filter_key(app, key);
     }
     if app.shell.zoom == Some(crate::ui2::PanelId::Sessions) && crate::ui2::sessions::zoom_key(app, key) {
+        return;
+    }
+    if app.shell.local {
+        // This machine, zoomed: today's view 0 and its keys; esc or 0 goes back.
+        match key.code {
+            KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('0') => app.shell.local = false,
+            KeyCode::Char('q') => app.quit = true,
+            _ => {
+                app.set_view(crate::app::View::Local);
+                app.view_key(key);
+            }
+        }
         return;
     }
     let Some(name) = name(&key) else { return };
@@ -178,6 +202,9 @@ fn palette_key(app: &mut App, key: KeyEvent) {
 /// none is open, and the paste goes where it goes today (a session).
 pub fn paste(app: &mut App, text: &str) -> bool {
     let line = text.lines().next().unwrap_or_default();
+    if crate::ui2::wizard::paste(app, text) {
+        return true;
+    }
     if let Some(p) = app.shell.palette.as_mut() {
         p.query.push_str(line);
         p.sel = 0;

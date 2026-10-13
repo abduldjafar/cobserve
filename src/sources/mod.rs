@@ -8,6 +8,7 @@ pub mod limits;
 pub mod local;
 pub mod usage;
 pub mod redash;
+pub mod setup_check;
 
 use std::time::{Duration, UNIX_EPOCH};
 

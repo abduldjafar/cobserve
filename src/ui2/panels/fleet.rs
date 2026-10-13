@@ -17,19 +17,16 @@ use ratatui::style::Modifier;
 
 /// What the frame says: the worst node's severity and the summary.
 pub fn title(app: &App) -> (Severity, String) {
-    let Some((t, worst, down)) = app.with_view(|v| {
+    let Some((mut t, worst, down, hot)) = app.with_view(|v| {
         let t = fleet_totals(v);
-        let worst = v
-            .nodes
-            .iter()
-            .filter(|n| n.node.reachable)
-            .map(|n| severity::node(n.mem_pct).max(severity::node(n.cpu_pct)))
-            .max()
-            .unwrap_or(Severity::None);
-        (t, worst, v.nodes.iter().filter(|n| !n.node.reachable).count())
+        let sevs: Vec<Severity> = v.nodes.iter().filter(|n| n.node.reachable).map(|n| super::nodes::node_sev(app, n)).collect();
+        let worst = sevs.iter().copied().max().unwrap_or(Severity::None);
+        let hot = sevs.iter().filter(|s| s.is_problem()).count();
+        (t, worst, v.nodes.iter().filter(|n| !n.node.reachable).count(), hot)
     }) else {
         return (Severity::None, String::new());
     };
+    t.hot = hot;
     let mut parts = Vec::new();
     if t.runaways > 0 {
         parts.push(format!("{} runaway", t.runaways));
@@ -67,8 +64,14 @@ fn body(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect) {
         p.put(i.x, i.y, "waiting for the first snapshot…", theme.muted());
         return;
     };
-    let mem_pct = t.mem_pct();
-    let cpu_pct = t.cpu_pct();
+    // While replaying, the minute's shares (the denominators are now's: the fleet did not change).
+    let mem_pct = crate::ui2::replay::value(app, t.mem_pct(), Some(&app.history.fleet_mem_pct));
+    let cpu_pct = crate::ui2::replay::value(app, t.cpu_pct(), Some(&app.history.fleet_cpu_pct));
+    let mut t = t;
+    if app.shell.replay > 0 {
+        t.mem_used = (mem_pct.unwrap_or(0.0) / 100.0 * t.mem_total as f64) as u64;
+        t.busy_cores = cpu_pct.unwrap_or(0.0) / 100.0 * t.cores;
+    }
     let mem_sev = severity::node(mem_pct);
     let cpu_sev = severity::node(cpu_pct);
     let num = |sev: Severity| if sev.is_problem() { theme.sev(sev).add_modifier(Modifier::BOLD) } else { theme.strong() };
@@ -109,6 +112,9 @@ fn body(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect) {
         if s.is_problem() { theme.sev(s) } else { theme.accent() }
     });
     graph::dots(p, rect, &cpu, 100.0, theme.strong());
+    if let Some(c) = crate::ui2::replay::column(app, gw) {
+        p.bg(Rect::new(x + c, i.y, 1, gh), theme.selection);
+    }
     if i.height >= 2 {
         p.put(x, i.y + gh, &window_label(), theme.muted());
         p.putr(x + gw, i.y + gh, "█ mem  • cpu  now", theme.muted());

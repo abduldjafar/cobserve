@@ -104,9 +104,33 @@ fn pass(app: &mut App, key: &str) {
     crate::ui2::views::pass(app, key);
 }
 
-fn grid_or_local(app: &mut App, key: &str) {
+fn grid_or_local(app: &mut App, _: &str) {
     if !app.shell.back() {
-        later(app, key);
+        app.shell.local = true;
+        app.set_view(crate::app::View::Local);
+    }
+}
+
+/// `:theme`: the other Tarum variant than the one on screen.
+fn theme_toggle(app: &mut App, _: &str) {
+    let from_env = std::env::var("THEME").is_ok_and(|t| t.trim().eq_ignore_ascii_case("light"));
+    let light = !app.shell.light.unwrap_or(from_env);
+    app.shell.light = Some(light);
+    let word = if light { "light · mori, the cloth before the dye" } else { "dark · soga and tarum" };
+    app.shell.toast(format!("theme · {word}"), false, SystemTime::now());
+}
+
+fn prayer_toggle(app: &mut App, _: &str) {
+    match app.shell.prayer_place.take() {
+        Some(place) => {
+            app.prayers.move_to(Some(place));
+            app.shell.toast("prayer line · on", false, SystemTime::now());
+        }
+        None => {
+            app.shell.prayer_place = app.prayers.place.clone();
+            app.prayers.move_to(None);
+            app.shell.toast("prayer line · off · : prayer brings it back", false, SystemTime::now());
+        }
     }
 }
 
@@ -129,9 +153,9 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "sql", label: "SQL on it", phrase: "SQL on this node", detail: "a SQL session on the chosen node, floating", keys: &["c"], shown: "c", scope: Scope::Everywhere, rank: 16, enabled: always, run: |app, _| crate::ui2::sessions::sql_on_node(app) },
     Action { id: "density", label: "density", phrase: "density · comfortable → compact → focus", detail: "comfortable → compact → focus", keys: &["+"], shown: "+", scope: Scope::Everywhere, rank: 17, enabled: always, run: |app, _| app.shell.cycle_density() },
     Action { id: "sort", label: "sort", phrase: "sort · pressure → memory → CPU → name", detail: "the nodes: pressure → memory → CPU → name", keys: &["s"], shown: "s", scope: Scope::Everywhere, rank: 18, enabled: always, run: |app, _| crate::ui2::nav::sort(app) },
-    Action { id: "replay-back", label: "a minute back", phrase: "replay · back one minute", detail: "replay one minute back, up to 59", keys: &["["], shown: "[", scope: Scope::Everywhere, rank: 19, enabled: always, run: later },
-    Action { id: "replay-forward", label: "a minute forward", phrase: "replay · forward one minute", detail: "replay one minute forward", keys: &["]"], shown: "]", scope: Scope::Everywhere, rank: 20, enabled: always, run: later },
-    Action { id: "live", label: "live", phrase: "back to live", detail: "back from replay to now", keys: &["t"], shown: "t", scope: Scope::Everywhere, rank: 21, enabled: always, run: later },
+    Action { id: "replay-back", label: "a minute back", phrase: "replay · back one minute", detail: "replay one minute back, up to 59", keys: &["["], shown: "[", scope: Scope::Everywhere, rank: 19, enabled: always, run: |app, _| crate::ui2::replay::back(app) },
+    Action { id: "replay-forward", label: "a minute forward", phrase: "replay · forward one minute", detail: "replay one minute forward", keys: &["]"], shown: "]", scope: Scope::Everywhere, rank: 20, enabled: always, run: |app, _| crate::ui2::replay::forward(app) },
+    Action { id: "live", label: "live", phrase: "back to live", detail: "back from replay to now", keys: &["t"], shown: "t", scope: Scope::Everywhere, rank: 21, enabled: always, run: |app, _| crate::ui2::replay::live(app) },
     Action { id: "pause", label: "pause", phrase: "pause polling", detail: "stop taking new numbers · the clock goes on", keys: &[" "], shown: "space", scope: Scope::Everywhere, rank: 22, enabled: always, run: |app, _| app.paused = !app.paused },
     Action { id: "refresh", label: "read now", phrase: "read now", detail: "every source again now", keys: &["r"], shown: "r", scope: Scope::Everywhere, rank: 23, enabled: always, run: read_now },
     Action { id: "note", label: "note", phrase: "note on the tape", detail: "a note on the tape", keys: &["n"], shown: "n", scope: Scope::Everywhere, rank: 24, enabled: always, run: |app, _| app.shell.note = Some(String::new()) },
@@ -143,7 +167,7 @@ pub static ACTIONS: &[Action] = &[
     // The zooms' own (`screens/*-zoom-*.txt`): what their status bars offer.
     Action { id: "fleet-node", label: "a node", phrase: "choose a node", detail: "the node rows under the graphs", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Fleet), rank: 1, enabled: always, run: crate::ui2::nav::choose },
     Action { id: "fleet-open", label: "open it", phrase: "open the chosen node", detail: "the node, zoomed", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Fleet), rank: 2, enabled: always, run: |app, _| crate::ui2::nav::open(app) },
-    Action { id: "fleet-replay", label: "replay", phrase: "replay a minute", detail: "one minute back or forward on the graphs", keys: &["[", "]"], shown: "[ ]", scope: Scope::Zoomed(PanelId::Fleet), rank: 3, enabled: always, run: later },
+    Action { id: "fleet-replay", label: "replay", phrase: "replay a minute", detail: "one minute back or forward on the graphs", keys: &["[", "]"], shown: "[ ]", scope: Scope::Zoomed(PanelId::Fleet), rank: 3, enabled: always, run: |app, key| if key == "[" { crate::ui2::replay::back(app) } else { crate::ui2::replay::forward(app) } },
     Action { id: "fleet-explain", label: "explain", phrase: "explain this number", detail: "the fleet's memory share · its formula", keys: &["e"], shown: "e", scope: Scope::Zoomed(PanelId::Fleet), rank: 4, enabled: always, run: |app, _| crate::ui2::nav::explain_now(app) },
     Action { id: "nodes-choose", label: "choose", phrase: "choose a tile", detail: "across the row, then between rows", keys: &["Left", "Right", "Up", "Down", "h", "j", "k", "l", "PageUp", "PageDown", "Home", "End"], shown: "←→↑↓", scope: Scope::Zoomed(PanelId::Nodes), rank: 1, enabled: always, run: crate::ui2::nav::choose },
     Action { id: "nodes-open", label: "open the node", phrase: "open the chosen node", detail: "the node, zoomed", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Nodes), rank: 2, enabled: always, run: |app, _| crate::ui2::nav::open(app) },
@@ -181,6 +205,16 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "sessions-new", label: "new", phrase: "new session", detail: "the folder picker, then it starts there", keys: &["n"], shown: "n", scope: Scope::Zoomed(PanelId::Sessions), rank: 4, enabled: always, run: |app, _| app.ask_new_session(None) },
     Action { id: "sessions-find", label: "find one", phrase: "find a session", detail: "by name, folder, kind or number", keys: &["/"], shown: "/", scope: Scope::Zoomed(PanelId::Sessions), rank: 5, enabled: always, run: |app, _| app.claude.mode = crate::claude::Mode::Finding { query: String::new(), at: 0 } },
     Action { id: "sessions-close", label: "close", phrase: "close the session", detail: "x twice: its program ends", keys: &["x"], shown: "x x", scope: Scope::Zoomed(PanelId::Sessions), rank: 6, enabled: always, run: |app, _| crate::ui2::sessions::close(app) },
+    Action { id: "setup", label: "setup", phrase: "setup · every source", detail: "ClickHouse, Redash, Airflow, Jira, the day · secrets to the Keychain", keys: &[], shown: "", scope: Scope::Everywhere, rank: 41, enabled: always, run: |app, _| crate::ui2::wizard::open(app, 0) },
+    Action { id: "setup-clickhouse", label: "setup clickhouse", phrase: "setup · clickhouse", detail: "seeds, cluster, login → Keychain", keys: &[], shown: "", scope: Scope::Everywhere, rank: 42, enabled: always, run: |app, _| crate::ui2::wizard::open(app, 0) },
+    Action { id: "setup-redash", label: "setup redash", phrase: "setup · redash", detail: "admin API key and Redis, for the queue", keys: &[], shown: "", scope: Scope::Everywhere, rank: 43, enabled: always, run: |app, _| crate::ui2::wizard::open(app, 1) },
+    Action { id: "setup-airflow", label: "setup airflow", phrase: "setup · airflow", detail: "its web UI's login", keys: &[], shown: "", scope: Scope::Everywhere, rank: 44, enabled: always, run: |app, _| crate::ui2::wizard::open(app, 2) },
+    Action { id: "setup-jira", label: "setup jira", phrase: "setup · jira", detail: "a personal access token", keys: &[], shown: "", scope: Scope::Everywhere, rank: 45, enabled: always, run: |app, _| crate::ui2::wizard::open(app, 3) },
+    Action { id: "setup-day", label: "setup the day", phrase: "setup · the day", detail: "where prayer times are for, the reminder", keys: &[], shown: "", scope: Scope::Everywhere, rank: 46, enabled: always, run: |app, _| crate::ui2::wizard::open(app, 4) },
+    Action { id: "tour", label: "tour", phrase: "tour · the screen in 6 steps", detail: "over the live screen", keys: &[], shown: "", scope: Scope::Everywhere, rank: 47, enabled: always, run: |app, _| app.shell.tour = Some(0) },
+    Action { id: "local", label: "local", phrase: "local · this machine", detail: "its CPU, memory and processes, zoomed · 0 from the grid", keys: &[], shown: "", scope: Scope::Everywhere, rank: 48, enabled: always, run: |app, _| { app.shell.local = true; app.set_view(crate::app::View::Local); } },
+    Action { id: "theme", label: "theme", phrase: "theme · light ↔ dark", detail: "Tarum: the cloth before and after the dye", keys: &[], shown: "", scope: Scope::Everywhere, rank: 49, enabled: always, run: theme_toggle },
+    Action { id: "prayer", label: "prayer line", phrase: "prayer line · on / off", detail: "the day line in the top bar", keys: &[], shown: "", scope: Scope::Everywhere, rank: 50, enabled: always, run: prayer_toggle },
     Action { id: "clock", label: "clock · local ↔ UTC", phrase: "clock · local ↔ UTC", detail: "the servers' own time, or this machine's", keys: &[], shown: "", scope: Scope::Everywhere, rank: 40, enabled: always, run: |app, _| app.time.flip() },
 ];
 
