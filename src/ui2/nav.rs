@@ -1,0 +1,151 @@
+//! What the arrows, `⏎`, `e`, `s` and `/` do in the panel that has them (`01-screen.md` *Focus and
+//! zoom*): the tile grid in NODES, the node rows of the zoomed FLEET, the people of NODE. Cursors
+//! are kept by identity — a node's name, a row's label — so a new poll under them keeps them.
+
+use crate::app::App;
+use crate::provenance;
+use crate::ui2::overlay::explain;
+use crate::ui2::panels::{node, nodes};
+use crate::ui2::PanelId;
+use std::time::SystemTime;
+
+/// The panel the keys go to: the zoom, else the focus.
+pub fn target(app: &App) -> PanelId {
+    app.shell.zoom.unwrap_or(app.shell.focus)
+}
+
+fn toast(app: &mut App, text: impl Into<String>) {
+    app.shell.toast(text, false, SystemTime::now());
+}
+
+/// The nodes in NODES' order, by name.
+pub fn node_names(app: &App) -> Vec<String> {
+    app.with_view(|v| nodes::order(app, &v.nodes).iter().map(|n| n.name().to_string()).collect()).unwrap_or_default()
+}
+
+/// Step through a list of `len` from `at` by the key: one, a page, the ends.
+fn step(at: usize, len: usize, key: &str, row: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let last = len - 1;
+    match key {
+        "Up" | "k" => at.saturating_sub(row),
+        "Down" | "j" => (at + row).min(last),
+        "Left" | "h" => at.saturating_sub(1),
+        "Right" | "l" => (at + 1).min(last),
+        "PageUp" => at.saturating_sub(row.max(1) * 2),
+        "PageDown" => (at + row.max(1) * 2).min(last),
+        "Home" => 0,
+        "End" => last,
+        _ => at,
+    }
+}
+
+pub fn choose(app: &mut App, key: &str) {
+    match target(app) {
+        PanelId::Nodes => {
+            let names = node_names(app);
+            let chosen = crate::ui2::chosen_node(app);
+            let at = names.iter().position(|n| Some(n) == chosen.as_ref()).unwrap_or(0);
+            let row = if app.shell.zoom.is_some() { app.shell.zoom_tiles_per_row.get() } else { app.shell.tiles_per_row.get() }.max(1) as usize;
+            if let Some(name) = names.get(step(at, names.len(), key, row)) {
+                if Some(name) != chosen.as_ref() {
+                    app.shell.person = None;
+                }
+                app.shell.chosen = Some(name.clone());
+            }
+        }
+        PanelId::Fleet => {
+            if matches!(key, "Left" | "Right" | "h" | "l") {
+                return;
+            }
+            let names = node_names(app);
+            let chosen = crate::ui2::chosen_node(app);
+            let at = names.iter().position(|n| Some(n) == chosen.as_ref()).unwrap_or(0);
+            if let Some(name) = names.get(step(at, names.len(), key, 1)) {
+                app.shell.chosen = Some(name.clone());
+            }
+        }
+        PanelId::Node => {
+            if matches!(key, "Left" | "Right" | "h" | "l") {
+                return;
+            }
+            let keys: Vec<String> = node::with_chosen(app, |n| node::rows(n).into_iter().map(|r| r.key).collect()).unwrap_or_default();
+            let at = app.shell.person.as_ref().and_then(|p| keys.iter().position(|k| k == p)).unwrap_or(0);
+            if let Some(k) = keys.get(step(at, keys.len(), key, 1)) {
+                app.shell.person = Some(k.clone());
+            }
+        }
+        other => toast(app, format!("{} · its cursor comes in phase 3", other.slug())),
+    }
+}
+
+/// `⏎`: on the grid, the focused panel full-screen; in a zoom, the panel's own open.
+pub fn open(app: &mut App) {
+    let Some(zoom) = app.shell.zoom else {
+        app.shell.zoom = Some(app.shell.focus);
+        return;
+    };
+    match zoom {
+        PanelId::Nodes | PanelId::Fleet => {
+            if app.shell.chosen.is_none() {
+                app.shell.chosen = crate::ui2::chosen_node(app);
+            }
+            app.shell.focus = PanelId::Node;
+            app.shell.zoom = Some(PanelId::Node);
+        }
+        PanelId::Node => explain_now(app),
+        other => toast(app, format!("⏎ in {} comes in phase 3", other.slug())),
+    }
+}
+
+/// `e`: the provenance of the number under the cursor.
+pub fn explain_now(app: &mut App) {
+    let at = app.snapshot().map_or(SystemTime::now(), |s| s.taken_at);
+    let built = match target(app) {
+        PanelId::Fleet => app.with_view(|v| {
+            let t = crate::model::fleet_totals(v);
+            explain::build(&provenance::explain_fleet_mem_pct(&t, at), &explain::polled(app, None))
+        }),
+        PanelId::Nodes => node::with_chosen(app, |n| explain::build(&provenance::explain_node_mem_pct(n.node, at), &explain::polled(app, Some(n.node)))),
+        PanelId::Node => node::with_chosen(app, |n| {
+            let rows = node::rows(n);
+            let row = &rows[node::cursor(app, &rows)];
+            let prov = if row.is_server() {
+                Some(provenance::explain_server_mem_pct(n, at))
+            } else {
+                n.users.iter().find(|u| u.label() == row.key).map(|u| provenance::explain_user_mem_pct(u, n.node, at))
+            };
+            prov.map(|p| explain::build(&p, &explain::polled(app, Some(n.node))))
+        })
+        .flatten(),
+        _ => None,
+    };
+    match built {
+        Some(e) => app.shell.explain = Some(e),
+        None => toast(app, "nothing under the cursor to explain"),
+    }
+}
+
+/// `s`: the nodes' order, pressure → memory → CPU → name.
+pub fn sort(app: &mut App) {
+    app.tree.sort = app.tree.sort.next();
+    let name = match app.tree.sort {
+        crate::model::SortKey::Pressure => "pressure",
+        crate::model::SortKey::Mem => "memory",
+        crate::model::SortKey::Cpu => "CPU",
+        crate::model::SortKey::Name => "name",
+    };
+    toast(app, format!("sort · {name}"));
+}
+
+/// `/`: a filter on the focused list (the tiles, for now).
+pub fn filter(app: &mut App) {
+    match target(app) {
+        PanelId::Nodes | PanelId::Fleet => {
+            app.shell.filter = Some(crate::ui2::state::Filter { query: String::new(), typing: true });
+        }
+        other => toast(app, format!("/ in {} comes in phase 3", other.slug())),
+    }
+}

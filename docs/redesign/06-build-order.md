@@ -39,13 +39,21 @@ chrome and their labels; the numbers inside come from the fake fleet, which is n
 simulation's, and are checked against the engine instead (`ui2/tests.rs` says why). The queue's
 graph is on a fixed scale of 100 jobs waiting.
 
-## Phase 2 — NODES and NODE (M)
+## Phase 2 — NODES and NODE (M) — done
 
 Tiles with the grid cursor, the chosen node, the NODE panel with the one-scale bars, the sparkline
 and the 60-minute (for now 4-minute) graph, the zoomed NODES and NODE, `e` with the provenance
 popover, `s` sort, `/` filter on tiles.
 Acceptance: `*-dash.txt` complete for the NODES and NODE panels, `*-zoom-nodes.txt`,
 `*-zoom-node.txt`, `120x36-explain-node.txt`, `120x36-explain-user.txt`.
+
+As built: the zoomed FLEET came with it (the node rows and both graphs). Where the screens differ,
+`ui2/tests.rs` says why: NODE's bars use largest-remainder rounding so their cells sum to the
+node's exactly (the simulation rounds each row on its own); a tile name too long for its tile is
+cut (`clickhouse5 N…`) instead of written over the corner; the explain popover lists the inputs
+of its formula only (the simulation adds the node's CPU under a memory share); the zoomed NODE's
+last line says lag, parts and free memory and nothing that §5 does not trace ("= 0.2× a 24 GiB
+query"). "usually 42 s (318× / 7 d)" needs the query-log fingerprints of feature A2.
 
 ## Phase 3 — QUEUE, AIRFLOW, JIRA, TAPE (M)
 

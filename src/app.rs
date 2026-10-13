@@ -948,6 +948,11 @@ impl App {
     }
 
     /// What was copied since the loop last asked.
+    /// Put `text` on the clipboard (the loop sends it with OSC 52).
+    pub fn copy(&mut self, text: String) {
+        self.clipboard.push(text);
+    }
+
     pub fn take_clipboard(&mut self) -> Vec<String> {
         std::mem::take(&mut self.clipboard)
     }

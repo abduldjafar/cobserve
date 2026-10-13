@@ -14,6 +14,7 @@ pub mod frame;
 pub mod glyph;
 pub mod keys;
 pub mod layout;
+pub mod nav;
 pub mod overlay;
 pub mod paint;
 pub mod panels;
@@ -56,18 +57,21 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         Some(zoom) => {
             let top = grid.top.height;
             let r = Rect::new(0, top, area.width, area.height.saturating_sub(1 + top));
-            zoomed(&mut p, app, theme, zoom, r);
+            panels::draw_zoomed(&mut p, app, theme, zoom, r);
         }
         None => {
             for (id, r) in &grid.panels {
                 if r.height < 3 || r.width < 6 {
                     continue;
                 }
-                panels::draw(&mut p, app, theme, *id, *r, app.shell.focus == *id);
+                panels::draw(&mut p, app, theme, *id, *r, app.shell.focus == *id, (grid.tile_w, grid.tile_h));
             }
         }
     }
     chrome::status_bar(&mut p, app, theme, grid.status);
+    if let Some(e) = &app.shell.explain {
+        overlay::explain::draw(&mut p, theme, e);
+    }
     if let Some(palette) = &app.shell.palette {
         overlay::palette::draw(&mut p, app, theme, palette);
     }
@@ -76,11 +80,6 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         lines.push((notice.to_string(), false));
     }
     overlay::toast::draw(&mut p, theme, &lines);
-}
-
-/// A zoomed panel: one frame over the body, its title a chip.
-fn zoomed(p: &mut Painter<'_>, app: &App, theme: &Theme, id: PanelId, r: Rect) {
-    panels::frame(p, app, theme, id, r, true);
 }
 
 /// The chosen node: the one picked last, while it is still in the fleet, else the first in the
@@ -92,9 +91,7 @@ pub fn chosen_node(app: &App) -> Option<String> {
         {
             return Some(name.to_string());
         }
-        let mut nodes: Vec<&crate::model::NodeView<'_>> = v.nodes.iter().collect();
-        nodes.sort_by(|a, b| crate::model::compare_nodes(a, b, app.tree.sort));
-        nodes.first().map(|n| n.name().to_string())
+        panels::nodes::order(app, &v.nodes).first().map(|n| n.name().to_string())
     })
     .flatten()
 }

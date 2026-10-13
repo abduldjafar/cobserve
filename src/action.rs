@@ -94,9 +94,9 @@ fn grid_or_local(app: &mut App, key: &str) {
 
 pub static ACTIONS: &[Action] = &[
     Action { id: "focus", label: "panel", phrase: "focus a panel", detail: "focus a panel · while zoomed, switch the zoom", keys: &["1", "2", "3", "4", "5", "6", "7", "8"], shown: "1-8", scope: Scope::Everywhere, rank: 1, enabled: always, run: focus_number },
-    Action { id: "zoom", label: "open", phrase: "open the focused panel", detail: "the focused panel full-screen · in a zoom, the panel's own open", keys: &["Enter"], shown: "⏎", scope: Scope::Everywhere, rank: 2, enabled: always, run: |app, _| app.shell.toggle_zoom() },
-    Action { id: "choose", label: "choose", phrase: "choose", detail: "move the focused panel's cursor", keys: &["Left", "Right", "Up", "Down", "h", "j", "k", "l", "PageUp", "PageDown", "Home", "End"], shown: "←→↑↓", scope: Scope::Everywhere, rank: 3, enabled: always, run: later },
-    Action { id: "explain", label: "explain", phrase: "explain this number", detail: "the number under the cursor · its §5 formula and inputs", keys: &["e"], shown: "e", scope: Scope::Everywhere, rank: 4, enabled: always, run: later },
+    Action { id: "zoom", label: "open", phrase: "open the focused panel", detail: "the focused panel full-screen · in a zoom, the panel's own open", keys: &["Enter"], shown: "⏎", scope: Scope::Everywhere, rank: 2, enabled: always, run: |app, _| crate::ui2::nav::open(app) },
+    Action { id: "choose", label: "choose", phrase: "choose", detail: "move the focused panel's cursor", keys: &["Left", "Right", "Up", "Down", "h", "j", "k", "l", "PageUp", "PageDown", "Home", "End"], shown: "←→↑↓", scope: Scope::Everywhere, rank: 3, enabled: always, run: crate::ui2::nav::choose },
+    Action { id: "explain", label: "explain", phrase: "explain this number", detail: "the number under the cursor · its §5 formula and inputs", keys: &["e"], shown: "e", scope: Scope::Everywhere, rank: 4, enabled: always, run: |app, _| crate::ui2::nav::explain_now(app) },
     Action { id: "layout", label: "layout", phrase: "layout · all → fleet → ops", detail: "preset all → fleet → ops", keys: &["p"], shown: "p", scope: Scope::Everywhere, rank: 5, enabled: always, run: |app, _| app.shell.cycle_preset() },
     Action { id: "palette", label: "command", phrase: "command palette", detail: "every action and object, fuzzy", keys: &[":"], shown: ":", scope: Scope::Everywhere, rank: 6, enabled: always, run: |app, _| crate::ui2::keys::open_palette(app, false) },
     Action { id: "keys", label: "keys", phrase: "keys for this screen", detail: "the keys of this scope", keys: &["?"], shown: "?", scope: Scope::Everywhere, rank: 7, enabled: always, run: |app, _| crate::ui2::keys::open_palette(app, true) },
@@ -108,11 +108,11 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "grid", label: "grid", phrase: "the grid", detail: "the grid from a zoom · this Mac (`:local`) from the grid", keys: &["0"], shown: "0", scope: Scope::Everywhere, rank: 11, enabled: always, run: grid_or_local },
     Action { id: "zoom-toggle", label: "zoom ↔ grid", phrase: "zoom ↔ grid", detail: "the same as ⏎ and esc on a panel", keys: &["f"], shown: "f", scope: Scope::Everywhere, rank: 12, enabled: always, run: |app, _| app.shell.toggle_zoom() },
     Action { id: "estimate", label: "estimate", phrase: "explain estimate · this query", detail: "EXPLAIN ESTIMATE of the chosen query · read-only", keys: &["E"], shown: "E", scope: Scope::Everywhere, rank: 13, enabled: always, run: later },
-    Action { id: "filter", label: "filter", phrase: "filter this list", detail: "the focused list, by substring · esc clears", keys: &["/"], shown: "/", scope: Scope::Everywhere, rank: 14, enabled: always, run: later },
+    Action { id: "filter", label: "filter", phrase: "filter this list", detail: "the focused list, by substring · esc clears", keys: &["/"], shown: "/", scope: Scope::Everywhere, rank: 14, enabled: always, run: |app, _| crate::ui2::nav::filter(app) },
     Action { id: "float", label: "float a session", phrase: "float the session", detail: "the chosen session over any panel · again: the prefix", keys: &["\\", "ctrl+\\"], shown: "\\", scope: Scope::Everywhere, rank: 15, enabled: always, run: later },
     Action { id: "sql", label: "SQL on it", phrase: "SQL on this node", detail: "a SQL session on the chosen node, floating", keys: &["c"], shown: "c", scope: Scope::Everywhere, rank: 16, enabled: always, run: later },
     Action { id: "density", label: "density", phrase: "density · comfortable → compact → focus", detail: "comfortable → compact → focus", keys: &["+"], shown: "+", scope: Scope::Everywhere, rank: 17, enabled: always, run: |app, _| app.shell.cycle_density() },
-    Action { id: "sort", label: "sort", phrase: "sort · pressure → memory → CPU → name", detail: "the nodes: pressure → memory → CPU → name", keys: &["s"], shown: "s", scope: Scope::Everywhere, rank: 18, enabled: always, run: |app, _| app.tree.sort = app.tree.sort.next() },
+    Action { id: "sort", label: "sort", phrase: "sort · pressure → memory → CPU → name", detail: "the nodes: pressure → memory → CPU → name", keys: &["s"], shown: "s", scope: Scope::Everywhere, rank: 18, enabled: always, run: |app, _| crate::ui2::nav::sort(app) },
     Action { id: "replay-back", label: "a minute back", phrase: "replay · back one minute", detail: "replay one minute back, up to 59", keys: &["["], shown: "[", scope: Scope::Everywhere, rank: 19, enabled: always, run: later },
     Action { id: "replay-forward", label: "a minute forward", phrase: "replay · forward one minute", detail: "replay one minute forward", keys: &["]"], shown: "]", scope: Scope::Everywhere, rank: 20, enabled: always, run: later },
     Action { id: "live", label: "live", phrase: "back to live", detail: "back from replay to now", keys: &["t"], shown: "t", scope: Scope::Everywhere, rank: 21, enabled: always, run: later },
@@ -124,6 +124,21 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "came-from", label: "where I was", phrase: "back to where I was", detail: "back to where you came from", keys: &["-"], shown: "-", scope: Scope::Everywhere, rank: 27, enabled: always, run: later },
     Action { id: "wall", label: "wall", phrase: "wall · the big numbers alone", detail: "the big numbers alone", keys: &["W"], shown: "W", scope: Scope::Everywhere, rank: 28, enabled: always, run: later },
     Action { id: "quit", label: "quit", phrase: "quit", detail: "leave cobserve", keys: &["q", "ctrl+c"], shown: "q", scope: Scope::Everywhere, rank: 29, enabled: always, run: |app, _| app.quit = true },
+    // The zooms' own (`screens/*-zoom-*.txt`): what their status bars offer.
+    Action { id: "fleet-node", label: "a node", phrase: "choose a node", detail: "the node rows under the graphs", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Fleet), rank: 1, enabled: always, run: crate::ui2::nav::choose },
+    Action { id: "fleet-open", label: "open it", phrase: "open the chosen node", detail: "the node, zoomed", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Fleet), rank: 2, enabled: always, run: |app, _| crate::ui2::nav::open(app) },
+    Action { id: "fleet-replay", label: "replay", phrase: "replay a minute", detail: "one minute back or forward on the graphs", keys: &["[", "]"], shown: "[ ]", scope: Scope::Zoomed(PanelId::Fleet), rank: 3, enabled: always, run: later },
+    Action { id: "fleet-explain", label: "explain", phrase: "explain this number", detail: "the fleet's memory share · its formula", keys: &["e"], shown: "e", scope: Scope::Zoomed(PanelId::Fleet), rank: 4, enabled: always, run: |app, _| crate::ui2::nav::explain_now(app) },
+    Action { id: "nodes-choose", label: "choose", phrase: "choose a tile", detail: "across the row, then between rows", keys: &["Left", "Right", "Up", "Down", "h", "j", "k", "l", "PageUp", "PageDown", "Home", "End"], shown: "←→↑↓", scope: Scope::Zoomed(PanelId::Nodes), rank: 1, enabled: always, run: crate::ui2::nav::choose },
+    Action { id: "nodes-open", label: "open the node", phrase: "open the chosen node", detail: "the node, zoomed", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Nodes), rank: 2, enabled: always, run: |app, _| crate::ui2::nav::open(app) },
+    Action { id: "nodes-sort", label: "sort", phrase: "sort · pressure → memory → CPU → name", detail: "the tiles' order", keys: &["s"], shown: "s", scope: Scope::Zoomed(PanelId::Nodes), rank: 3, enabled: always, run: |app, _| crate::ui2::nav::sort(app) },
+    Action { id: "nodes-filter", label: "filter", phrase: "filter the tiles", detail: "by a node's name · esc clears", keys: &["/"], shown: "/", scope: Scope::Zoomed(PanelId::Nodes), rank: 4, enabled: always, run: |app, _| crate::ui2::nav::filter(app) },
+    Action { id: "nodes-explain", label: "explain", phrase: "explain this number", detail: "the chosen node's memory share", keys: &["e"], shown: "e", scope: Scope::Zoomed(PanelId::Nodes), rank: 5, enabled: always, run: |app, _| crate::ui2::nav::explain_now(app) },
+    Action { id: "node-person", label: "a person", phrase: "choose a person", detail: "the rows of who holds it", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Node), rank: 1, enabled: always, run: crate::ui2::nav::choose },
+    Action { id: "node-explain", label: "explain", phrase: "explain this row", detail: "the row's share · its formula and inputs", keys: &["e"], shown: "e", scope: Scope::Zoomed(PanelId::Node), rank: 2, enabled: always, run: |app, _| crate::ui2::nav::explain_now(app) },
+    Action { id: "node-sql", label: "SQL on it", phrase: "SQL on this node", detail: "a SQL session on the node, floating", keys: &["c"], shown: "c", scope: Scope::Zoomed(PanelId::Node), rank: 3, enabled: always, run: later },
+    Action { id: "node-claude", label: "ask claude", phrase: "ask Claude about this row", detail: "the floating session, the row in its prompt", keys: &["\\"], shown: "\\", scope: Scope::Zoomed(PanelId::Node), rank: 4, enabled: always, run: later },
+    Action { id: "node-copy", label: "copy link", phrase: "copy the row's link", detail: "the query id, or the node", keys: &["y"], shown: "y", scope: Scope::Zoomed(PanelId::Node), rank: 5, enabled: always, run: later },
     Action { id: "clock", label: "clock · local ↔ UTC", phrase: "clock · local ↔ UTC", detail: "the servers' own time, or this machine's", keys: &[], shown: "", scope: Scope::Everywhere, rank: 40, enabled: always, run: |app, _| app.time.flip() },
     Action { id: "cancel-job", label: "cancel job", phrase: "cancel this Redash job", detail: "the job under the cursor in Redash: a dialog, then y", keys: &["x"], shown: "x", scope: Scope::Panel(PanelId::Queue), rank: 4, enabled: zoomed, run: later },
 ];
@@ -191,8 +206,8 @@ mod tests {
         assert_eq!(for_key(&app, "x").map(|a| a.id), Some("cancel-job"), "zoomed on the queue: x cancels");
         (for_key(&app, "Esc").unwrap().run)(&mut app, "Esc");
         assert_eq!(app.shell.zoom, None);
-        (for_key(&app, "e").unwrap().run)(&mut app, "e");
-        assert_eq!(app.shell.toasts.last().map(|t| t.text.as_str()), Some("explain — not built yet"), "a later phase's key says so");
+        (for_key(&app, "W").unwrap().run)(&mut app, "W");
+        assert_eq!(app.shell.toasts.last().map(|t| t.text.as_str()), Some("wall — not built yet"), "a later phase's key says so");
         (for_key(&app, "p").unwrap().run)(&mut app, "p");
         assert_eq!(app.shell.preset, crate::ui2::layout::Preset::Fleet);
         (for_key(&app, "q").unwrap().run)(&mut app, "q");

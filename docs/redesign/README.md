@@ -1,7 +1,7 @@
 # cobserve redesign — the knowledge base
 
-**Status: concept approved by the owner (2026-10-13); phases 0 (the contracts) and 1 (the shell
-skeleton, `UI=2`) built — next is phase 2, NODES and NODE (`06-build-order.md`).** This folder is
+**Status: concept approved by the owner (2026-10-13); phases 0 (the contracts), 1 (the shell
+skeleton, `UI=2`) and 2 (NODES and NODE) built — next is phase 3 (`06-build-order.md`).** This folder is
 everything the next agent needs to build the new shell: the decisions, the screen as text, the
 panels, the glyphs, the architecture, the keys, the build order and its tests. Read it in order;
 it is written for an implementer with no prior context, like `DESIGN.md` was for v1.

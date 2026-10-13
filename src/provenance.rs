@@ -7,6 +7,7 @@
 //! formula as a function too, so the tests can check that evaluating the inputs reproduces what
 //! `model.rs` said — for every metric of the fake fleet.
 
+// Every §5 formula has its explain_*; the popover uses those its panels point at so far.
 #![allow(dead_code)]
 
 use crate::model::{self, FleetTotals, NodeSnapshot, NodeView, QueryRow, QueryStat, UserSlice};
@@ -53,6 +54,8 @@ fn input(name: &'static str, value: f64, unit: Unit, source: &'static str) -> In
 
 #[derive(Debug, Clone)]
 pub struct Provenance {
+    /// `node.mem_pct`: the quantity, as the popover's first line names it.
+    pub quantity: &'static str,
     /// `clickhouse3 memory`, `grigol.gankava's CPU on clickhouse-bi`.
     pub metric: String,
     /// `mem_used ÷ mem_total × 100` — written with the inputs' names.
@@ -114,8 +117,7 @@ fn pct(part: f64, whole: f64) -> Option<f64> {
 
 /// §5.1 / §5.3: the node's memory share.
 pub fn explain_node_mem_pct(node: &NodeSnapshot, at: SystemTime) -> Provenance {
-    Provenance {
-        metric: format!("{} memory", node.name),
+    Provenance {        quantity: "node.mem_pct",        metric: format!("{} memory", node.name),
         formula: "mem_used ÷ mem_total × 100",
         reference: "DESIGN.md §5.1",
         inputs: vec![
@@ -136,8 +138,7 @@ pub fn explain_node_cpu_pct(node: &NodeSnapshot, prev: Option<&NodeSnapshot>, at
     let value = model::node_cpu_pct(node, prev);
     let cores = node.cores.unwrap_or(0.0);
     match node.cpu_busy_cores {
-        Some(busy) => Provenance {
-            metric: format!("{} CPU", node.name),
+        Some(busy) => Provenance {            quantity: "node.cpu_pct",            metric: format!("{} CPU", node.name),
             formula: "busy_cores ÷ cores × 100, at most 100",
             reference: "DESIGN.md §5.2",
             inputs: vec![
@@ -152,8 +153,7 @@ pub fn explain_node_cpu_pct(node: &NodeSnapshot, prev: Option<&NodeSnapshot>, at
         },
         None => {
             let p = prev.unwrap_or(node);
-            Provenance {
-                metric: format!("{} CPU", node.name),
+            Provenance {                quantity: "node.cpu_pct",                metric: format!("{} CPU", node.name),
                 formula: "(cpu_time_now − cpu_time_before) ÷ ((uptime_now − uptime_before) × 10⁶) ÷ cores × 100",
                 reference: "DESIGN.md §5.2",
                 inputs: vec![
@@ -182,8 +182,7 @@ pub fn explain_node_cpu_pct(node: &NodeSnapshot, prev: Option<&NodeSnapshot>, at
 
 /// §5.1: a user's (or a person's) memory share of one node.
 pub fn explain_user_mem_pct(slice: &UserSlice<'_>, node: &NodeSnapshot, at: SystemTime) -> Provenance {
-    Provenance {
-        metric: format!("{}'s memory on {}", slice.label(), node.name),
+    Provenance {        quantity: "user.mem_pct",        metric: format!("{}'s memory on {}", slice.label(), node.name),
         formula: "user_memory ÷ mem_total × 100",
         reference: "DESIGN.md §5.1",
         inputs: vec![
@@ -200,8 +199,7 @@ pub fn explain_user_mem_pct(slice: &UserSlice<'_>, node: &NodeSnapshot, at: Syst
 
 /// §5.2: a user's CPU share of one node.
 pub fn explain_user_cpu_pct(slice: &UserSlice<'_>, node: &NodeSnapshot, at: SystemTime) -> Provenance {
-    Provenance {
-        metric: format!("{}'s CPU on {}", slice.label(), node.name),
+    Provenance {        quantity: "user.cpu_pct",        metric: format!("{}'s CPU on {}", slice.label(), node.name),
         formula: "user_cores ÷ cores × 100, at most 100",
         reference: "DESIGN.md §5.2",
         inputs: vec![
@@ -222,8 +220,7 @@ pub fn explain_query_cores(stat: &QueryStat<'_>, prev: Option<&QueryRow>, node: 
     let q = stat.query;
     let delta = prev.filter(|p| q.elapsed_s > p.elapsed_s);
     let (before_cpu, before_elapsed) = delta.map_or((0.0, 0.0), |p| (p.cpu_time_us as f64, p.elapsed_s));
-    Provenance {
-        metric: format!("query {} cores", q.query_id),
+    Provenance {        quantity: "query.cores",        metric: format!("query {} cores", q.query_id),
         formula: "(cpu_time_now − cpu_time_before) ÷ ((elapsed_now − elapsed_before) × 10⁶), at most node_cores",
         reference: "DESIGN.md §5.2",
         inputs: vec![
@@ -248,8 +245,7 @@ pub fn explain_query_cores(stat: &QueryStat<'_>, prev: Option<&QueryRow>, node: 
 /// §5.3: the closing row — what the users do not account for, at least 0.
 pub fn explain_server_mem_pct(view: &NodeView<'_>, at: SystemTime) -> Provenance {
     let users: f64 = view.users.iter().filter_map(|u| u.mem_pct).sum();
-    Provenance {
-        metric: format!("{} server · caches · merges, memory", view.name()),
+    Provenance {        quantity: "server.mem_pct",        metric: format!("{} server · caches · merges, memory", view.name()),
         formula: "node_share − Σ user_shares, at least 0",
         reference: "DESIGN.md §5.3",
         inputs: vec![
@@ -267,8 +263,7 @@ pub fn explain_server_mem_pct(view: &NodeView<'_>, at: SystemTime) -> Provenance
 /// §5.3: the closing row's CPU.
 pub fn explain_server_cpu_pct(view: &NodeView<'_>, at: SystemTime) -> Provenance {
     let users: f64 = view.users.iter().filter_map(|u| u.cpu_pct).sum();
-    Provenance {
-        metric: format!("{} server · caches · merges, CPU", view.name()),
+    Provenance {        quantity: "server.cpu_pct",        metric: format!("{} server · caches · merges, CPU", view.name()),
         formula: "node_share − Σ user_shares, at least 0",
         reference: "DESIGN.md §5.3",
         inputs: vec![
@@ -291,8 +286,7 @@ pub fn explain_runaway(stat: &QueryStat<'_>, node: &NodeSnapshot, at: SystemTime
         (None, Some(_)) => "limit: the node's max_memory_usage",
         (None, None) => "limit: the fleet's 9 GiB fallback",
     };
-    Provenance {
-        metric: format!("query {} runaway", q.query_id),
+    Provenance {        quantity: "query.runaway",        metric: format!("query {} runaway", q.query_id),
         formula: "elapsed ≥ 30 s or memory ≥ 0.8 × limit",
         reference: "DESIGN.md §5.4",
         inputs: vec![
@@ -310,8 +304,7 @@ pub fn explain_runaway(stat: &QueryStat<'_>, node: &NodeSnapshot, at: SystemTime
 
 /// The fleet's memory share: the reachable nodes with a known denominator, summed (§5.1).
 pub fn explain_fleet_mem_pct(totals: &FleetTotals, at: SystemTime) -> Provenance {
-    Provenance {
-        metric: "fleet memory".to_string(),
+    Provenance {        quantity: "fleet.mem_pct",        metric: "fleet memory".to_string(),
         formula: "Σ mem_used ÷ Σ mem_total × 100",
         reference: "DESIGN.md §5.1, summed over the reachable nodes",
         inputs: vec![
@@ -328,8 +321,7 @@ pub fn explain_fleet_mem_pct(totals: &FleetTotals, at: SystemTime) -> Provenance
 
 /// The fleet's CPU share (§5.2, summed).
 pub fn explain_fleet_cpu_pct(totals: &FleetTotals, at: SystemTime) -> Provenance {
-    Provenance {
-        metric: "fleet CPU".to_string(),
+    Provenance {        quantity: "fleet.cpu_pct",        metric: "fleet CPU".to_string(),
         formula: "Σ busy_cores ÷ Σ cores × 100, at most 100",
         reference: "DESIGN.md §5.2, summed over the reachable nodes",
         inputs: vec![

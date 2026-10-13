@@ -156,7 +156,33 @@ pub fn status_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     let (y, w) = (area.y, area.width);
-    let status = poll_line(app, app.shell.zoom.is_none());
+    let status = match app.shell.zoom {
+        Some(crate::ui2::PanelId::Node) => {
+            let poll = crate::ui2::panels::node::with_chosen(app, |n| n.node.poll_ms).flatten();
+            poll.map_or("read-only".to_string(), |ms| format!("poll {:.1} s · read-only", f64::from(ms) / 1000.0))
+        }
+        _ => poll_line(app, app.shell.zoom.is_none()),
+    };
+    // A filter in progress takes the right end: `/ query · esc clears`.
+    if let Some(f) = &app.shell.filter {
+        let cursor = if f.typing { "█" } else { "" };
+        let text = format!("/ {}{cursor} · esc clears", f.query);
+        let x = w.saturating_sub(40);
+        p.clear(Rect::new(x, y, 40.min(w), 1), theme.surface());
+        p.put(x + 1, y, &text, theme.accent().add_modifier(Modifier::BOLD).patch(theme.surface()));
+        let limit = x;
+        let mut hx = 1u16;
+        for (key, desc) in hints(app) {
+            let need = (fmt::width(&key) + fmt::width(&desc) + 4) as u16;
+            if hx + need > limit {
+                continue;
+            }
+            p.put(hx, y, &key, theme.accent().add_modifier(Modifier::BOLD));
+            p.put(hx + fmt::width(&key) as u16 + 1, y, &desc, theme.muted());
+            hx += need;
+        }
+        return;
+    }
     let limit = w.saturating_sub(fmt::width(&status) as u16 + 2);
     let mut x = 1u16;
     for (key, desc) in hints(app) {

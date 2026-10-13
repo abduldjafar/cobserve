@@ -283,6 +283,133 @@ fn a_later_phase_s_key_says_so_in_a_toast() {
     assert!(got[34].contains(" wall — not built yet ▕"), "bottom-right, one column in from the edge: {}", got[34]);
 }
 
+/// Frames of a row, leaving out the cells listed: where the screen's simulation drew over a corner.
+fn frames_but(row: &str, skip: &[usize]) -> Vec<(usize, char)> {
+    frames(row).into_iter().filter(|(x, _)| !skip.contains(x)).collect()
+}
+
+#[test]
+fn the_nodes_and_node_panels_on_the_dashboards() {
+    let app = app_after(30);
+    for (w, h, rows) in [(120u16, 36u16, 8..=28), (80, 24, 6..=19), (160, 48, 10..=40)] {
+        let got = render(&app, w, h);
+        let want = screen(&format!("{w}x{h}-dash"));
+        for y in rows {
+            // The simulation writes ` clickhouse5 NEW ` over its tile's corner when the name is
+            // as long as the tile allows; this shell cuts the name instead (`clickhouse5 N…`) and
+            // keeps the corner — so that one cell is not compared.
+            let skip: Vec<usize> = frames(&want[y]).iter().filter(|(x, _)| want[y].chars().nth(x.saturating_sub(1)) == Some(' ') && cells(&want[y], x.saturating_sub(4), *x).contains("NEW")).map(|(x, _)| *x).collect();
+            let skip_got: Vec<usize> = frames(&got[y]).iter().filter(|(x, c)| *c == '╮' && cells(&got[y], x.saturating_sub(3), *x).contains('…')).map(|(x, _)| *x).collect();
+            let all: Vec<usize> = skip.iter().chain(&skip_got).copied().collect();
+            assert_eq!(frames_but(&got[y], &all), frames_but(&want[y], &all), "{w}x{h} row {y}:\n got  {}\n want {}", got[y], want[y]);
+        }
+    }
+    let got = render(&app, 120, 36);
+    // The tiles: name, bar and share, the sparkline, queries and the longest.
+    assert!(got[9].contains("╭ clickhouse3 ───╮") && got[10].contains("%"), "{}\n{}", got[9], got[10]);
+    assert!(cells(&got[12], 2, 20).contains("4q !2"), "queries and runaways: {}", got[12]);
+    // NODE: one row a person, then the server, on one scale.
+    assert!(got[21].starts_with("│ grigol.ga… ") && got[25].starts_with("│ server · … "), "{}\n{}", got[21], got[25]);
+    let filled: usize = (21..=25).map(|y| cells(&got[y], 13, 27).chars().filter(|c| *c == '█').count()).sum();
+    let node = app.with_view(|v| v.nodes.iter().find(|n| n.name() == "clickhouse3").and_then(|n| n.mem_pct)).flatten().unwrap();
+    assert_eq!(filled, (node / 100.0 * 14.0).round() as usize, "the rows' cells add up to the node's (§5.3)");
+}
+
+#[test]
+fn the_zoomed_nodes_and_node() {
+    let mut app = app_after(30);
+    app.update(key(KeyCode::Enter));
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-zoom-nodes");
+    same_frames(&got, &want, 1..=34, "zoom nodes");
+    assert_eq!(trimmed(&got[1]), trimmed(&want[1]), "the zoom's title and summary");
+    assert!(got[2].contains("╭ clickhouse7 ─── lag 12s ╮"), "{}", got[2]);
+    assert!(got[4].contains("│ mem 93.3% 59.7/64 GiB") && got[6].contains("│ cpu "), "{}\n{}", got[4], got[6]);
+    assert_eq!(trimmed(&got[35]).split("   ").take(6).collect::<Vec<_>>(), trimmed(&want[35]).split("   ").take(6).collect::<Vec<_>>(), "the zoom's hints");
+
+    // → moves the chosen tile, ⏎ opens it.
+    app.update(key(KeyCode::Right));
+    assert_eq!(app.shell.chosen.as_deref(), Some("clickhouse-bi"));
+    app.update(key(KeyCode::Left));
+    app.update(key(KeyCode::Enter));
+    assert_eq!(app.shell.zoom, Some(PanelId::Node));
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-zoom-node");
+    assert!(got[0].contains("dashboard › node › clickhouse3"), "{}", got[0]);
+    // The rows, the divider, the two graphs and their labels; the graphs' heights are the screen's.
+    // Row 32: the simulation's line (`… = 0.2× a 24 GiB query`) runs over the frame; this one is
+    // clipped to it, and says only what §5 traces (lag, parts, free memory).
+    same_frames(&got, &want, (1..=31).chain(33..=34), "zoom node");
+    for (y, text) in [(2, "│ WHO HOLDS IT  memory, share of the node · the rows add up to the │MEMORY · 4 min"), (3, "│ grigol.gankava   "), (7, "│ server · caches… ")] {
+        assert!(got[y].starts_with(text), "row {y}: {}", got[y]);
+    }
+    assert!(got[3].contains("25.4%  16.3G  3.10c│"), "pct · GiB · cores: {}", got[3]);
+    assert_eq!(col(&got[15], "-4m"), col(&want[15], "-60m"), "the window printed where the screen prints its hour");
+    assert_eq!(col(&got[17], "CPU · 4 min"), col(&want[17], "CPU · 60 min"));
+    assert!(got[32].contains("│lag 0 s · 1.2k parts · free "), "{}", got[32]);
+    assert!(got[9].contains(" · Redash #7438 · ") && got[11].contains("│ ▎ "), "the chosen row's query and its SQL:\n{}\n{}", got[9], got[11]);
+    assert_eq!(trimmed(&got[35]).split("   ").take(6).collect::<Vec<_>>(), trimmed(&want[35]).split("   ").take(6).collect::<Vec<_>>());
+
+    // ↓ to the server, its own words.
+    for _ in 0..4 {
+        app.update(key(KeyCode::Down));
+    }
+    let got = render(&app, 120, 36);
+    assert!(got[9].contains("the server itself"), "{}", got[9]);
+}
+
+#[test]
+fn explain_a_node_and_a_person() {
+    let mut app = app_after(30);
+    app.update(ch('e'));
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-explain-node");
+    assert_eq!(col(&got[12], "╭─ explain · 93.3% ─"), col(&want[12], "╭─ explain · 93.1% ─"));
+    // The screen writes the inputs `node.mem_used`; the provenance names them as its input rows do.
+    assert!(got[13].contains("│ node.mem_pct = mem_used ÷ mem_total × 100   "), "the formula: {}", got[13]);
+    assert!(want[13].contains("│ node.mem_pct = node.mem_used ÷ node.mem_total × 100"));
+    assert!(got[14].contains("│              = 59.7 GiB ÷ 64.0 GiB × 100 = 93.3%"), "the formula with the values: {}", got[14]);
+    assert!(got[16].contains("│ mem_used        59.7 GiB   system.asynchronous_metrics · MemoryResident"), "{}", got[16]);
+    // The screen's popover lists the node's CPU under the memory inputs too; the provenance of a
+    // share lists the inputs of its formula only, so this one is a row shorter.
+    let bottom = got.iter().position(|r| r.contains("╰─ ⏎ ask Claude about it · y copy · esc ─")).unwrap();
+    assert_eq!(bottom, 21);
+    app.update(ch('y'));
+    assert!(app.shell.explain.is_none() && app.take_clipboard().first().is_some_and(|t| t.contains("mem_used ÷ mem_total × 100")), "y copies it");
+
+    app.update(ch('4'));
+    app.update(key(KeyCode::Enter));
+    app.update(key(KeyCode::Down));
+    app.update(ch('e'));
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-explain-user");
+    assert_eq!(col(&got[12], "╭─ explain · 12.8% ─"), col(&want[12], "╭─ explain · 25.5% ─"));
+    assert!(got[13].contains("│ user.mem_pct = user_memory ÷ mem_total × 100"), "{}", got[13]);
+    let bottom = got.iter().position(|r| r.contains("╰─ ⏎ ask Claude about it · y copy · esc ─")).unwrap();
+    assert_eq!(bottom, 22, "as tall as the screen's");
+    app.update(key(KeyCode::Esc));
+    assert!(app.shell.explain.is_none() && app.shell.zoom == Some(PanelId::Node), "esc closes the popover only");
+}
+
+#[test]
+fn sort_and_filter_the_tiles() {
+    let mut app = app_after(5);
+    app.update(ch('s'));
+    assert_eq!(app.tree.sort, crate::model::SortKey::Mem);
+    assert!(render(&app, 120, 36)[8].contains("sorted by memory · s ─╮"));
+    app.update(ch('/'));
+    for c in "ch".chars() {
+        app.update(ch(c));
+    }
+    let got = render(&app, 120, 36);
+    assert!(got[35].contains("/ ch█ · esc clears"), "{}", got[35]);
+    assert!(got[9].contains("╭ ch4 ") && !got[9].contains("clickhouse3"), "only the matching tiles: {}", got[9]);
+    app.update(key(KeyCode::Enter));
+    assert!(render(&app, 120, 36)[35].contains("/ ch · esc clears"));
+    app.update(key(KeyCode::Esc));
+    assert!(app.shell.filter.is_none() && render(&app, 120, 36)[9].contains("clickhouse"), "esc clears it");
+}
+
 /// `cargo test ui2::tests::dump -- --ignored --nocapture`: the screen at a size, to look at.
 #[test]
 #[ignore]
@@ -324,6 +451,11 @@ fn every_size_renders_without_a_panic() {
         app.shell.preset = [Preset::All, Preset::Fleet, Preset::Ops][round % 3];
         app.shell.density = [Density::Comfortable, Density::Compact, Density::Focus][(round / 3) % 3];
         app.shell.palette = (round % 7 == 0).then(Default::default);
+        app.shell.explain = None;
+        if round % 11 == 0 {
+            nav::explain_now(&mut app);
+        }
+        app.shell.filter = (round % 13 == 0).then(|| crate::ui2::state::Filter { query: "ch".into(), typing: true });
         let rows = render(&app, w, h);
         assert_eq!(rows.len(), h as usize);
     }

@@ -35,6 +35,24 @@ pub struct Palette {
     pub help: bool,
 }
 
+/// `/` on a list: the substring, and whether keys still go into it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Filter {
+    pub query: String,
+    pub typing: bool,
+}
+
+/// The explain popover (`e`): its title and lines, built from a `Provenance` when opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Explained {
+    /// `explain · 93.1%`.
+    pub title: String,
+    /// Each line, and whether it is the formula (plain) or a detail (dim).
+    pub lines: Vec<(String, bool)>,
+    /// The text `y` copies and `⏎` hands to Claude.
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellState {
     /// The new shell is the one on screen (`UI=2`); the old one otherwise.
@@ -49,7 +67,15 @@ pub struct ShellState {
     /// The chosen node, by name: the NODE panel and the explain popover follow it. `None` until
     /// one is chosen, which reads as the first in the sort order.
     pub chosen: Option<String>,
+    /// The NODE panel's cursor, by identity: a row's key (`attrib::user_label`, empty for the
+    /// server), or `None` for the first row.
+    pub person: Option<String>,
     pub palette: Option<Palette>,
+    pub filter: Option<Filter>,
+    pub explain: Option<Explained>,
+    /// How many tiles the last frame fit a row, on the grid and zoomed: what `↑↓` step by.
+    pub tiles_per_row: std::cell::Cell<u16>,
+    pub zoom_tiles_per_row: std::cell::Cell<u16>,
 }
 
 impl Default for ShellState {
@@ -64,7 +90,12 @@ impl Default for ShellState {
             density: Density::Comfortable,
             toasts: Vec::new(),
             chosen: None,
+            person: None,
             palette: None,
+            filter: None,
+            explain: None,
+            tiles_per_row: std::cell::Cell::new(1),
+            zoom_tiles_per_row: std::cell::Cell::new(1),
         }
     }
 }
@@ -95,7 +126,7 @@ impl ShellState {
     /// `esc`: close the top-most thing — here, the zoom. Never quits; says whether it closed
     /// something.
     pub fn back(&mut self) -> bool {
-        if self.palette.take().is_some() {
+        if self.palette.take().is_some() || self.explain.take().is_some() || self.filter.take().is_some() {
             return true;
         }
         self.zoom.take().is_some()

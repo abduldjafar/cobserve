@@ -92,6 +92,6 @@ pub fn overlay(p: &mut Painter<'_>, theme: &Theme, r: Rect, title: &str, title_s
         p.put(r.x + 2, r.y, &fmt::truncate(&format!(" {title} "), r.width as usize - 4), title_style.patch(theme.surface()));
     }
     if !bottom.is_empty() && r.width > 10 {
-        p.putr(r.right() - 2, r.bottom() - 1, &fmt::truncate(&format!(" {bottom} "), r.width as usize - 4), theme.muted().patch(theme.surface()));
+        p.put(r.x + 2, r.bottom() - 1, &fmt::truncate(&format!(" {bottom} "), r.width as usize - 4), theme.muted().patch(theme.surface()));
     }
 }

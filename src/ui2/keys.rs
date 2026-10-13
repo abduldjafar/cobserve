@@ -39,9 +39,49 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
     if app.shell.palette.is_some() {
         return palette_key(app, key);
     }
+    if let Some(e) = app.shell.explain.take() {
+        // Explain: ⏎ asks Claude, y copies, anything else closes.
+        match key.code {
+            KeyCode::Char('y') => {
+                app.copy(e.text);
+                app.shell.toast("✔ formula and inputs copied", false, std::time::SystemTime::now());
+            }
+            KeyCode::Enter => app.shell.toast("⏎ hands it to the floating Claude — phase 4", false, std::time::SystemTime::now()),
+            _ => {}
+        }
+        return;
+    }
+    if app.shell.filter.as_ref().is_some_and(|f| f.typing) {
+        return filter_key(app, key);
+    }
     let Some(name) = name(&key) else { return };
     if let Some(a) = action::for_key(app, &name) {
         (a.run)(app, &name);
+    }
+}
+
+/// Typing into `/`: printable keys add, `⌫` takes back, `⏎` keeps it, `esc` clears it.
+fn filter_key(app: &mut App, key: KeyEvent) {
+    let Some(f) = app.shell.filter.as_mut() else { return };
+    match key.code {
+        KeyCode::Esc => app.shell.filter = None,
+        KeyCode::Enter => {
+            f.typing = false;
+            if f.query.is_empty() {
+                app.shell.filter = None;
+            }
+        }
+        KeyCode::Backspace => {
+            f.query.pop();
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => f.query.push(c),
+        _ => {}
+    }
+    // The chosen node stays chosen only while it still matches.
+    if let Some(first) = crate::ui2::nav::node_names(app).first().cloned()
+        && !crate::ui2::nav::node_names(app).iter().any(|n| Some(n) == app.shell.chosen.as_ref())
+    {
+        app.shell.chosen = Some(first);
     }
 }
 
