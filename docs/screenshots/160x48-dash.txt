@@ -1,0 +1,48 @@
+ ❖ cobserve · prod    Subuh 04:17 ━━━━━━━━━ Terbit 05:29 ━━━━━━━━━ Dzuhur 11:42 ━━━━━━━━━ Ashar 14:46 ━━━●┄┄┄┄┄┄ Maghrib 17:49 in 1h57m  ● live   15:52:07 WIB
+╭ 1 FLEET ─────────────────────────────────────────────── 4 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ───────────────────────────────────── oldest 3m43s ✖ ─╮
+│ ▀▀█ █▀▀ ▀ █  cpu                                                                     ││ ▄█  █▀▀  waiting                                                     │
+│ ▀▀█ █▀█  ▄▀  28.9%                                                                   ││  █  █▀█  6 running                                                   │
+│ ▄▄█ █▄█ █ ▄  56/192 c                                                                ││ ▄█▄ █▄█  3 stale                                                     │
+│ 280/768 GiB memory  ⢀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀  ││ ●●●●●●○ 6/7 worker…                                                  │
+│ 15 queries · 4 ! ·… •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••  ││ 3 of 4 hold a runa…                         ⢀⣀        ⢀⣀        ⢀⡀   │
+│                     ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  ││                                            ⣿⣿⣿⣿⣿⣶⣶⣶⣶⣾⣿⣿⣿⣿⣿⣶⣶⣶⣶⣾⣿⣿⣿⣿  │
+│                     -4m                                           █ mem  • cpu  now  ││                     -4m                           waiting jobs  now  │
+╰──────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
+╭ 3 NODES ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── sorted by pressure · s ─╮
+│ ╭ clickhouse3 ────╮ ╭ clickhouse-bi ──╮ ╭ clickhouse7 ────╮ ╭ clickhouse2 ────╮ ╭ clickhouse5 NEW ╮ ╭ ch4 ────────────╮ ╭ ch6 ────────────╮                  │
+│ │ █████████░  93% │ │ ███████░░░  67% │ │ ██████░░░░  60% │ │ ████░░░░░░  42% │ │ ████░░░░░░  37% │ │ ██░░░░░░░░  22% │ │ ██░░░░░░░░  19% │                  │
+│ │ ███████████████ │ │ ▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆ │ │ ▆▅▅▆▆▆▆▅▅▆▆▆▆▅▅ │ │ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ │ │  ▄▄▃▃▄▄▄▄▃▃▄▄▄▄ │ │ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂ │ │ ▂▂▂▂▂▂▂▂ ▂▂▂▂▂▂ │                  │
+│ │ 4q !2     8m35s │ │ 3q !1     6m44s │ │ 2q !1     9m00s │ │ 2q          22s │ │ 0q            — │ │ 1q          12s │ │ 1q          12s │                  │
+│ ╰─────────────────╯ ╰─────────────────╯ ╰─────────────────╯ ╰─────────────────╯ ╰─────────────────╯ ╰─────────────────╯ ╰─────────────────╯                  │
+│ ╭ ch8 ────────────╮ ╭ ch9 ────────────╮                                                                                                                      │
+│ │ █░░░░░░░░░  11% │ │ █░░░░░░░░░   8% │                                                                                                                      │
+│ │ ▂▂▁▁▁▂▂▂▁▁▁▂▂▂▁ │ │ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ │                                                                                                                      │
+│ │ 1q          12s │ │ 1q          12s │                                                                                                                      │
+│ ╰─────────────────╯ ╰─────────────────╯                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ 4 clickhouse3 · 93.3% of 64 GiB · cpu 90.8% ─────────────────╮╭ 5 AIRFLOW ────────────────────────── last 24 h ─╮╭ 6 JIRA ──────────────────────────── mine ─╮
+│ grigol.gankava   ██████░░░░░░░░░░░░░░░░░░  25.5%     8m35s ! ││ 217 runs  ✔ 211  ✖ 3  ▸ 2  ◌ 1  ↻ 1             ││ 4 › 4 › 1 › 8 done            ✖ 1 overdue │
+│ j.petrova        ███░░░░░░░░░░░░░░░░░░░░░  12.9%     6m44s ! ││ ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪✖▪▪▪▪✖✖▪▸ ▸━                     ││ today 2h30m · 7h23m a working day         │
+│ airflow          █░░░░░░░░░░░░░░░░░░░░░░░   5.5%         22s ││   18    00    06    12   now                    ││ DATA-2207 Product metrics integrati…  11d │
+│ haris            █░░░░░░░░░░░░░░░░░░░░░░░   1.9%          0s ││ ✖ test_clickhouse_connection            262d04h ││ DATA-2804 Reload mv_statement_daily…   8h │
+│ server · caches… ███████████░░░░░░░░░░░░░  47.6%             ││ ▸ statement_daily_agg_reload              2h12m ││ DATA-2850 STATEMENT_DAILY_…  due tomorrow │
+│                                                              ││ ◌ gateway_transfers_backfill              4m12s ││ DATA-2849 airflow-dags: extract dup…  15h │
+│                                                              ││ ✖ replication_app_consisten…              8m06s ││ DATA-2647 Client account bal…  overdue 2d │
+│                                                              ││ ✖ kyc_onboarding_tables                  10m48s ││ DATA-1817 Replicate gateway.bank_tr…   2d │
+│                                                              ││ ✖ cbk_accounts_report                     3m36s ││ DATA-2788 cbk_accounts_report: clos…   2d │
+│                                                              ││ ▪ gateway_transfers_backfill             4m ago ││ DATA-2773 KYC onboarding tables for…   2d │
+│                                                              ││ ▪ clickhouse_replication_ch…             7m ago ││ DATA-1289 Daily per-covenantee hist…  12d │
+│                                                              ││ ▪ postgres_blacklist_etl                22m ago ││ DATA-2638 Enrich accounting_monitor…   2h │
+│                                                              ││ ▪ posthog_warehouse_refresh             32m ago ││ DATA-2737 Google Chat failure alert…   2d │
+│ ⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶ ││ ▪ cbk_accounts_report                   37m ago ││ DATA-2650 Add all gateway.bank_acco…   3d │
+│ ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿ ││ ▪ single_table_reconcile                42m ago ││ DATA-2653 Replicate CreditOnline ta…   3d │
+│ -4m   memory · 4 people + the server = 93.3%   ⏎ open · e e… ││ ▪ redash_scheduler_monitori…            52m ago ││ DATA-2594 Schedule the refresh of t…   3d │
+╰──────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯╰───────────────────────────────────────────╯
+╭ 7 TAPE ─────────────────────────────────────────────────── newest first · n note · y export ─╮╭ 8 SESSIONS ─────────────────────────────── 0 · \ floats one ─╮
+│ ✖ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▇▃  ▲ 15:51 ended m.kairys on clickhouse-bi after ≥ 1m00s · peak… ││ no session yet · \ floats a new Claude · ⏎ the list          │
+│ ▲ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▅  ✖ 15:51 m.kairys's query on clickhouse-bi at 95% of its 9.0 … ││                                                              │
+│                                ▲ 15:51 runaway m.kairys on clickhouse-bi — 80% of its 9.0 G… ││                                                              │
+│                                ▲ 15:50 ended m.kairys on clickhouse-bi after ≥ 1m00s · peak… ││                                                              │
+│                                ✖ 15:49 Redash queries backed up: 9 waiting, oldest 3m01s     ││                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────╯
+ 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command   ? keys    this Mac · cpu 25% · mem 27/32 GiB   all · 9/9 nodes · 1.0 s · read-only

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Every screen of the fake fleet, written to docs/screenshots/ as text and as PNG.
+# The screens of docs/redesign from the fake fleet, written to docs/screenshots/ as text and PNG:
+# the dashboard at 120×36, 80×24 and 160×48, every panel zoomed, and the overlays.
 #
 #   ./dev/screenshots.sh        render through ratatui's TestBackend (exact, colour), then
 #                               PNG through a headless Chromium when one is found
@@ -22,17 +23,20 @@ if [[ "${1:-}" == "pty" ]]; then
     python3 dev/shot.py "$cmd" "$cols" "$rows" "$seconds" "$keys" >"$OUT/pty-$name.txt"
     echo "wrote $OUT/pty-$name.txt"
   }
-  shot 120x36-nodes 120 36 8
-  shot 120x36-queue 120 36 8 "2"
+  shot 120x36-dash 120 36 8
+  shot 120x36-zoom-queue 120 36 8 $'2\r'
+  shot 80x24-dash 80 24 8
+  shot 160x48-dash 160 48 8
   exit 0
 fi
 
-SHOT_DIR="$OUT" cargo test --quiet export_screens -- --ignored >/dev/null
+SHOT_DIR="$OUT" cargo test --quiet ui2::tests::export_screens -- --ignored >/dev/null
 echo "wrote $(ls "$OUT"/*.txt | wc -l) text screens to $OUT"
 
 chrome="${CHROME:-}"
 if [[ -z "$chrome" ]]; then
   for candidate in /opt/pw-browsers/chromium_headless_shell-*/chrome-linux/headless_shell \
+                   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
                    "$(command -v chromium 2>/dev/null || true)" \
                    "$(command -v google-chrome 2>/dev/null || true)"; do
     if [[ -n "$candidate" && -x "$candidate" ]]; then chrome="$candidate"; break; fi
@@ -44,7 +48,7 @@ if [[ -z "$chrome" ]]; then
 fi
 
 # PNGs for the screens the README shows; the rest stay text.
-PNGS="${SHOT_PNGS:-120x36-nodes 140x40-query 140x40-query-session 140x40-query-ask 140x40-query-suggest 120x36-queue 120x36-queue-cancel 120x36-queue-leftovers 160x48-claude 160x48-claude-new 140x40-claude-many 120x36-reminder 120x36-map 120x36-tape 120x36-airflow 160x48-airflow 120x36-airflow-tasks 120x36-airflow-log 120x36-jira 120x36-jira-ticket 120x36-jira-time 160x48-jira-time 120x36-light}"
+PNGS="${SHOT_PNGS:-120x36-dash 80x24-dash 160x48-dash 120x36-zoom-fleet 120x36-zoom-queue 120x36-zoom-nodes 120x36-zoom-node 120x36-zoom-airflow 120x36-zoom-jira 120x36-zoom-tape 120x36-zoom-sessions 120x36-palette 120x36-explain-node 120x36-cancel-dialog 120x36-float-session 120x36-wizard 120x36-tour 120x36-local 120x36-light}"
 for html in "$OUT"/*.html; do
   name=$(basename "$html" .html)
   if [[ " $PNGS " != *" $name "* ]]; then

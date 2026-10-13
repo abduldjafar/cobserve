@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    04:17 ━━ 05:29 ━━ 11:42 ━━ 14:46 ━●┄ 17:49 in 1h57m ┄┄ 18:58               ● live   15:52:07 WIB
+╭ 1 FLEET ───────────────────────── 4 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
+│ ▀▀█ █▀▀ ▀ █  cpu                                               ││ ▄█  █▀▀  waiting                                   │
+│ ▀▀█ █▀█  ▄▀  28.9%                                             ││  █  █▀█  6 running                                 │
+│ ▄▄█ █▄█ █ ▄  56/192 •••••••••••••••••••••••••••••••••••••••••  ││ ▄█▄ █▄█  3 stale                                   │
+│ 280/768 GiB memory  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  ││ ●●●●●●○ 6/7 worker…               ⣶⣶⣶⣦⣤⣤⣶⣶⣶⣤⣤⣤⣶⣶⣶  │
+│ 15 queries · 4 ! ·… -4m                     █ mem  • cpu  now  ││ 3 of 4 hold a runa… -4m         waiting jobs  now  │
+╰────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────╯
+╭ 3 NODES ──────────────────────────────────────────────────────────────────────────────────── sorted by pressure · s ─╮
+│ ╭ clickhouse3 ───╮ ╭ clickhouse-bi ─╮ ╭ clickhouse7 ───╮ ╭ clickhouse2 ───╮ ╭ clickhouse5 N… ╮ ╭ ch4 ───────────╮    │
+│ │ ████████░  93% │ │ ██████░░░  67% │ │ █████░░░░  60% │ │ ████░░░░░  42% │ │ ███░░░░░░  37% │ │ ██░░░░░░░  22% │    │
+│ │ ██████████████ │ │ ▆▆▆▆▆▆▆▆▆▆▆▆▆▆ │ │ ▆▅▅▆▆▆▅▅▅▆▆▆▅▅ │ │ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄ │ │  ▄▄▃▃▄▄▄▄▃▄▄▄▄ │ │ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂ │    │
+│ │ 4q !2    8m35s │ │ 3q !1  ╭─ explain · 93.3% · 1 of 2 · e next ──────────────────────────────────────────────╮│    │
+│ ╰────────────────╯ ╰────────│ node.mem_pct = mem_used ÷ mem_total × 100                                        │╯    │
+│ ╭ ch6 ───────────╮ ╭ ch8 ───│              = 59.7 GiB ÷ 64.0 GiB × 100 = 93.3%                                 │     │
+│ │ ██░░░░░░░  19% │ │ █░░░░░░│                                                                                  │     │
+│ │ ▂▂▂▂▂▂▂ ▂▂▂▂▂▂ │ │ ▂▂▁▁▂▂▂│ mem_used        59.7 GiB   system.asynchronous_metrics · MemoryResident          │     │
+│ │ 1q         12s │ │ 1q     │ mem_total       64.0 GiB   OSMemoryTotal → CGroupMemoryTotal → max_server_memor… │     │
+│ ╰────────────────╯ ╰────────│ polled 0s ago · pay-ch-node-1:9000 · answered in 0.0 s                           │     │
+╰─────────────────────────────│                                                                                  │─────╯
+╭ 4 clickhouse3 · 93.3% of 64 │ DESIGN.md §5.1                                                                   │ine ─╮
+│ grigol.ga… ███░░░░░░░░░░░  2╰─ ⏎ ask Claude about it · y copy · esc ───────────────────────────────────────────╯rdue │
+│ j.petrova  ██░░░░░░░░░░░░  12.9%     6m44s ! ││ ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪✖▪▪▪▪✖✖▪▸ ▸━        ││ today 2h30m · 7h23m a working… │
+│ airflow    █░░░░░░░░░░░░░   5.5%         22s ││   18    00    06    12   now       ││ DATA-2207 Product metric…  11d │
+│ haris      ░░░░░░░░░░░░░░   1.9%          0s ││ ✖ test_clickhouse_con…     262d04h ││ DATA-2804 Reload mv_stat…   8h │
+│ server · … ███████░░░░░░░  47.6%             ││ ▸ statement_daily_agg…       2h12m ││ DATA-2850 STATE…  due tomorrow │
+│                                              ││ ◌ gateway_transfers_b…       4m12s ││ DATA-2849 airflow-dags: …  15h │
+│                                              ││ ✖ replication_app_con…       8m06s ││ DATA-2647 Client …  overdue 2d │
+╰──────────────────────────────────────────────╯╰────────────────────────────────────╯╰────────────────────────────────╯
+╭ 7 TAPE ─────────────────────────── newest first · n note · y export ─╮╭ 8 SESSIONS ─────────────── 0 · \ floats one ─╮
+│ ✖ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▇▃  ▲ 15:51 ended m.kairys on clickhouse-bi aft… ││ no session yet · \ floats a new Claude · ⏎ … │
+│ ▲ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▅  ✖ 15:51 m.kairys's query on clickhouse-bi a… ││                                              │
+│                         ▲ 15:51 runaway m.kairys on clickhouse-bi —… ││                                              │
+│                         ▲ 15:50 ended m.kairys on clickhouse-bi aft… ││                                              │
+╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+ 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command          all · 9/9 nodes · 1.0 s · read-only

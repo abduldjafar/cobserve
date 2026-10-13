@@ -72,16 +72,6 @@ impl Kind {
         }
     }
 
-    /// Who the keys go to, for the footer.
-    pub fn listener(self) -> &'static str {
-        match self {
-            Kind::Claude => "Claude",
-            Kind::OpenCode => "OpenCode",
-            Kind::Terminal => "the shell",
-            Kind::Query => "the query",
-        }
-    }
-
     /// The variable that chooses its command.
     pub fn variable(self) -> &'static str {
         match self {
@@ -818,11 +808,6 @@ impl Sessions {
 
     pub fn by_id_mut(&mut self, id: u64) -> Option<&mut Session> {
         self.list.iter_mut().find(|s| s.id == id)
-    }
-
-    /// Whether the session on screen has a program to type into.
-    pub fn is_running(&self) -> bool {
-        self.current().is_some_and(|s| s.pane.is_running())
     }
 
     /// A new session of `kind` working in `dir` (the monitor's own directory when empty),

@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
+╭ 1 FLEET ───────────────────────── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
+│ █ █ ▀▀█ ▀ █  cpu                                               ││ ▄█  █▀▀  waiting                            ▁▃▃▅▆  │
+│ ▀▀█ █▀▀  ▄▀  32.8%                                             ││  █  █▀█  6 running                     ▅▅▅▆██████  │
+│   █ █▄▄ █ ▄  52/160 •••••••••••••••••••••••▃•••••••••••••••••  ││ ▄█▄ █▄█  3 stale                 ▁▂▃▄▆███████████  │
+│ 268/640 GiB memory  ███████████████████████•█████████████████  ││ ●●●●●●○ 6/7 worker… ▃▃▄▄▄▃▄▄▄▄▄▃█████████████████  │
+│ 13 queries · 8 ! ·… -60m                    █ mem  • cpu  now  ││ 4 of 4 hold a runa… -60m        waiting jobs  now  │
+╰────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────╯
+╭ 3 NODES ──────────────────────────────────────────────────────────────────────────────────── sorted by pressure · s ─╮
+│ ╭ clickhou╭─ setup · 1 of 5 · ClickHouse ────────────────────────────────────────────────────────────────╮──────╮    │
+│ │ ████████│                                                                                              │  21% │    │
+│ │ ▇▇▇▇████│  Where is ClickHouse?                                                                        │▂▂▂▂▂ │    │
+│ │ 4q !2   │  One or more HTTP addresses, comma-separated. cobserve reads system.clusters from them       │  51s │    │
+│ ╰─────────│  to discover the rest of the fleet. Nothing is ever written to ClickHouse.                   │──────╯    │
+│ ╭ ch6 ────│                                                                                              │           │
+│ │ ██░░░░░░│  seeds     › http://pay-ch-node-1:8123█                                                      │           │
+│ │ ▂▂▂▂▂▂▂▂│  cluster   › ch_paysera                                                                      │           │
+│ │ 1q      │  user      › cobserve_ro                                                                     │           │
+│ ╰─────────│  password  › ••••••••••••              → macOS Keychain · service cobserve · account…        │           │
+╰───────────│  timeout   › 5000 ms                   over the VPN a poll takes 0.6–5 s; 1500 marks…        │───────────╯
+╭ 4 clickhou│                                                                                              │──── mine ─╮
+│ grigol.ga…│                                                                                              │ 1 overdue │
+│ j.petrova │                                                                                              │           │
+│ airflow   │                                                                                              │       11d │
+│ haris     │  ⏎ next: Redash    tab next field    esc skip this step    d try it with a generated fleet   │        8h │
+│ server · …╰──────────────────────────────────────────────────────────────────────────────────────────────╯e tomorrow │
+│                                              ││ ◌ gateway_transfers_b…       4m12s ││ DATA-2849 airflow…         15h │
+│                                              ││ ✖ replication_app_con…       8m06s ││ DATA-2647 Client …  overdue 2d │
+╰──────────────────────────────────────────────╯╰────────────────────────────────────╯╰────────────────────────────────╯
+╭ 7 TAPE ─────────────────────────── newest first · n note · y export ─╮╭ 8 SESSIONS ─────────────── 4 · \ floats one ─╮
+│ ✖ ▁▁▁▁▁▁▁▁▁▁▁▃▁▁▁▁▁▃▃▃  ▲ 15:51 ended m.kairys on clickhouse…        ││ ✻ 7  billing export                ● working │
+│ ▲ ▁▁▁▁▁▁▁▁▁▁▁▁▁▃▁▁▃▁▃▃  ✖ 15:51 m.kairys's query on clickhou…        ││ ▣ 8  late partitio…               ! approval │
+│                         ▲ 15:50 runaway m.kairys on clickhou…        ││ ▦ 9  sql · clickho…                   ○ idle │
+│                         ▲ 15:50 ended m.kairys on clickhouse…        ││ ❯ 10 make totals                      ○ idle │
+╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+ 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command          all · 9/9 nodes · 0.8 s · read-only

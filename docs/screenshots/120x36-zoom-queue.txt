@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › queue                                               esc back   ● live   15:52:07 WIB
+╭ 2 REDASH QUEUE · redash.example.net · 10.1.0 ───────────────────────────────────────── 7 workers, 6 busy · esc back ─╮
+│  redash.example.net · Redash 10.1.0 · 7 workers, 6 busy                                              read 1m57s ago  │
+│                                                                                                                      │
+│  QUEUE              RUNNING  WAITING  OLDEST   WORKERS               STALE   WAITING · last 4 min                    │
+│  queries                  4       13  3m43s ✖  ●●●● 4/4 busy             3          ▇█▇▆██▅██                        │
+│  scheduled_queries        2        3  1m01s ▲  ●● 2/2 busy               ·          ▃▃▃▃▃▃▃▃▃                        │
+│  default · emails · periodic · schemas  idle                                                                         │
+│                                                                                                                      │
+│ ─ RUNNING · 6 on a worker ────────────────────────────────────────────────────────────────────────────────────────── │
+│   FOR        WHO             QUERY                                SOURCE          IN CLICKHOUSE · mem · cores · done │
+│ ▌   6m38s ✕  grigol.gankava  #7438 Gateway transfers              clickhouse3     → clickhouse3 16.3G 3.1c 57%       │
+│     ▎ WITH BankRecord AS (                                                                                           │
+│     ▎   SELECT BillOpId, Bank,                                                                                       │
+│     ▎     multiIf(AccNr LIKE 'LT%', 'LT', Bank = 'SEB', 'LV', 'OTHER') AS region,                                    │
+│     ▎     toFloat64OrZero(amount) AS amount                                                                          │
+│     ▎   FROM accounting_lt.bank_record                                                                               │
+│     ▎   WHERE EventDate >= today() - 30                                                                              │
+│     ▎ )                                                                                                              │
+│     ▎ SELECT region, count() AS ops, sum(amount) AS total                                                            │
+│     ▎ FROM BankRecord GROUP BY region ORDER BY total DESC                                                            │
+│     5m38s ✕  j.petrova       #8585 AML dashboard                  clickhouse-bi   → clickhouse-bi 21.2G 1.9c 96%     │
+│     4m38s    m.kairys        #7711 FX exposure                    clickhouse2     → clickhouse2 15.4G 1.2c 79%       │
+│     4m23s ✕  r.simonyte      #8091 July close pack                clickhouse7     → clickhouse7 51.4G 2.2c 77%       │
+│     2m51s    d.zaleckas      #6120 Gateway refunds · open         gateway-mysql   mysql · not ClickHouse             │
+│       51s    a.vaitkus       #8470 Merchant risk · rollup         Query Results   runs inside Redash                 │
+│                                                                                                                      │
+│ ─ WAITING · 16 in the queues · 7 named ───────────────────────────────────────────────────────────────────────────── │
+│   WAIT              WHO             QUERY                                                           SOURCE           │
+│     3m43s ✖ ━━━━━━  r.simonyte      #8093 July close pack · by country                              clickhouse-bi    │
+│ ─ job · queries · grigol.gankava ─────────────────────────────────────────────────────────────────────────────────── │
+│ 6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is … │
+│ running 6m38s → clickhouse3 · c3e51f3b ✕ runaway · ⏎ jumps to the query on view 1                                    │
+│ grigol.gankava@example.net · on clickhouse3 (clickhouse) · #7438 Gateway transfers · SQL as ClickHouse runs it · jo… │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ move   ⏎ the node   x cancel job   J K scroll SQL                          9/9 nodes · 1.0 s · read-only

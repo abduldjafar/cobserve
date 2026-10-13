@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › airflow                                             esc back   ● live   15:52:07 WIB
+╭ 5 AIRFLOW · airflow.example.net · 2.10.2 ─────────────────────────────── scheduler ● 2s · triggerer ● 4s · esc back ─╮
+│ last 24 h   217 runs  ✔ 211  ✖ 3     ▸ 2 running  ◌ 1 queued  ↻ 1 retrying     13 of 13 DAGs ran · 3 paused          │
+│                                                                                                                      │
+│ ─ RUNNING · 2 · 1 stuck ──────────────────────────────────────────────────────────────────────────────────────────── │
+│▌  ✖ test_clickhouse_connection         manual · Jan 15      262d04h  0/1 ━━━━━━━━  stuck since Jan 15 · ↻ ping_cli…  │
+│   ▸ statement_daily_agg_reload         manual · 13:39         2h12m  4/7 ━━━━╸━━━  ▸ reload_partitions · ▲ 2.1× us…  │
+│ ─ QUEUED · 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│   ◌ gateway_transfers_backfill         manual · 15:47         4m12s  waiting to start                                │
+│ ─ FAILED · 3 in the last 24 h ────────────────────────────────────────────────────────────────────────────────────── │
+│   ✖ replication_app_consistency_check  scheduled · 13:00      8m06s  ended 13:08 · 2h ago  at check_…                │
+│   ✖ kyc_onboarding_tables              scheduled · 12:30     10m48s  ended 12:40 · 3h ago  at build_…                │
+│   ✖ cbk_accounts_report                scheduled · 07:15      3m36s  ended 07:18 · 8h ago  at upload…                │
+│ ─ ACTIVITY · 9 DAGs ran in the last 24 h ─────────────────────────────────────────────────────────────────────────── │
+│   DAG                               SCHEDULE         RUNS   18    00    06    12     LAST RUN     TOOK     NEXT      │
+│   gateway_transfers_backfill        triggered           1   ·······················◌    queued        —       —      │
+│   clickhouse_replication_check      every 15m          96   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪    7m ago    1m44s   in 7m      │
+│   postgres_blacklist_etl            every 30m          48   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪   22m ago    6m47s   in 7m      │
+│   posthog_warehouse_refresh         :20 hourly         24   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪   32m ago    3m29s  in 27m      │
+│   cbk_accounts_report               :15 every 2h    12 ✖1   ·▪·▪·▪·▪·▪·▪·▪·✖·▪·▪·▪·▪   37m ago    4m00s   in 1h      │
+│   single_table_reconcile            :10 every 4h        6   ···▪···▪···▪···▪···▪···▪   42m ago   24m12s   in 3h      │
+│   redash_scheduler_monitoring       1h                 24   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪   52m ago      44s   in 7m      │
+│   statement_daily_agg_reload        triggered           1   ·····················▸━━   running        —       —      │
+│   dbt_daily_models                  1 day               1   ········▪━━━············    7h ago    1h57m  in 16h      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ─ statement_daily_agg_reload · 13:39 → running 2h12m · 4/7 tasks · usually 1h48m Gantt of the run under the cursor ─ │
+│  task                  13          14          15          16                                                        │
+│  extract_statements    ━━━━✔  done 13:52 · 13m                                                                       │
+│  build_partitions          ━━━━━━━✔  done 14:19 · 27m                                                                │
+│  validate_counts                  ━━✔  done 14:27 · 8m                                                               │
+│  reload_partitions                  ━━━━━━━━━━━━━━▸  running 1h05m · ▲ 2.1× usual (median 31m)                       │
+│  refresh_views                                    ◌  queued                                                          │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ move   ⏎ task log   o in Airflow   y copy link                               airflow 15 s · read 0 s ago

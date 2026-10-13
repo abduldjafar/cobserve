@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB
+╭ 8 SESSIONS · 4 ────────────────────────────────────────────────────────────── n new · ↻ past · x x close · esc back ─╮
+│ SESSIONS     ✻ 287M today · ≈ $191  │✻ claude · ~/work/billing ⎇ main · ● working                                    │
+│                                     │                                                                                │
+│▌ ✻  billing export               7  │› make the invoice export stream its rows instead of building one big Vec       │
+│▌    ~/work/billing ⎇ …   ● working  │                                                                                │
+│                                     │● I'll read the exporter first.                                                 │
+│  ▣  late partitions              8  │                                                                                │
+│     ~/work/pipelines …  ! approval  │● Read(src/export/invoice.rs)                                                   │
+│                                     │  └ 214 lines                                                                   │
+│  ▦  sql · clickhouse3            9  │                                                                                │
+│     —                       ○ idle  │● Update(src/export/invoice.rs)                                                 │
+│                                     │  └ 18 lines added, 31 removed                                                  │
+│  ❯  make totals                 10  │                                                                                │
+│     ~/work/reports ⎇ …      ○ idle  │✻ Running the tests… (esc to interrupt)                                         │
+│                                     │                                                                                │
+│  +  new session · claude · openc…   │                                                                                │
+│  ↻  past conversations · from an…   │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │                                                                                │
+│                                     │⏎ opens it full, keys go to the program · \ floats it over any panel · ctrl+\ 1-8
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ a session   ⏎ open it full   \ float it   n new   / find one         4 sessions · 1 waiting for approval

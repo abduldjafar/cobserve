@@ -6,7 +6,7 @@
 //! `TERM_PROGRAM` is `cobserve-desktop`; any other terminal never sees it. Pure: the `App` in,
 //! JSON out. The numbers are the screen's own (the band, the views), never new ones.
 
-use crate::app::{App, View};
+use crate::app::App;
 use crate::severity::Severity;
 use serde::Serialize;
 
@@ -21,7 +21,8 @@ pub fn inside_the_app() -> bool {
 /// The header's state.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct State {
-    /// The view on screen: `nodes`, `queue`, `map`, `tape`, `airflow`, `jira`, `sessions`.
+    /// What is on screen: `dashboard`, a zoomed panel (`fleet`, `queue`, `nodes`, `node`,
+    /// `airflow`, `jira`, `tape`, `sessions`), or `local`.
     pub view: &'static str,
     /// The fleet's worst, as the masthead marks it: `crit`, `warn`, `ok`, or `none` before a poll.
     pub status: &'static str,
@@ -45,7 +46,7 @@ pub struct State {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Chip {
     pub id: &'static str,
-    /// The view's number: what a click on the chip opens.
+    /// The panel's number (0 this machine): what a click on the chip opens.
     pub view: u8,
     pub label: &'static str,
     pub text: String,
@@ -202,26 +203,21 @@ pub fn state(app: &App) -> State {
         .unwrap_or_default();
     let clock = app.time.hms(now);
     State {
-        view: match app.view {
-            View::Claude => "sessions",
-            View::Nodes => "nodes",
-            View::Queue => "queue",
-            View::Map => "map",
-            View::Tape => "tape",
-            View::Airflow => "airflow",
-            View::Jira => "jira",
-            View::Local => "local",
+        view: if app.shell.local {
+            "local"
+        } else {
+            app.shell.zoom.map_or("dashboard", |p| p.slug())
         },
         status,
         chips,
         sessions: app.claude.list.len(),
-        calling: app.claude.calling() && app.view != View::Claude,
+        calling: app.claude.calling() && app.shell.zoom != Some(crate::ui2::PanelId::Sessions) && app.shell.float.is_none(),
         paused: app.paused,
         stale: app.is_stale(),
         clock: clock.get(..5).unwrap_or(&clock).to_string(),
         zone: app.time.label(now),
         next,
-        filter: app.tree.filter.trim().to_string(),
+        filter: app.shell.filter.as_ref().map(|f| f.query.trim().to_string()).unwrap_or_default(),
     }
 }
 
@@ -245,7 +241,7 @@ mod tests {
         app.update(crate::app::Event::Airflow(Box::new(crate::fake::airflow(now))));
         app.update(crate::app::Event::Jira(Box::new(crate::fake::jira(now))));
         let state = state(&app);
-        assert_eq!(state.view, "nodes");
+        assert_eq!(state.view, "dashboard");
         let ids: Vec<&str> = state.chips.iter().map(|c| c.id).collect();
         assert_eq!(ids, ["fleet", "redash", "airflow", "jira", "logged"]);
         app.update(crate::app::Event::Local(Box::new(crate::fake::local(1, 100.0))));

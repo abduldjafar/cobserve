@@ -309,11 +309,6 @@ impl Local {
         rows
     }
 
-    /// The busiest process now, by cores.
-    pub fn top(&self) -> Option<(&Process, f64)> {
-        self.process_cores().into_iter().max_by(|a, b| a.1.total_cmp(&b.1))
-    }
-
     /// How the machine is: the worse of its CPU (75 and 90, as a node's) and its memory pressure.
     pub fn severity(&self) -> Severity {
         let cpu = crate::severity::node(self.cpu.map(|c| c.busy_pct));

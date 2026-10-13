@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    04:17 ━━ 05:29 ━━ 11:42 ━━ 14:46 ━●┄ 17:49 in 1h57m ┄┄ 18:58               ● live   15:52:07 WIB
+╭ 1 FLEET ───────────────────────── 4 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
+│ ▀▀█ █▀▀ ▀ ╭─ 7 claude · ~/work/billing ⎇ main · ● running  8 ▣ opencode · 9 ❯ terminal · 10 ▦ query · … ─╮           │
+│ ▀▀█ █▀█  ▄│ ✻ Claude Code  ~/work/billing                                                                │           │
+│ ▄▄█ █▄█ █ │                                                                                              │           │
+│ 280/768 Gi│ > make the invoice export stream its rows instead of building one big Vec                    │⣶⣶⣶⣤⣤⣤⣶⣶⣶  │
+│ 15 queries│                                                                                              │jobs  now  │
+╰───────────│ ● I'll read the exporter first.                                                              │───────────╯
+╭ 3 NODES ──│                                                                                              │ssure · s ─╮
+│ ╭ clickhou│ ● Read(src/export/invoice.rs)                                                                │──────╮    │
+│ │ ████████│   └  214 lines                                                                               │  22% │    │
+│ │ ████████│                                                                                              │▂▂▂▂▂ │    │
+│ │ 4q !2   │ ● Update(src/export/invoice.rs)                                                              │  12s │    │
+│ ╰─────────│   └  18 lines added, 31 removed                                                              │──────╯    │
+│ ╭ ch6 ────│                                                                                              │           │
+│ │ ██░░░░░░│ ✻ Running the tests… (esc to interrupt)                                                      │           │
+│ │ ▂▂▂▂▂▂▂ │                                                                                              │           │
+│ │ 1q      │ ────────────────────────────────────────────────────────────────────────────────             │           │
+│ ╰─────────│ ❯                                                                                            │           │
+╰───────────│ ────────────────────────────────────────────────────────────────────────────────             │───────────╯
+╭ 4 clickhou│                                                                                              │──── mine ─╮
+│ grigol.ga…│                                                                                              │ 1 overdue │
+│ j.petrova │                                                                                              │a working… │
+│ airflow   │                                                                                              │tric…  11d │
+│ haris     ╰─ ctrl+\ hide · ctrl+\ 1-6 a panel · ctrl+\ 7-9 ↑↓ a session · ctrl+\ f full · ctrl+\ / find ─╯stat…   8h │
+│ server · … ███████░░░░░░░  47.6%             ││ ▸ statement_daily_agg…       2h12m ││ DATA-2850 STATE…  due tomorrow │
+│                                              ││ ◌ gateway_transfers_b…       4m12s ││ DATA-2849 airflow-dags: …  15h │
+│                                              ││ ✖ replication_app_con…       8m06s ││ DATA-2647 Client …  overdue 2d │
+╰──────────────────────────────────────────────╯╰────────────────────────────────────╯╰────────────────────────────────╯
+╭ 7 TAPE ─────────────────────────── newest first · n note · y export ─╮╭ 8 SESSIONS ─────────────── 4 · \ floats one ─╮
+│ ✖ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▇▃  ▲ 15:51 ended m.kairys on clickhouse-bi aft… ││ ✻ 7  billing export                ● running │
+│ ▲ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▅  ✖ 15:51 m.kairys's query on clickhouse-bi a… ││ ▣ 8  late partitio…                ● running │
+│                         ▲ 15:51 runaway m.kairys on clickhouse-bi —… ││ ❯ 9  make totals                   ● running │
+│                         ▲ 15:50 ended m.kairys on clickhouse-bi aft… ││ ▦ 10 clickhouse3                     ○ ready │
+╰───────────────────── if ctrl+\ does not reach cobserve here: F1–F8 a panel · F9 the next session · F10 this machine ▕╯
+ 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command          all · 9/9 nodes · 1.0 s · read-only

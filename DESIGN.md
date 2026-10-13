@@ -1,4 +1,4 @@
-# cobserve — View 1 · NODES × USERS
+# cobserve — mission control
 
 **Design + implementation guide.** Written for an implementer with no prior context.
 Read all of it before writing code; §5 (the math) and §10 (tests) are the contract.
@@ -18,12 +18,15 @@ ClickHouse fleet whose node count keeps growing:
    because a "slow dashboard" is usually a full queue, not a slow database.
 
 It is a sibling of FleetLens (the web app); it
-reads ClickHouse **directly** so it keeps working when the web app is down. Views 1 and 2 are
-in scope for this pass (§2.8 for view 2). Views 3–4 (FLOW, TAPE) are named in the header so
-the navigation is stable, but they render a one-line "not built yet" placeholder.
+reads ClickHouse **directly** so it keeps working when the web app is down. Since the redesign
+of October 2026 the screen is **mission control**: one screen of eight numbered panels — the
+fleet, the Redash queue, the nodes, the chosen node, Airflow, Jira, the tape, the sessions —
+under a top bar and over a status bar; any panel opens full-screen with `⏎`. The knowledge base
+of that design is `docs/redesign/` (the screens as text, the panels, the glyphs, the keys); this
+file keeps the contract (§4–§6, §9, §12) and says the rest in short.
 
-A browser simulation of both views, with the exact keymap and the §5 math running in JS,
-is the executable reference: https://claude.ai/code/artifact/9f6896b6-8377-42fc-95f3-5268ddf1c560
+The browser simulation of the screen, the keymap and the §5 math is
+`docs/research/simulasi-konsep-ui.html`; `node dev/sim-screens.js` prints its screens.
 
 **Already decided, do not revisit:** Rust 2024, `ratatui = "0.30"`, `crossterm = "0.29"`,
 `color-eyre` (all in `Cargo.toml`). Add: `tokio` (rt-multi-thread, macros, sync, time),
@@ -33,119 +36,78 @@ is the executable reference: https://claude.ai/code/artifact/9f6896b6-8377-42fc-
 
 ## 1. The screen
 
-Target 120×36. Minimum 100×30 (see §7 for what degrades below that).
+Target 120×36, minimum 80×24, richer at 160×48 (`docs/redesign/01-screen.md`,
+`docs/redesign/screens/*.txt`).
 
 ```
-┌ FLEETLENS ──────────────── ● LIVE 2s  12:41:07 · 9 nodes · sort pressure ▼ · [1]NODES [2]QUEUE [3]FLOW [4]TAPE ┐
-│ REDASH QUEUE   12 waiting · oldest 1m40s ⚠ · workers 6/6 busy ⚠ · 2 failed/5m                        ⏎ open [2] │
-├────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ▾ clickhouse3       mem 58.2 / 64 GB  91% ⚠      cpu 15.1 / 16 cores  94% ⚠      6 running · lag 0s · parts 1.2k│
-│      USER → PERSON                MEM %                          CPU %                        QUERIES  LONGEST │
-│    ▸ r_redash → grigol.gankava    25.3%  ▇▇▇▇▇░░░░░░░░░░░░░░░   19.4%  ▇▇▇▇░░░░░░░░░░░░░░░░    2      4m35s ✕ │
-│    ▸ r_redash → j.petrova         12.8%  ▇▇▇░░░░░░░░░░░░░░░░░    4.4%  ▇░░░░░░░░░░░░░░░░░░░    1      2m44s ✕ │
-│    ▸ airflow                       5.5%  ▇░░░░░░░░░░░░░░░░░░░   31.2%  ▇▇▇▇▇▇░░░░░░░░░░░░░░    1        37s   │
-│    ▸ haris                         1.9%  ░░░░░░░░░░░░░░░░░░░░    1.8%  ░░░░░░░░░░░░░░░░░░░░    2        12s   │
-│      server · caches · merges     45.5%  ▇▇▇▇▇▇▇▇▇░░░░░░░░░░░   37.2%  ▇▇▇▇▇▇▇░░░░░░░░░░░░░    —          —   │
-│ ▾ clickhouse-bi     mem 43.5 / 64 GB  68%        cpu 12.0 / 16 cores  75%        9 running · lag 0s · parts 640│
-│    ▸ r_redash → j.petrova         12.8%  ▇▇▇░░░░░░░░░░░░░░░░░    4.4%  ▇░░░░░░░░░░░░░░░░░░░    1      2m44s ✕ │
-│      server · caches · merges     53.3%  ▇▇▇▇▇▇▇▇▇▇▇░░░░░░░░░   68.8%  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇░░░░░░    —          —   │
-│ ▸ clickhouse7       mem 62%   cpu 40%   4 running · lag 12s ⚠                                                    │
-│ ▸ clickhouse2       mem 41%   cpu 25%   3 running                                                                │
-│ ▸ clickhouse5 NEW   mem 38%   cpu  8%   1 running                                                                │
-│ ▸ 4 healthy nodes folded — ch4 ch6 ch8 ch9 (< 35%)                                                  space unfold │
-├─ c3e51cb5 · grigol.gankava @ clickhouse3 ──────────────────────────────────────────────────────────────────────┤
-│ Redash #7438 · started 12:36:32 on clickhouse3 · running 4m35s · 8.3 GiB · 2.1 cores · read 41.2 GB / 1.9 B rows │
-│ WITH BankRecord AS ( SELECT BillOpId, Bank, multiIf( ( AccNr = 'LT48729…' AND Curr…                              │
-├────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ↑↓ move   ⏎ expand   u pivot by user   / filter   s sort   p pause   1-4 view   q quit                           │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ❖ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
+╭ 1 FLEET ───────────────────────── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
+│ █ █ ▀▀█ ▀ █  cpu                                               ││ ▄█  █▀▀  waiting                            ▁▂▃▄▅  │
+│ ▀▀█ █▀▀  ▄▀  32.8%                                             ││  █  █▀█  6 running                     ▄▆▇▆▇█████  │
+│   █ █▄▄ █ ▄  52/160 c                     ▃                    ││ ▄█▄ █▄█  3 stale                 ▁▁▃▅▆███████████  │
+│ 268/640 GiB memory  ███████████████████████•█████████████████  ││ ●●●●●●○ 6/7 worker… ▃▃▄▃▃▄▃▄▄▄▃▄▇████████████████  │
+│ 13 queries · 8 ! ·… -4m                     █ mem  • cpu  now  ││ 4 of 4 hold a runa… -4m         waiting jobs  now  │
+╰────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────╯
+╭ 3 NODES ──────────────────────────────────────────────────────────────────────────────────── sorted by pressure · s ─╮
+│ ╭ clickhouse3 ───╮ ╭ clickhouse-bi ─╮ ╭ clickhouse7 ───╮ ╭ clickhouse2 ───╮ ╭ clickhouse5 N… ╮ ╭ ch4 ───────────╮    │
+│ │ ████████░  93% │ │ ██████░░░  67% │ │ █████░░░░  60% │ │ ████░░░░░  42% │ │ ███░░░░░░  38% │ │ ██░░░░░░░  21% │    │
+│ │ ▇▇▇▇██████████ │ │ ▆▆▆▆▆▆▆▆▆▆▆▆▆▆ │ │ ▅▅▅▅▅▅▅▅▅▅▅▅▅▅ │ │ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄ │ │ ▃▃▃▃▃▄▃▃▃▃▃▃▃▃ │ │ ▂▂▂▂▂▃▂▂▂▂▂▂▂▂ │    │
+│ │ 4q !2    8m31s │ │ 3q !2    6m40s │ │ 2q !2    8m56s │ │ 2q !1    4m38s │ │ 0q           — │ │ 1q !1      51s │    │
+│ ╰────────────────╯ ╰────────────────╯ ╰────────────────╯ ╰────────────────╯ ╰────────────────╯ ╰────────────────╯    │
+│   … the second row of tiles …                                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ 4 clickhouse3 · 93.1% of 64 GiB · cpu 93.1% ─╮╭ 5 AIRFLOW ───────────── last 24 h ─╮╭ 6 JIRA ───────────────── mine ─╮
+│ grigol.ga… ████░░░░░░░░░░  25.5%     8m31s ! ││ 217 runs  ✔ 211  ✖ 3  ▸ 2  ◌ 1    ││ 4 › 4 › 1 › 3 done ✖ 1 overdue │
+│ j.petrova  ██░░░░░░░░░░░░  12.9%     6m40s ! ││ ▪▪▪▪▪▪▪▪▪✖▪▪▪▪▪▪▪▪▪▪▪▪▪✖ ▸━       ││ today 5h10 · 7h23 a working day│
+│ airflow    █░░░░░░░░░░░░░   5.5%         18s ││   18    00    06    12   now      ││ DATA-2207 Product metric…  11d │
+│ haris      ░░░░░░░░░░░░░░   1.9%         24s ││ ✖ test_clickhouse_con…   262d04h  ││ DATA-2804 Reload mv_stat…   8h │
+│ server · … ███████░░░░░░░  47.4%             ││ ▸ statement_daily_agg…     2h12m  ││ DATA-2850 STATE…  due tomorrow │
+╰──────────────────────────────────────────────╯╰────────────────────────────────────╯╰────────────────────────────────╯
+╭ 7 TAPE ─────────────────────────── newest first · n note · y export ─╮╭ 8 SESSIONS ─────────────── 4 · \ floats one ─╮
+│ ✖ ▁▁▁▁▁▁▁▁▁▁▁▃▁▁▁▁▁▃▃▃  ▲ 15:51 ended m.kairys on clickhouse…        ││ ✻ 7  billing export              ● running │
+│ ▲ ▁▁▁▁▁▁▁▁▁▁▁▁▁▃▁▁▃▁▃▃  ✖ 15:51 m.kairys's query on clickhou…        ││ ▣ 8  late partitions            ! attention │
+╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+ 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command          all · 9/9 nodes · 0.8 s · read-only
 ```
 
-### Regions (top → bottom, fixed unless noted)
+### Regions
 
-| Region | Height | Content |
+| Region | Rows | Content |
 |---|---|---|
-| Header | 1 | app name · live dot + poll interval · UTC clock · node count · current sort · view tabs |
-| Queue strip | 1 | Redash queue summary (§6.3). Reads `queue unreachable` when the API fails — never blank. |
-| Tree | `Min(8)` | node blocks (§2). Scrolls. |
-| Detail drawer | 3 | the selected row's detail (§2.4). Empty drawer keeps its height — the tree must not jump. |
-| Footer | 1 | key legend, contextual (changes when a filter or confirm prompt is active) |
+| Top bar | 1 (none in *focus* density) | `❖ cobserve · <cluster>`, the day line (or its chip `☾ Maghrib in 1h57m`), the clock (`● live`, `○ paused`, `◷ replay −2m`); while zoomed, the path `dashboard › node › clickhouse3` and `esc back` |
+| The grid | the rest | FLEET (55 %) · QUEUE; NODES (two rows of tiles); NODE 40 % · AIRFLOW 32 % · JIRA; TAPE 60 % · SESSIONS — `ui2/layout.rs`, exactly `01-screen.md`'s algorithm, tested at the worked sizes and 500 random ones |
+| Status bar | 1 | the hints of the scope in force, from the `Action` table; at the right `<preset> · 9/9 nodes · 0.8 s · read-only`, and this machine (`this Mac · cpu 31% · mem 12/32 GiB`) from 140 columns |
 
-Borders: single-line box drawing, one outer frame, hairline separators between regions.
-No inner boxes around every widget — the tree is one continuous list.
+A panel's frame takes the colour of its worst finding (red, amber, dim); its title is
+`N NAME`, a chip when it has the focus; its summary sits at the right of the top border. `⏎`
+zooms the focused panel into one frame over the body; `esc` comes back. `p` cycles the presets
+(all → fleet → ops), `+` the density (comfortable → compact → focus). Below 40×12 the screen is
+one line: `cobserve · too small (40×12 at least)`.
 
 ---
 
-## 2. The tree
+## 2. The panels
 
-The body is a **tree table** with three levels: **node → user → query**.
+Eight panels, numbered as the keys that focus them; each has a dashboard form and a zoomed
+form (`docs/redesign/02-panels.md` has every element with its formula).
 
-### 2.1 Node row (level 0)
+| # | Panel | Dashboard | Zoomed |
+|---|---|---|---|
+| 1 | FLEET | the fleet's memory share in big digits with `268/640 GiB`, CPU beside it, queries and runaways, the history as a graph (memory filled, CPU dots) | both graphs with ticks, a row per node |
+| 2 | REDASH QUEUE | jobs waiting in big digits, running and stale, the workers, how many hold a runaway, the waiting jobs as a graph | today's view 2 (§2.8) with its drawer; `x` → the cancel dialog → `y` |
+| 3 | NODES | a tile per node, worst first: memory bar and share, the sparkline, queries, runaways, the longest | 28×8 tiles with both bars and their denominators and the top person |
+| 4 | NODE | the chosen node's people, then `server · caches · merges`, as bars on one scale — the rows' cells add up to the node's (§5.3) | who holds it with GiB and cores, the chosen row's query and SQL, memory and CPU over the history, lag, parts, free memory |
+| 5 | AIRFLOW | the day in numbers, a 24-hour strip, the runs that run, wait and failed, the DAGs | today's view 5, its pages, the loom from 140 columns |
+| 6 | JIRA | the flow across the columns, what is overdue, today's hours, the tickets | today's view 6: the board, the ticket in full, the month's time |
+| 7 | TAPE | `✖` and `▲` a minute over the hour beside the newest lines | the tape with its drawer; `n` a note |
+| 8 | SESSIONS | a row a session: kind, number, name, folder ⎇ branch, state | the list beside the session's screen; `⏎` full; `\` floats it over any panel |
 
-```
-▾ clickhouse3       mem 58.2 / 64 GB  91% ⚠      cpu 15.1 / 16 cores  94% ⚠      6 running · lag 0s · parts 1.2k
-```
-
-- `▾` expanded / `▸` collapsed. Name padded to the widest node name in the fleet.
-- Memory and CPU **always print the denominator** (`58.2 / 64 GB`, `15.1 / 16 cores`). A
-  percentage without its denominator is not allowed anywhere in this UI.
-- If a denominator is unknown (see §6.1 fallback chain returns 0), print `mem 58.2 GB / —`
-  and no percentage — never a fake `0%`.
-- `NEW` badge: a node not present in the first snapshot of this session (§2.6).
-- Severity tint on the whole row: worst of mem%/cpu% (thresholds §7).
-
-### 2.2 User rows (level 1) — the point of the screen
-
-Under an expanded node, one row per **initial user**, sorted by mem% desc:
-
-```
-▸ r_redash → grigol.gankava    25.3%  ▇▇▇▇▇░░░░░░░░░░░░░░░   19.4%  ▇▇▇▇░░░░░░░░░░░░░░░░    2      4m35s ✕
-```
-
-- `USER → PERSON`: the ClickHouse user, and — when the attribution regex (§6.4) finds a
-  Redash `Username:` — an arrow to the real person. Plain users show just the user.
-- `MEM %` and `CPU %` are **shares of THIS node's capacity** (§5). Bars are 20 cells.
-- `QUERIES`: count. `LONGEST`: elapsed of the longest, with `✕` if runaway (§7).
-- The **last row of every expanded node is the closing row**:
-
-```
-  server · caches · merges     45.5%  ▇▇▇▇▇▇▇▇▇░░░░░░░░░░░   37.2%  ▇▇▇▇▇▇▇░░░░░░░░░░░░░    —          —
-```
-
-  It is node usage minus the sum of the user rows (§5.3). **User rows + closing row = the
-  node's percentage.** If they do not, the numbers are wrong, not the row.
-
-### 2.3 Query rows (level 2)
-
-`⏎` on a user row expands their queries, one per line, indented one more level:
-
-```
-      c3e51cb5   4m35s ✕   8.3 GiB  2.1c   WITH BankRecord AS (SELECT BillOpId, Bank, mul…
-```
-
-SQL is collapsed to one line (all whitespace runs → single space) and truncated to fit.
-
-### 2.4 Detail drawer
-
-Shows the **selected row**:
-
-- Node selected → `name · host:port · shard/replica · version · uptime · 9 running · lag · parts`.
-- User selected → `person (user) · N queries · Σ mem · Σ cores · longest query_id`.
-- Query selected → line 1: `query_id · person · Redash #id (if any) · started HH:MM:SS on node
-  · running Xs · mem · cores · read bytes / rows`; line 2: the collapsed SQL.
-
-### 2.5 Default state, sorting, folding
-
-- Sort key for nodes = **pressure** = `max(mem_pct, cpu_pct)`, then runaway count desc,
-  then name. `s` cycles: pressure → mem → cpu → name.
-- On first snapshot: the top node is **expanded**, all others collapsed.
-- **Folding:** nodes with `mem_pct < 35 && cpu_pct < 35 && runaway == 0 && lag_s < 10`
-  collapse into one line `▸ N healthy nodes folded — names (< 35%)`. `space` toggles the
-  fold. This is what keeps 40 nodes on one screen; it must exist from the first version.
-- Expansion state is keyed by **node name**, so a re-sort does not lose what you opened.
-- Selection is keyed by row identity (node name / user / query_id), not by index, so a
-  refresh under the cursor keeps the cursor on the same thing. If the selected row
-  disappears (query finished), selection moves to its parent.
+The rows of §2.1–§2.3 live on in the NODE panel and its zoom: memory and CPU always print
+their denominator, an unknown one prints `—` and never a fake `0%`, people are shown as
+§6.4 resolves them, and sorting is by pressure (`s` cycles pressure → memory → CPU → name).
+`e` on any number opens its provenance — the formula, the formula with the values, the inputs
+with the system table each came from (`provenance.rs`). This machine (LOCAL) has no panel: its
+line joins the status bar from 140 columns and `0` (or `:local`) zooms it.
 
 ### 2.6 Dynamic node count
 
@@ -156,16 +118,9 @@ Shows the **selected row**:
   numbers replaced by `?` and a `↯ unreachable 12s` note; it is dropped only after it has
   been unreachable for 5 minutes AND it is absent from `system.clusters`.
 
-### 2.7 Pivot (`u`)
+### 2.8 The queue zoomed: the people behind the counts
 
-`u` flips the tree to **user → node → query** using the same snapshot. Level-0 rows become
-users (across the fleet), level-1 rows become the nodes they run on, each with that node's
-mem%/cpu% for this user. Sort: Σ memory bytes desc. This answers "who is burning the fleet"
-without a second data path. `u` again flips back.
-
-### 2.8 View 2 — QUEUE: the people behind the counts
-
-The strip on view 1 is deliberately one line. `2` (or `⏎` on the strip) opens the people:
+Panel 2 is deliberately a few numbers. Zoomed (`2` then `⏎`) it opens the people:
 
 ```
 ┌ FLEETLENS ──────────────── ● LIVE 3s  12:41:07 · redash.example.net · [1]NODES [2]QUEUE [3]FLOW [4]TAPE ┐
@@ -203,22 +158,30 @@ The strip on view 1 is deliberately one line. `2` (or `⏎` on the strip) opens 
 
 ## 3. Keys
 
+Every key is an `Action` (`src/action.rs`): one table feeds the status bar, `?` and the palette,
+so they cannot disagree, and a listed key that does nothing is a bug — made mechanical by the
+tests. The full list is `docs/redesign/05-keys.md`.
+
 | Key | Action |
 |---|---|
-| `↑` `↓` / `j` `k` | move selection |
-| `⏎` | expand / collapse the selected node or user |
-| `←` `→` | collapse / expand (vim-style tree) |
-| `space` | toggle the healthy fold |
-| `u` | pivot node↔user |
-| `s` | cycle sort |
-| `/` | filter (substring over node, user, person, SQL); `Esc` clears |
-| `p` | pause polling (header dot goes hollow, clock freezes) |
-| `1` … `4` | view tabs (2–4 are placeholders this pass) |
-| `?` | help overlay |
-| `q` / `Ctrl-C` | quit |
+| `1`…`8` / `tab` `⇧tab` | focus a panel · while zoomed, switch the zoom |
+| `⏎` | zoom the focused panel · in a zoom, the panel's own open |
+| `esc` `⌫` | close the top-most thing: overlay, filter, zoom — never quits |
+| `←→↑↓` `hjkl` `PgUp` `PgDn` `Home` `End` | the focused panel's cursor |
+| `e` | explain the number under the cursor (`⏎` there asks Claude, `y` copies) |
+| `:` / `?` | the palette (fuzzy, with channels: nodes, people, queries, jobs, DAGs, tickets, sessions, the tape) · the keys of this scope |
+| `/` | filter the tiles · `s` sort them |
+| `\` · `ctrl+\` | float a session · its prefix: `1`–`6` a panel, `7`–`9` `↑↓` a session, `f` full, `/` find, `n` new, `c o t q` a kind, `r` rename, `x x` close |
+| `F1`–`F8` · `F9` · `F10` | a panel zoomed · the next session · this machine — from anywhere |
+| `c` | a SQL session on the chosen node, floating |
+| `p` · `+` | layout preset · density |
+| `[` `]` `t` | replay a minute back · forward · back to live |
+| `space` · `r` · `n` · `y` | pause · read Airflow and Jira now · a note on the tape · copy the link |
+| `0` · `q` `ctrl+c` | this machine (`:local`) · quit |
 
-Not in this pass: `k` kill, `a` ask Klikas, mouse. Leave them **out of the footer** —
-a listed key that does nothing is a bug.
+Settings live in the palette, not on keys: `setup` (and `setup · redash` …), `tour`, `theme`,
+`clock`, `prayer line`, `local`. The mouse: a click focuses a panel, a second opens it; the wheel
+moves the cursor; inside a zoomed view or the floating pane the click is theirs.
 
 ---
 
@@ -494,7 +457,8 @@ Display the person as the local part before `@` when the domain is the organisat
 
 ## 7. Rendering rules
 
-**Colour carries severity and nothing else.** Users are distinguished by rows, never by hue.
+**Colour carries severity and nothing else** (`docs/redesign/03-glyphs.md`). People are told
+apart by rows, bar segments by texture; accent marks structure and never ranks anything.
 
 | Signal | none | warn (amber) | crit (red) |
 |---|---|---|---|
@@ -503,15 +467,25 @@ Display the person as the local part before `@` when the domain is the organisat
 | user mem % of a node | < 20 | ≥ 20 | ≥ 40 |
 | replica lag | < 10 s | ≥ 10 s | ≥ 60 s |
 | queue waiting / oldest | < 60 s | ≥ 60 s or workers all busy | ≥ 180 s |
+| jobs waiting (the queue's graph) | < 30 | ≥ 30 | ≥ 60 |
 
-- Bars: 20 cells, `▇` filled, `░` empty, filled = `round(pct / 5)`. Bar colour follows the
-  row's severity; otherwise the default foreground at reduced intensity.
-- Numbers: bytes → `1.2 GiB` (one decimal, binary units); percent → `25.3%`; durations →
-  `12s`, `4m35s`, `1h02m`. Right-align numeric columns.
-- Clock in the header is **UTC**, `HH:MM:SS`, refreshed every second even while paused.
-- Truncate with `…`, never wrap, never let a row exceed one line.
-- **Width < 100:** drop the CPU bar (keep the number), then `LONGEST`, then `QUERIES`.
-  **Height < 30:** detail drawer shrinks to 1 line, then disappears. Never panic on resize.
+- **Frames**: rounded boxes `╭─╮ │ ╰─╯` for panels, tiles and overlays; a panel's frame in its
+  severity. Text never crosses a frame: every string is clipped to the inside, a column that
+  does not fit is dropped whole.
+- **Graphs** are on a fixed scale (100 % of the denominator; 100 jobs for the queue) — a graph
+  that rescales lies. Braille by default (two samples a column), `GRAPH=block` for `▁`–`█`,
+  `GRAPH=ascii` or `TERM=dumb` for `.:-=+*#`; the window is printed (`-4m`), never implied.
+- **Bars**: `█` filled and `░` empty; NODE's rows share one scale with largest-remainder
+  rounding, so their cells add up to the node's.
+- **Big digits** only for the two headline numbers, from 4 inner rows and 60 / 40 columns.
+- **Marks**: `✖` critical, `▲` warning, `●` live / fine, `○` idle, `✔` done, `!` runaway, `↯`
+  unreachable, `◷` replay, `☾` the next prayer, `▸ ◌ ↻` running / queued / retrying,
+  `✻ ▣ ▦ ❯` Claude / OpenCode / SQL / terminal. All one cell wide; the start-up check falls back
+  to ascii where block elements are drawn wide.
+- Numbers: bytes `1.2 GiB`, percent `25.3%`, durations `12s`, `4m35s`, `1h02m`, uptimes
+  `46d07h`. Every percentage prints its denominator.
+- Every size from 40×12 renders without panicking (500 random sizes with every zoom and
+  overlay in the tests).
 
 ---
 
@@ -519,31 +493,30 @@ Display the person as the local part before `@` when the domain is the organisat
 
 ```
 src/
-  main.rs        tokio runtime, terminal setup/teardown (color-eyre panic hook restores it),
-                 the event loop: select over key events, ticks, and source channels
-  app.rs         App state + `update(&mut self, Event)`: pure state machine, no I/O
-  ui.rs          `draw(&App, &mut Frame)`: layout + widgets, reads App only
+  main.rs        tokio runtime, terminal setup/teardown, the capability probe, the event loop
+  app.rs         App state + `update(&mut self, Event)`: pure state machine, no I/O; the views'
+                 own handlers (queue, Airflow, Jira, tape, sessions) that the zooms hand keys to
+  action.rs      the Action table: every key, the status bar, `?` and the palette
+  provenance.rs  an explain_* per §5 formula: the formula, its inputs and sources
+  caps.rs        what the terminal can do: colour depth, kitty keyboard, block widths
+  setup.rs       what `:setup` keeps: config.toml, the Keychain, the 0600 fallback
+  plain.rs       `--plain`: the panels' summaries as text
+  ui2/           the shell: layout, chrome, frame, paint, glyph/, panels/, overlay/, keys,
+                 mouse, nav, sessions, wizard, replay, and views/ — today's views drawn in zooms
   model.rs       types (§4) + math (§5) as pure functions — 100% unit-tested
-  tree.rs        flattening (node→user→query, and the `u` pivot) into rows; selection by id
-  attrib.rs      the two regexes + person display rule
-  sources/
-    clickhouse.rs  discovery + per-node polling (reqwest, concurrent, timeouts)
-    redash.rs      rq_status polling, fail-soft
-  fake.rs        `FAKE=1` → a generator that emits believable snapshots (9 nodes, ~30
-                 queries, one runaway, one NEW node appearing after 20 s, queue backed up)
+  tree.rs  attrib.rs  history.rs  insight.rs  tape.rs  severity.rs  …  derived numbers
+  sources/       clickhouse, redash, airflow, jira, local, usage, limits, setup_check
+  fake.rs        `FAKE=1` → a generated fleet, queue, Airflow, Jira, machine
 ```
 
-Event flow: sources run as tokio tasks and send `Event::Snapshot(FleetSnapshot)` /
-`Event::Queue(QueueStatus)` on an `mpsc` channel; the loop applies them to `App` and redraws.
-Key events come from `crossterm::event::EventStream`. One redraw per event, plus a 1 s tick
-for the clock. **The UI never blocks on the network.**
-
-State in `App`: current snapshot, previous snapshot (for CPU deltas), queue status, first-seen
-set (for `NEW`), expansion set, selection id, sort, pivot, filter, paused, view.
+Event flow: sources run as tokio tasks and send events on an `mpsc` channel; the loop applies
+them to `App` and redraws, inside synchronized output. Keys route: tour → wizard → F-keys →
+palette → dialog → note → explain → the floating session → filter → the zoom → the Action
+table. **The UI never blocks on the network**: even the wizard's live checks run as tasks.
 
 ---
 
-## 9. Configuration — environment only, nothing on disk
+## 9. Configuration — environment-first
 
 | Variable | Meaning | Default |
 |---|---|---|
@@ -561,6 +534,11 @@ if you log requests).
 
 Since v1, a server can have a login of its own — from a credential file named on the command
 line, or in its seed URL. See §13.
+
+Since the redesign, `:setup` keeps the same variables in `~/.config/cobserve/config.toml`
+(`NAME = "value"`) and the secrets (`CH_PASSWORD`, `REDASH_ADMIN_API_KEY`, `AIRFLOW_PASSWORD`,
+`JIRA_TOKEN`) in the macOS Keychain, or in `secrets.toml` at 0600 where there is none. The
+environment is read first and always wins; what is kept is used from the next start.
 
 ---
 
@@ -586,30 +564,34 @@ trailing comma and one with no `query_id:`.
 `sources/redash.rs`: parse `tests/fixtures/rq_status.json` (captured from the real
 instance); a 401 and a connection refused both yield `reachable: false`.
 
-`ui.rs` with `ratatui::backend::TestBackend`: the fake snapshot renders at 120×36, 100×30 and
-80×24 without panicking; the header, queue strip, one node row, one user row and the closing
-row appear in the buffer.
+`ui2/tests.rs` and `ui2/views/tests.rs` with `ratatui::backend::TestBackend`: the fake fleet at
+2026-10-13 15:52:07 WIB against `docs/redesign/screens/` — every frame where the screen has it,
+the chrome, the labels, the numbers against the engine — and 500 random sizes with every zoom
+and overlay; `action.rs`: no key twice in a scope; `provenance.rs`: every metric of the fake
+fleet reproduced by its provenance within 0.1.
 
 ---
 
 ## 11. Build order
 
-1. `FAKE=1 cargo run` shows the full screen from generated data — layout, tree, keys,
-   fold, pivot, drawer. **No network until this looks right.** Reuse the ASCII in §1 as the
-   acceptance target.
-2. `model.rs` math + tests (§5, §10). Do this before touching a real cluster.
-3. `sources/clickhouse.rs` against one seed, no discovery. Compare a user's mem% with the
-   FleetLens web page's Consumption view for the same moment — they must agree.
-4. Discovery via `system.clusters`; start the app with one seed and watch all nodes appear.
-5. `sources/redash.rs` — capture a real `rq_status` first, then parse it. Then view 2:
-   RUNNING from the API; WAITING from Redis if `REDIS_URL` is given, counts otherwise.
-6. Attribution end-to-end: a Redash query shows `r_redash → person`.
-7. Resize degradation, `?` help overlay, `p` pause, filter.
+v1 was built as this section used to say: fake data first, the math and its tests, one seed,
+discovery, Redash, attribution, degradation. The redesign was built in the phases of
+`docs/redesign/06-build-order.md`, each ending with `cargo test` green, clippy clean and its
+screens compared:
 
-**Definition of done:** steps 1–7, `cargo test` green, `cargo clippy -- -D warnings` clean,
-and a 30-second screen recording (or three screenshots: 120×36, 100×30, pivot view) of it
-running against the real fleet. The percentages on screen must be explainable by §5 — if a
-number cannot be traced to a formula here, it is a bug.
+0. the contracts — `Action`, `Provenance`, the grid, the capability probe;
+1. the shell skeleton — top bar, grid, FLEET and QUEUE, status bar, palette, toasts;
+2. NODES and NODE, their zooms, `e`, sort, filter;
+3. QUEUE, AIRFLOW, JIRA, TAPE — today's views moved into the zooms, the cancel dialog, notes;
+4. SESSIONS and the floating pane, the prefix, the F-keys, the Claude hand-off, the mouse;
+5. `:setup`, `:tour`, the replay, `--plain`, `:local`;
+6. the swap — the old shell deleted, these sections rewritten.
+
+**Definition of done:** every screen in `docs/redesign/screens/` has a passing test or a
+written reason; `cargo test` green; clippy clean; the provenance of every metric on the fake
+fleet reproduces its value; screenshots at 120×36, 80×24 and 160×48 in `docs/screenshots/`.
+The percentages on screen must be explainable by §5 — if a number cannot be traced to a
+formula here, it is a bug.
 
 ---
 
@@ -976,6 +958,11 @@ or from a slope over the last minutes of it.
   A click on a card opens its view.
 
 ### Departures
+
+- **The shell (§1–§3, §7, §11) is mission control** (`docs/redesign/`), since October 2026: the
+  tree, the pivot, the insights panel, the map and the digit views of v1 are gone; their
+  numbers live on in the NODES and NODE panels, the palette's *people* channel, the frames'
+  summaries and `--plain`. Nothing in §4–§6 changed.
 
 - **§6 the timeout**: 1.5 s per request is the default, and `CH_TIMEOUT_MS` changes it (200 ms
   to 30 s). From a laptop over the VPN the nodes answer in 0.6–5 s a poll (measured with

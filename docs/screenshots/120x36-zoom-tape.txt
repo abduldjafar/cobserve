@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › tape                                                esc back   ● live   15:52:07 WIB
+╭ 7 TAPE · 29 lines · newest first ───────────────────────────────────────────────────── n note · y export · esc back ─╮
+│  TAPE · 29 events · 8 ✖ · 18 ▲ · newest first · ↑↓ scroll · ⏎ go to it                                               │
+│    TIME WIB  KIND   WHAT HAPPENED                                                                                    │
+│ ▌▲ 15:51:53  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i… │
+│  ✖ 15:51:43  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                             │
+│  ▲ 15:51:11  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx… │
+│  ▲ 15:50:51  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i… │
+│  ✖ 15:49:28  QUEUE  Redash queries backed up: 9 waiting, oldest 3m01s                                                │
+│  ✖ 15:50:41  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                             │
+│  ✔ 15:50:37  NODE   ch6 answering again                                                                              │
+│  ▲ 15:50:09  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx… │
+│  ✖ 15:50:07  NODE   ch6 unreachable — connection timed out after 1.5 s                                               │
+│  ▲ 15:49:49  QUERY  ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of i… │
+│  ✖ 15:49:39  QUERY  m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB memory limit                             │
+│  ▲ 15:49:07  QUERY  runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB limit · 7.2 GiB · SELECT · statistics.fx… │
+│  ▲ 15:48:37  QUEUE  Redash scheduled_queries backed up: 3 waiting, oldest 1m01s                                      │
+│  ▲ 15:48:47  QUERY  ended m.kairys on clickhouse-bi after ≥ 59s · peak 8.9 GiB · probably killed (was at 99% of its… │
+│  ✖ 15:48:39  QUERY  m.kairys's query on clickhouse-bi at 96% of its 9.0 GiB memory limit                             │
+│  ● 15:48:27  NODE   clickhouse5 joined the fleet                                                                     │
+│  ✖ 15:48:13  NODE   clickhouse3 CPU 92.1% (≥ 90%)                                                                    │
+│  ▲ 15:48:10  QUEUE  Redash schemas: 0 waiting, oldest —, workers 2/2 busy at start                                   │
+│  ▲ 15:48:10  QUEUE  Redash scheduled_queries: 3 waiting, oldest 34s, workers 2/2 busy at start                       │
+│  ▲ 15:48:10  QUEUE  Redash queries: 13 waiting, oldest 1m43s, workers 4/4 busy at start                              │
+│  ▲ 15:48:09  QUERY  runaway r.simonyte on clickhouse7 — 5m02s running · 51.3 GiB · SELECT · wallet.ledger            │
+│  ▲ 15:48:09  QUERY  runaway m.kairys on clickhouse-bi — 82% of its 9.0 GiB limit · 7.4 GiB · SELECT · statistics.fx… │
+│  ▲ 15:48:09  QUERY  runaway j.petrova on clickhouse-bi — 2m46s running · 21.2 GiB · SELECT · open_banking.ais        │
+│  ▲ 15:48:09  QUERY  runaway j.petrova on clickhouse3 — 2m46s running · 8.2 GiB · SELECT · open_banking.ais           │
+│  ▲ 15:48:09  QUERY  runaway grigol.gankava on clickhouse3 — 4m37s running · 16.2 GiB · SELECT · accounting_lt.bank_… │
+│  ▲ 15:48:09  NODE   clickhouse-bi CPU 79.5% at start                                                                 │
+│ ─ 15:51:53 WIB · QUERY ───────────────────────────────────────────────────────────────────────────────────────────── │
+│ ▲ ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably killed (was at 99% of its limit) · SELECT  │
+│ · statistics.fx_exposure · c3ee64bf                                                                                  │
+│ ⏎ goes to what it is about                                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ scroll   ⏎ go to it   n note   y export report                             9/9 nodes · 1.0 s · read-only

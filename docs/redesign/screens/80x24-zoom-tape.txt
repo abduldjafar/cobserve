@@ -1,0 +1,24 @@
+ ❖ cobserve · prod    dashboard › tape        esc back   ● live   15:52:07 WIB
+╭ 7 TAPE · 21 lines · newest first ───────────── n note · y export · esc back ─╮
+│ ✖ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▃▃▁▁▁▁▁▁▁▁▁▃▁▃▁▃  10 ✖ · burst 15:26–15:29 · m.kairys ru
+│ ▲ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▁▁▁▁▁▁▁▃▁▁▁▃▁▁▁▁▃▅▃  11 ▲                                 │
+│                                                                              │
+│▌ ▲ 15:51 QUERY    ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.…   │
+│  ✖ 15:51 QUERY    m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB…   │
+│  ▲ 15:50 QUERY    runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB …   │
+│  ▲ 15:50 QUERY    ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.…   │
+│  ✖ 15:50 QUEUE    Redash queries backed up: 13 waiting, oldest 3m01s         │
+│  ✖ 15:49 QUERY    m.kairys's query on clickhouse-bi at 95% of its 9.0 GiB…   │
+│  ✔ 15:49 NODE     ch6 answering again                                        │
+│  ▲ 15:49 QUERY    runaway m.kairys on clickhouse-bi — 80% of its 9.0 GiB …   │
+│  ✖ 15:48 NODE     ch6 unreachable — connection timed out after 1.5 s         │
+│  ▲ 15:48 QUEUE    Redash scheduled_queries backed up: 3 waiting, oldest 1…   │
+│  ● 15:47 NODE     clickhouse5 joined the fleet                               │
+│  ✖ 15:45 NODE     clickhouse3 CPU 92.1% (≥ 90%)                              │
+│  ✖ 15:44 NODE     clickhouse3 memory 90.3% (≥ 90%) · the server itself ho…   │
+│ ─ 15:51 WIB · QUERY ──────────────────────────────────────────────────────── │
+│ ended m.kairys on clickhouse-bi after ≥ 1m00s · peak 8.9 GiB · probably kil… │
+│ ⏎ goes to what it is about                                                   │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ scroll   ⏎ go to it   n note       9/9 nodes · 0.8 s · read-only

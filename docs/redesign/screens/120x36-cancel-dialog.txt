@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › queue                                               esc back   ● live   15:52:07 WIB
+╭ 2 REDASH QUEUE · redash.example.net · 10.1.0 ───────────────────────────────────────── 7 workers, 6 busy · esc back ─╮
+│ QUEUE                RUNNING  WAITING   OLDEST  WORKERS            STALE   last 4 min                                │
+│ queries                    4       13  3m43s ✖  ●●●● 4/4 busy          3   ▇█▇▆██▅██                                 │
+│ scheduled_queries          2        3  1m01s ▲  ●● 2/2 busy            ·   ▃▃▃▃▃▃▃▃▃                                 │
+│ default · emails · periodic · schemas  idle                                                                          │
+│                                                                                                                      │
+│ ─ RUNNING · 6 on a worker ────────────────────────────────────────────────────────────────────────────────────────── │
+│     6m38s ! grigol.gankava  #7438 Gateway transfers           clickhouse3     → clickhouse3 16.3G 3.1c 57%           │
+│▌    5m38s ! j.petrova       #8585 AML dashboard               clickhouse-bi   → clickhouse-bi 21.2G 1.9c 95%         │
+│     4m38s ! m.kairys        #7711 FX exposure                 clickhouse2     → clickhouse2 15.4G 1.2c 64%           │
+│     4m23s ! r.simonyte      #8091 July close pack             clickhouse7     → clickhouse7 51.4G 2.2c 77%           │
+│     2m51s   d.zaleckas      #6120 Gateway refunds · open      gateway-mysql   mysql · not ClickHouse                 │
+│       51s   a.v╭─ Cancel Redash job run-2 · j.petrova? ─────────────────────────────────────────────╮                │
+│ ─ WAITING · 16 │                                                                                    │─────────────── │
+│     3m43s ✖ r.s│  #8585 AML dashboard · clickhouse-bi · running 5m38s                               │                │
+│     3m12s ✖ j.p│  Its query on clickhouse-bi keeps running: Redash's cancel does not reach it, an…  │                │
+│     2m58s ▲ m.k│  This cannot be undone. The job can be run again from Redash.                      │                │
+│     1m40s ▲ t.r│                                                                                    │                │
+│       58s   a.v│                                                                                    │                │
+│ ─ STALE · 3 in │  [y] cancel the job     [esc] keep it                                              │─────────────── │
+│      163d   o.k╰────────────────────────────────────────────────────────────────────────────────────╯                │
+│      171d   j.petrova       #6002 KYC backlog              cancelled                                                 │
+│      177d   m.kairys        #4418 FX hedges                over a day old                                            │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ─ job · queries · j.petrova ──────────────────────────────────────────────────────────────────────────────────────── │
+│ 6/7 workers busy · 3 of them hold a runaway ClickHouse query (clickhouse3, clickhouse-bi, clickhouse7) → why it is … │
+│ running 5m38s → clickhouse-bi · c3e5 ! runaway · ⏎ opens the node · x cancels the job in Redash                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ move   ⏎ the node   x cancel job   / filter                                    redash 3 s · read 0 s ago

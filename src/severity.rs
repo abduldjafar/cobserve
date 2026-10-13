@@ -46,13 +46,6 @@ impl Severity {
         self >= Severity::Warn
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Severity::None | Severity::Ok | Severity::Info => "HEALTHY",
-            Severity::Warn => "DEGRADED",
-            Severity::Crit => "CRITICAL",
-        }
-    }
 }
 
 /// Node memory and CPU: amber at 75, red at 90 (§7).
@@ -154,6 +147,5 @@ mod tests {
         assert_eq!(worst, Severity::Crit);
         assert!(Severity::Warn.is_problem());
         assert!(!Severity::Info.is_problem());
-        assert_eq!(Severity::Crit.label(), "CRITICAL");
     }
 }

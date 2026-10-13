@@ -5,10 +5,12 @@
 //! clock, and **the UI never blocks on the network**: a slow node, a dead Redash, or a
 //! ClickHouse that never answers all show up as numbers that do not move.
 
+mod action;
 mod airflow;
 mod app;
 mod assist;
 mod attrib;
+mod caps;
 mod claude;
 mod clock;
 mod complete;
@@ -28,7 +30,10 @@ mod local;
 mod usage;
 mod model;
 mod prayer;
+mod provenance;
 mod saved;
+mod setup;
+mod plain;
 mod pty;
 mod severity;
 mod sources;
@@ -36,7 +41,7 @@ mod sqltext;
 mod tape;
 mod theme;
 mod tree;
-mod ui;
+mod ui2;
 
 use app::{App, Event};
 use config::Config;
@@ -76,6 +81,9 @@ async fn main() -> color_eyre::Result<()> {
     };
     // Before any source starts: every person they attribute is displayed with it (§6.4).
     attrib::set_home_domain(config.email_domain.clone());
+    if args.plain {
+        return run_plain(config).await;
+    }
 
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -95,16 +103,54 @@ async fn main() -> color_eyre::Result<()> {
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
     }
     let modified_enter = tell_enter_apart();
+    // What the terminal can do, asked before anything reads keys: the width check's answer comes
+    // on standard input (docs/redesign/04-architecture.md).
+    let caps = caps::probe(modified_enter);
 
     // The terminal's title is the monitor's while it runs, and the one it had after.
     {
         use std::io::Write;
         let _ = std::io::stdout().write_all(b"\x1b[22;0t");
     }
-    let result = run(&mut terminal, config, args.claude, modified_enter).await;
+    let result = run(&mut terminal, config, args.claude, modified_enter, caps).await;
 
     restore_terminal();
     result
+}
+
+/// `--plain`: the same sources, no terminal; the panels' summaries printed after every poll.
+async fn run_plain(config: Config) -> color_eyre::Result<()> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
+    let mut app = App::new();
+    app.poll_interval = config.poll;
+    let zone_table = clock::zone_table();
+    let zone = clock::zone_now();
+    app.update(Event::Zone(zone.clone(), prayer_place(&config, zone.as_deref(), zone_table.as_deref())));
+    let (_cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
+    let (_airflow_tx, airflow_rx) = mpsc::unbounded_channel::<()>();
+    let (_jira_tx, jira_rx) = mpsc::unbounded_channel::<()>();
+    let asks = Asks { cancels: cancel_rx, airflow: airflow_rx, jira: jira_rx };
+    let targets = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let _details = spawn_sources(&config, tx.clone(), targets, asks);
+    spawn_signal_watch(tx.clone());
+    for warning in &config.warnings {
+        eprintln!("cobserve: {warning}");
+    }
+    while let Some(event) = rx.recv().await {
+        let poll = matches!(event, Event::Snapshot(_));
+        if let Event::Notice(text) = &event {
+            eprintln!("cobserve: {text}");
+        }
+        if matches!(event, Event::Quit) {
+            break;
+        }
+        app.update(event);
+        if poll {
+            app.tick_at(std::time::SystemTime::now());
+            println!("{}", plain::summary(&app));
+        }
+    }
+    Ok(())
 }
 
 /// Asked of the terminal before anything reads keys: where it speaks the kitty keyboard
@@ -151,9 +197,15 @@ fn install_panic_hook() {
     }));
 }
 
-async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool) -> color_eyre::Result<()> {
+async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool, caps: caps::Caps) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
+    app.caps = caps;
+    // The first start shows the tour once (`:tour` any time after).
+    if !config.fake && ui2::overlay::tour::marker().is_some_and(|m| !m.exists()) {
+        app.shell.tour = Some(0);
+    }
+    app.shell.profile = if config.fake { "fake".to_string() } else { config.clickhouse.cluster.clone() };
     app.poll_interval = config.poll;
     app.modified_enter = modified_enter;
     app.claude.commands = claude::Commands {
@@ -231,7 +283,12 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     app.outside_chrome = inside_app;
     let mut told: Option<desktop::State> = None;
     loop {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        // One frame at a time on the terminal (DEC 2026, where it is spoken): ratatui does not
+        // wrap its draw in synchronized output itself; a terminal that does not know it ignores it.
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate);
+        let drawn = terminal.draw(|frame| ui2::draw(frame, &app));
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::EndSynchronizedUpdate);
+        drawn?;
         if inside_app {
             let state = desktop::state(&app);
             if told.as_ref() != Some(&state) {
@@ -242,7 +299,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
                 told = Some(state);
             }
         }
-        let title = ui::title(&app);
+        let title = ui2::title(&app);
         if title != shown_title {
             let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(&title));
             shown_title = title;
@@ -298,6 +355,22 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
                 None => app.update(Event::Quit),
             },
             _ = tick.tick() => app.update(Event::Tick),
+        }
+        // The which-key box is due a moment after the prefix: a tick then, not at the next second.
+        if ui2::sessions::wake(&mut app) {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(280)).await;
+                let _ = tx.send(Event::Tick);
+            });
+        }
+        // The setup wizard's live checks, each a task of its own.
+        for (step, pairs) in std::mem::take(&mut app.shell.setup_asks) {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = sources::setup_check::check(step, pairs).await;
+                let _ = tx.send(Event::SetupChecked(step, result));
+            });
         }
         // Keys for Claude go out now, not a frame later.
         send_owed(&mut app, &mut panes);

@@ -80,6 +80,8 @@ pub enum Kind {
     Node,
     Query,
     Queue,
+    /// A line of the person at the screen (`n`), kept with the events.
+    Note,
 }
 
 impl Kind {
@@ -89,6 +91,7 @@ impl Kind {
             Kind::Node => "NODE",
             Kind::Query => "QUERY",
             Kind::Queue => "QUEUE",
+            Kind::Note => "NOTE",
         }
     }
 }
