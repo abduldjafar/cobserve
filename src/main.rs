@@ -315,6 +315,14 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
             },
             _ = tick.tick() => app.update(Event::Tick),
         }
+        // The which-key box is due a moment after the prefix: a tick then, not at the next second.
+        if ui2::sessions::wake(&mut app) {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(280)).await;
+                let _ = tx.send(Event::Tick);
+            });
+        }
         // Keys for Claude go out now, not a frame later.
         send_owed(&mut app, &mut panes);
         for text in app.take_notifications() {

@@ -1024,6 +1024,9 @@ impl App {
     pub fn tick_at(&mut self, at: SystemTime) {
         self.clock = at;
         self.shell.expire(at);
+        if self.shell.on {
+            crate::ui2::sessions::tick(self);
+        }
         let now = self.now();
         if let Some(alert) = self.prayers.tick(now) {
             let moment = alert.moment();
@@ -1102,6 +1105,7 @@ impl App {
                     session.pane.state = PaneState::Exited(how);
                 }
             }
+            Event::Mouse(event) if self.shell.on => crate::ui2::mouse::on_mouse(self, event),
             Event::Mouse(event) => self.on_mouse(event),
             Event::Folders(found) => {
                 if let Mode::Opening(picker) = &mut self.claude.mode {
@@ -1144,6 +1148,7 @@ impl App {
                     console.assisted(ask, result);
                 }
             }
+            Event::Paste(text) if self.shell.on && crate::ui2::keys::paste(self, &text) => {}
             Event::Paste(text) => {
                 let line = text.lines().next().unwrap_or_default();
                 if self.view == View::Claude {
@@ -1685,6 +1690,16 @@ impl App {
             _ => {}
         }
         self.sync_view_state();
+    }
+
+    /// A click for today's handling as it stands — inside a floating session or a zoomed view.
+    pub fn on_mouse_passthrough(&mut self, event: MouseEvent) {
+        self.on_mouse(event);
+    }
+
+    /// A key for today's handling as it stands — the new shell's sessions hand theirs here.
+    pub fn on_key_passthrough(&mut self, key: KeyEvent) {
+        self.on_key(key);
     }
 
     /// `r` in the new shell: the sources that can be asked again at once (ClickHouse and Redash

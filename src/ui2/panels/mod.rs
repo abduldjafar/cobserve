@@ -7,6 +7,7 @@ pub mod jira;
 pub mod node;
 pub mod nodes;
 pub mod queue;
+pub mod sessions;
 pub mod tape;
 
 use super::frame::{self, Title};
@@ -27,9 +28,7 @@ pub fn draw(p: &mut Painter<'_>, app: &App, theme: &Theme, id: PanelId, r: Rect,
         PanelId::Airflow => airflow::draw(p, app, theme, r, focused),
         PanelId::Jira => jira::draw(p, app, theme, r, focused),
         PanelId::Tape => tape::draw(p, app, theme, r, focused),
-        other => {
-            frame(p, app, theme, other, r, focused);
-        }
+        PanelId::Sessions => sessions::draw(p, app, theme, r, focused),
     }
 }
 
@@ -78,7 +77,7 @@ pub fn zoom_title(app: &App, id: PanelId) -> (String, String) {
             (with("JIRA", src), right)
         }
         PanelId::Tape => (format!("TAPE · {} · newest first", crate::fmt::plural(app.tape.len(), "line", "lines")), "n note · y export · esc back".to_string()),
-        PanelId::Sessions => (format!("SESSIONS · {}", app.claude.list.len()), "esc back".to_string()),
+        PanelId::Sessions => (format!("SESSIONS · {}", app.claude.list.len()), "n new · / find · x x close · esc back".to_string()),
     }
 }
 
@@ -170,6 +169,6 @@ pub fn title(app: &App, id: PanelId) -> (Severity, String) {
         PanelId::Airflow => airflow::title(app),
         PanelId::Jira => jira::title(app),
         PanelId::Tape => tape::title(app),
-        _ => (Severity::None, String::new()),
+        PanelId::Sessions => sessions::title(app),
     }
 }

@@ -28,7 +28,7 @@ pub(crate) mod airflow;
 mod band;
 mod board;
 mod cards;
-mod claude;
+pub(crate) mod claude;
 mod console;
 mod day;
 pub(crate) mod detail;

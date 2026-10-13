@@ -58,13 +58,23 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
                 app.copy(e.text);
                 app.shell.toast("✔ formula and inputs copied", false, std::time::SystemTime::now());
             }
-            KeyCode::Enter => app.shell.toast("⏎ hands it to the floating Claude — phase 4", false, std::time::SystemTime::now()),
+            KeyCode::Enter => {
+                let prompt = format!("From cobserve (read-only on ClickHouse), {}:\n{}\nWhat should I look at?", e.title, e.text);
+                crate::ui2::sessions::ask_claude(app, prompt);
+            }
             _ => {}
         }
         return;
     }
+    if app.shell.float.is_some() {
+        crate::ui2::sessions::float_key(app, key);
+        return crate::ui2::views::sync(app);
+    }
     if app.shell.filter.as_ref().is_some_and(|f| f.typing) {
         return filter_key(app, key);
+    }
+    if app.shell.zoom == Some(crate::ui2::PanelId::Sessions) && crate::ui2::sessions::zoom_key(app, key) {
+        return;
     }
     let Some(name) = name(&key) else { return };
     if let Some(a) = action::for_key(app, &name) {
@@ -162,4 +172,21 @@ fn palette_key(app: &mut App, key: KeyEvent) {
     let len = palette::matches(app, &pal).len();
     pal.sel = pal.sel.min(len.saturating_sub(1));
     app.shell.palette = Some(pal);
+}
+
+/// A paste into what the new shell is typing into — the palette, a note, a filter; `false` when
+/// none is open, and the paste goes where it goes today (a session).
+pub fn paste(app: &mut App, text: &str) -> bool {
+    let line = text.lines().next().unwrap_or_default();
+    if let Some(p) = app.shell.palette.as_mut() {
+        p.query.push_str(line);
+        p.sel = 0;
+    } else if let Some(n) = app.shell.note.as_mut() {
+        n.push_str(line);
+    } else if let Some(f) = app.shell.filter.as_mut().filter(|f| f.typing) {
+        f.query.push_str(line);
+    } else {
+        return false;
+    }
+    true
 }

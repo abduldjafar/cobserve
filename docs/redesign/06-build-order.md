@@ -70,13 +70,23 @@ and the palette name them. `⏎` on a running job or a tape line follows the vie
 shows it (the node zoomed, its person chosen). The view's own first lines (its title, the drawer's
 "view 1" wording) are today's until phase 6 moves the code. The dashboard panels are new.
 
-## Phase 4 — SESSIONS and the floating pane (S–M)
+## Phase 4 — SESSIONS and the floating pane (S–M) — done
 
 Panel 8, its zoom with the session's screen beside the list, the floating pane over any panel
 with the prefix and the which-key box, keyboard enhancement flags with the `F1`–`F10` fallback and
 its toast, `c` for a SQL session, the Claude hand-off from `e` and from a person row.
 Acceptance: `*-zoom-sessions.txt`, `120x36-float-session.txt`, `120x36-float-session-prefix.txt`;
 a `--ignored` test that drives a real `claude -p` is not needed — the PTY code is unchanged.
+
+As built (`ui2/sessions.rs`): the zoom is today's sessions view (list beside the screen); `⏎`
+opens the session full and `ctrl+\` comes back to the list. The floating pane hands its keys to
+today's view 7 handling, so a running program gets every key; after `ctrl+\` the prefix takes
+`1`–`6` (a panel — `7`–`9` are the sessions), `7`–`9` `↑↓`, `f`, `/`, `n`, `c o t q`, `r`, `x x`,
+`esc`; the which-key box comes 250 ms later (the loop is woken for it). `F1`–`F6` focus a panel,
+`F9` the next session, `F10` hides — said once in a toast where the kitty keyboard protocol is
+missing. `e`'s `⏎` and `⏎`/`\` on a person in NODE type a prompt into a Claude session (started
+if need be, the prompt typed once it is up, never sent). The mouse came with it: a click focuses,
+a second opens, the wheel moves the cursor, clicks inside a zoomed view or the pane are theirs.
 
 ## Phase 5 — wizard, tour, replay stub, `--plain` (M)
 

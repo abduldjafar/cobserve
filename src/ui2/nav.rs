@@ -78,7 +78,21 @@ pub fn choose(app: &mut App, key: &str) {
             }
         }
         PanelId::Queue | PanelId::Airflow | PanelId::Jira | PanelId::Tape => crate::ui2::views::pass(app, key),
-        PanelId::Sessions => toast(app, "sessions · their cursor comes in phase 4"),
+        PanelId::Sessions => match key {
+            "Up" | "k" | "PageUp" => app.claude.step(false),
+            "Down" | "j" | "PageDown" => app.claude.step(true),
+            "Home" => {
+                if let Some(&first) = app.claude.order().first() {
+                    app.claude.select(first);
+                }
+            }
+            "End" => {
+                if let Some(&last) = app.claude.order().last() {
+                    app.claude.select(last);
+                }
+            }
+            _ => {}
+        },
     }
 }
 
@@ -96,9 +110,16 @@ pub fn open(app: &mut App) {
             app.shell.focus = PanelId::Node;
             app.shell.zoom = Some(PanelId::Node);
         }
-        PanelId::Node => explain_now(app),
+        // On a person, Claude with the row in its prompt; on the server, its arithmetic.
+        PanelId::Node => {
+            let on_person = node::with_chosen(app, |n| {
+                let rows = node::rows(n);
+                !rows[node::cursor(app, &rows)].is_server()
+            });
+            if on_person == Some(true) { ask_about_row(app) } else { explain_now(app) }
+        }
         PanelId::Queue | PanelId::Airflow | PanelId::Jira | PanelId::Tape => crate::ui2::views::pass(app, "Enter"),
-        PanelId::Sessions => toast(app, "⏎ in sessions comes in phase 4"),
+        PanelId::Sessions => crate::ui2::sessions::open_full(app),
     }
 }
 
@@ -171,5 +192,34 @@ pub fn copy_link(app: &mut App, key: &str) {
             app.copy(t);
         }
         None => toast(app, "nothing under the cursor to copy"),
+    }
+}
+
+/// `\` on NODE's row (and `⏎` on a person): Claude, floating, with the row in its prompt.
+pub fn ask_about_row(app: &mut App) {
+    let prompt = node::with_chosen(app, |n| {
+        let rows = node::rows(n);
+        let row = &rows[node::cursor(app, &rows)];
+        let mut text = format!("From cobserve (read-only on ClickHouse): on {}, {} holds {} of the node's memory", n.name(), row.name, crate::fmt::pct(row.mem_pct));
+        if let Some(u) = n.users.iter().find(|u| u.label() == row.key)
+            && let Some(q) = u.queries.first()
+        {
+            text.push_str(&format!(
+                "; their longest query {} has run {} with {} and read {} / {} rows{}. Its SQL:\n{}",
+                q.query.query_id,
+                crate::fmt::dur(q.query.elapsed_s),
+                crate::fmt::bytes(q.query.memory_bytes),
+                crate::fmt::bytes(q.query.read_bytes),
+                crate::fmt::rows(q.query.read_rows),
+                if q.runaway { " — a runaway (§5.4)" } else { "" },
+                crate::sqltext::strip_comments(&q.query.sql).trim()
+            ));
+        }
+        text.push_str("\nWhat should I look at?");
+        text
+    });
+    match prompt {
+        Some(p) => crate::ui2::sessions::ask_claude(app, p),
+        None => toast(app, "no node chosen"),
     }
 }

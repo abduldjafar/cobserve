@@ -53,6 +53,19 @@ pub struct Explained {
     pub text: String,
 }
 
+/// The floating session (`\\`): over any panel, or full; `prefix` is when `ctrl+\\` was pressed,
+/// while the next key is the pane's command rather than the program's.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Float {
+    pub full: bool,
+    pub prefix: Option<SystemTime>,
+    /// `x` once in the prefix: the next `x` closes the session.
+    pub closing: bool,
+}
+
+/// After this long in the prefix the which-key box shows; a fast hand never sees it.
+pub const WHICH_KEY_AFTER: Duration = Duration::from_millis(250);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellState {
     /// The new shell is the one on screen (`UI=2`); the old one otherwise.
@@ -75,6 +88,17 @@ pub struct ShellState {
     pub explain: Option<Explained>,
     /// `n`: the note being written.
     pub note: Option<String>,
+    pub float: Option<Float>,
+    /// The sessions zoom with the session opened full: every key is the program's.
+    pub sessions_full: bool,
+    /// A prompt for a Claude session that is still starting: its id, the text, and when asked.
+    pub pending_prompt: Option<(u64, String, SystemTime)>,
+    /// The F-key fallback has been told once.
+    pub fkeys_told: bool,
+    /// The size the last frame was drawn at, for the mouse.
+    pub last_size: std::cell::Cell<(u16, u16)>,
+    /// Wake the loop a moment from now (the which-key box is due): `main.rs` takes it.
+    pub wake: bool,
     /// How many tiles the last frame fit a row, on the grid and zoomed: what `↑↓` step by.
     pub tiles_per_row: std::cell::Cell<u16>,
     pub zoom_tiles_per_row: std::cell::Cell<u16>,
@@ -97,6 +121,12 @@ impl Default for ShellState {
             filter: None,
             explain: None,
             note: None,
+            float: None,
+            sessions_full: false,
+            pending_prompt: None,
+            fkeys_told: false,
+            wake: false,
+            last_size: std::cell::Cell::new((120, 36)),
             tiles_per_row: std::cell::Cell::new(1),
             zoom_tiles_per_row: std::cell::Cell::new(1),
         }
@@ -129,7 +159,7 @@ impl ShellState {
     /// `esc`: close the top-most thing — here, the zoom. Never quits; says whether it closed
     /// something.
     pub fn back(&mut self) -> bool {
-        if self.palette.take().is_some() || self.explain.take().is_some() || self.filter.take().is_some() {
+        if self.palette.take().is_some() || self.explain.take().is_some() || self.filter.take().is_some() || self.float.take().is_some() {
             return true;
         }
         self.zoom.take().is_some()

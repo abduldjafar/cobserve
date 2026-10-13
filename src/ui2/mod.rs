@@ -14,10 +14,12 @@ pub mod frame;
 pub mod glyph;
 pub mod keys;
 pub mod layout;
+pub mod mouse;
 pub mod nav;
 pub mod overlay;
 pub mod paint;
 pub mod panels;
+pub mod sessions;
 pub mod state;
 pub mod views;
 
@@ -43,6 +45,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
+    app.shell.last_size.set((area.width, area.height));
     let (grid, view_inside) = {
         let mut p = Painter::new(frame.buffer_mut());
         p.clear(area, theme.base());
@@ -75,6 +78,18 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     // Today's views, zoomed: they draw with ratatui's widgets into the frame.
     if let Some((zoom, inside)) = view_inside {
         views::draw(frame, app, theme, zoom, inside);
+    }
+    // The floating session: its box, then the program's screen in it.
+    if let Some(f) = &app.shell.float {
+        let r = overlay::float::rect(f, area.width, area.height, grid.top.height);
+        {
+            let mut p = Painter::new(frame.buffer_mut());
+            overlay::float::draw(&mut p, app, theme, f, r);
+        }
+        crate::ui::claude::pane(frame, app, theme, overlay::float::inner(r));
+        // The which-key box goes over the screen.
+        let mut p = Painter::new(frame.buffer_mut());
+        overlay::float::which(&mut p, theme, f, r, app.clock);
     }
     let mut p = Painter::new(frame.buffer_mut());
     chrome::status_bar(&mut p, app, theme, grid.status);

@@ -534,6 +534,123 @@ fn a_note_goes_on_the_tape() {
     assert_eq!(newest, "✎ ch3 hot");
 }
 
+/// Four sessions, one of each kind, none of them started (the tests run no program).
+fn with_sessions(app: &mut App) {
+    use crate::claude::Kind;
+    for (kind, dir, name) in [(Kind::Claude, "~/work/billing", "billing export"), (Kind::OpenCode, "~/work/pipelines", "late partitions"), (Kind::Terminal, "~/work/reports", "make totals")] {
+        app.claude.open_new(dir, kind);
+        app.claude.rename_current(name);
+    }
+    app.claude.open_query(Some("clickhouse3"));
+    app.claude.select(0);
+}
+
+#[test]
+fn the_sessions_panel_and_zoom() {
+    let mut app = app_after(5);
+    with_sessions(&mut app);
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-dash");
+    same_frames(&got, &want, 29..=34, "sessions panel");
+    assert!(got[29].contains("╭ 8 SESSIONS ─") && trimmed(&got[29]).ends_with("4 · \\ floats one ─╮"), "{}", got[29]);
+    for (y, glyph, number) in [(30, "✻", "7"), (31, "▣", "8"), (32, "❯", "9"), (33, "▦", "10")] {
+        assert!(cells(&got[y], 74, 90).starts_with(&format!("{glyph} {number}")), "row {y}: {}", got[y]);
+    }
+    assert!(got[30].contains("billing export"), "{}", got[30]);
+
+    app.update(ch('8'));
+    app.update(key(KeyCode::Enter));
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-zoom-sessions");
+    assert!(got[0].contains("dashboard › sessions"));
+    assert_eq!(cells(&got[1], 0, 17), cells(&want[1], 0, 17), "{}", got[1]);
+    let hints: Vec<&str> = trimmed(&want[35]).split("   ").take(6).collect();
+    assert_eq!(trimmed(&got[35]).split("   ").take(6).collect::<Vec<_>>(), hints, "the zoom's hints");
+    assert!(got.join("\n").contains("billing export"), "today's list beside the screen");
+    // ↓ chooses the next session; ⏎ opens it full; ctrl+\\ comes back to the list.
+    app.update(key(KeyCode::Down));
+    assert_eq!(app.claude.active, 1);
+    app.update(key(KeyCode::Enter));
+    assert!(app.shell.sessions_full);
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
+    assert!(!app.shell.sessions_full && app.shell.zoom == Some(PanelId::Sessions));
+    app.update(key(KeyCode::Esc));
+    assert_eq!(app.shell.zoom, None);
+}
+
+#[test]
+fn a_session_floats_over_the_grid_with_its_prefix() {
+    let mut app = app_after(5);
+    with_sessions(&mut app);
+    app.update(ch('\\'));
+    assert!(app.shell.float.is_some());
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-float-session");
+    assert_eq!(col(&got[2], "╭─ 7 claude · ~/work/billing"), col(&want[2], "╭─ 7 claude · ~/work/billing"), "{}", got[2]);
+    assert!(got[2].contains("8 ▣ opencode · 9 ❯ terminal · 10 ▦ query · + new"), "the others in the title: {}", got[2]);
+    assert_eq!(col(&got[24], "╰─ ctrl+\\ hide · ctrl+\\ 1-6 a panel"), Some(12), "{}", got[24]);
+    assert_eq!(frames(&got[10]).iter().filter(|(x, _)| *x == 12 || *x == 107).count(), 2, "the box's sides: {}", got[10]);
+
+    // ctrl+\\: the prefix, then the which-key box once 250 ms have passed.
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
+    let got = render(&app, 120, 36);
+    assert!(got[24].contains("ctrl+\\ · then: 1-6 a panel"), "{}", got[24]);
+    assert!(!got.join("\n").contains("ctrl+\\ then ─"), "a fast hand never sees the box");
+    let later = app.clock + std::time::Duration::from_millis(300);
+    app.tick_at(later);
+    let got = render(&app, 120, 36);
+    let want = screen("120x36-float-session-prefix");
+    assert_eq!(col(&got[12], "╭─ ctrl+\\ then ─"), col(&want[12], "╭─ ctrl+\\ then ─"), "{}", got[12]);
+    // ↓ in the prefix: the next session.
+    app.update(key(KeyCode::Down));
+    assert_eq!(app.claude.active, 1);
+    // ctrl+\\ twice hides the pane.
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
+    assert!(app.shell.float.is_none());
+    // F-keys work without the prefix: F3 hides it and focuses NODES.
+    app.update(ch('\\'));
+    app.update(key(KeyCode::F(3)));
+    assert!(app.shell.float.is_none() && app.shell.focus == PanelId::Nodes);
+}
+
+#[test]
+fn claude_gets_the_row_or_the_number_in_its_prompt() {
+    let mut app = app_after(5);
+    app.update(ch('4'));
+    app.update(key(KeyCode::Enter));
+    app.update(key(KeyCode::Enter));
+    assert!(app.shell.float.is_some(), "⏎ on a person floats Claude");
+    let (_, prompt, _) = app.shell.pending_prompt.clone().expect("a prompt waits for the session");
+    assert!(prompt.contains("on clickhouse3, grigol.gankava holds") && prompt.contains("What should I look at?"), "{prompt}");
+    assert_eq!(app.claude.current().map(|s| s.kind), Some(crate::claude::Kind::Claude));
+    // c: a SQL session on the chosen node, floating.
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
+    app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
+    app.update(ch('c'));
+    assert!(app.shell.float.is_some());
+    assert_eq!(app.claude.current().and_then(|s| s.console.as_ref()).and_then(|c| c.node.as_deref()), Some("clickhouse3"));
+}
+
+fn click(col: u16, row: u16) -> Event {
+    Event::Mouse(crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: col, row, modifiers: KeyModifiers::NONE })
+}
+
+#[test]
+fn a_click_focuses_a_second_opens() {
+    let mut app = app_after(5);
+    render(&app, 120, 36);
+    app.update(click(100, 25));
+    assert_eq!(app.shell.focus, PanelId::Jira);
+    app.update(click(100, 25));
+    assert_eq!(app.shell.zoom, Some(PanelId::Jira));
+    app.update(click(5, 0));
+    assert_eq!(app.shell.zoom, None, "❖ cobserve goes to the grid");
+    // A tile: the second one in the first row.
+    app.update(click(25, 11));
+    assert_eq!((app.shell.focus, app.shell.chosen.as_deref()), (PanelId::Nodes, Some("clickhouse-bi")));
+}
+
 /// `cargo test ui2::tests::dump -- --ignored --nocapture`: the screen at a size, to look at.
 #[test]
 #[ignore]
@@ -581,6 +698,7 @@ fn every_size_renders_without_a_panic() {
         }
         app.shell.filter = (round % 13 == 0).then(|| crate::ui2::state::Filter { query: "ch".into(), typing: true });
         app.shell.note = (round % 17 == 0).then(|| "a note".to_string());
+        app.shell.float = (round % 19 == 0).then(|| crate::ui2::state::Float { full: round % 2 == 0, ..Default::default() });
         views::sync(&mut app);
         let rows = render(&app, w, h);
         assert_eq!(rows.len(), h as usize);

@@ -51,6 +51,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, well: Rect, margin: u16
         frame.render_widget(Paragraph::new(session_bar(app, theme, inset)), inset);
         Rect::new(well.x + margin, well.y + 1, well.width.saturating_sub(2 * margin), well.height - 1)
     };
+    pane(frame, app, theme, area);
+}
+
+/// The session on screen in `area`: the folder picker while one is opened, a query session's
+/// console, or the program's screen. Every PTY is sized to it.
+pub(crate) fn pane(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -1066,7 +1072,7 @@ fn message(frame: &mut Frame, theme: &Theme, area: Rect, lines: Vec<Line<'static
 }
 
 /// The emulated screen, cell by cell, runs of one style joined into one span.
-fn screen(frame: &mut Frame, pane: &crate::claude::ClaudePane, theme: &Theme, area: Rect, live: bool) {
+pub(crate) fn screen(frame: &mut Frame, pane: &crate::claude::ClaudePane, theme: &Theme, area: Rect, live: bool) {
     let screen = pane.screen();
     let (rows, cols) = screen.size();
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(rows.min(area.height) as usize);

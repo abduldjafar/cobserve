@@ -23,17 +23,22 @@ pub fn view_of(panel: PanelId) -> View {
 
 /// Whether the panel's keys are its view's.
 pub fn is_view(panel: PanelId) -> bool {
-    matches!(panel, PanelId::Queue | PanelId::Airflow | PanelId::Jira | PanelId::Tape)
+    matches!(panel, PanelId::Queue | PanelId::Airflow | PanelId::Jira | PanelId::Tape | PanelId::Sessions)
 }
 
-/// `app.view` on the panel the keys go to — the zoom, else the focus.
+/// `app.view` on the panel the keys go to — the zoom, else the focus; the sessions' view while a
+/// session floats or the sessions are zoomed, so a session on screen is seen as on screen.
 pub fn sync(app: &mut App) {
-    let panel = app.shell.zoom.unwrap_or(app.shell.focus);
-    let view = view_of(panel);
-    // The sessions keep their own view while panel 8 is only focused (phase 4 opens them).
-    if view == View::Claude {
+    if app.shell.float.is_some() || app.shell.zoom == Some(PanelId::Sessions) {
+        app.set_view(View::Claude);
         return;
     }
+    let panel = app.shell.zoom.unwrap_or(app.shell.focus);
+    let view = match view_of(panel) {
+        // Panel 8 focused on the grid: its rows are the sessions themselves, no view needed.
+        View::Claude => View::Nodes,
+        other => other,
+    };
     app.set_view(view);
 }
 
@@ -140,6 +145,7 @@ pub fn draw(frame: &mut ratatui::Frame, app: &App, theme: &crate::theme::Theme, 
             Some(page) => ui::detail::draw(frame, app, theme, inside, page),
             None => ui::airflow::draw(frame, app, theme, inside),
         },
+        PanelId::Sessions => ui::claude::draw(frame, app, theme, inside, 0),
         PanelId::Jira => match (app.page(), app.jira_time) {
             (Some(page), _) => ui::detail::draw(frame, app, theme, inside, page),
             (None, Some(time)) => ui::jira::draw_time(frame, app, theme, inside, time),
