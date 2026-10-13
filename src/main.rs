@@ -41,7 +41,6 @@ mod sqltext;
 mod tape;
 mod theme;
 mod tree;
-mod ui;
 mod ui2;
 
 use app::{App, Event};
@@ -113,8 +112,7 @@ async fn main() -> color_eyre::Result<()> {
         use std::io::Write;
         let _ = std::io::stdout().write_all(b"\x1b[22;0t");
     }
-    let next_shell = args.next_shell || std::env::var("UI").is_ok_and(|v| v.trim() == "2");
-    let result = run(&mut terminal, config, args.claude, modified_enter, caps, next_shell).await;
+    let result = run(&mut terminal, config, args.claude, modified_enter, caps).await;
 
     restore_terminal();
     result
@@ -124,7 +122,6 @@ async fn main() -> color_eyre::Result<()> {
 async fn run_plain(config: Config) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
-    app.shell.on = true;
     app.poll_interval = config.poll;
     let zone_table = clock::zone_table();
     let zone = clock::zone_now();
@@ -200,13 +197,12 @@ fn install_panic_hook() {
     }));
 }
 
-async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool, caps: caps::Caps, next_shell: bool) -> color_eyre::Result<()> {
+async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool, caps: caps::Caps) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
     app.caps = caps;
-    app.shell.on = next_shell;
-    // The new shell's first start shows the tour once (`:tour` any time after).
-    if next_shell && !config.fake && ui2::overlay::tour::marker().is_some_and(|m| !m.exists()) {
+    // The first start shows the tour once (`:tour` any time after).
+    if !config.fake && ui2::overlay::tour::marker().is_some_and(|m| !m.exists()) {
         app.shell.tour = Some(0);
     }
     app.shell.profile = if config.fake { "fake".to_string() } else { config.clickhouse.cluster.clone() };
@@ -290,7 +286,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         // One frame at a time on the terminal (DEC 2026, where it is spoken): ratatui does not
         // wrap its draw in synchronized output itself; a terminal that does not know it ignores it.
         let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate);
-        let drawn = terminal.draw(|frame| if app.shell.on { ui2::draw(frame, &app) } else { ui::draw(frame, &app) });
+        let drawn = terminal.draw(|frame| ui2::draw(frame, &app));
         let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::EndSynchronizedUpdate);
         drawn?;
         if inside_app {
@@ -303,7 +299,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
                 told = Some(state);
             }
         }
-        let title = ui::title(&app);
+        let title = ui2::title(&app);
         if title != shown_title {
             let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(&title));
             shown_title = title;

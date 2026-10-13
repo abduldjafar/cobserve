@@ -569,14 +569,6 @@ impl SortKey {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            SortKey::Pressure => "pressure ▼",
-            SortKey::Mem => "mem ▼",
-            SortKey::Cpu => "cpu ▼",
-            SortKey::Name => "name ▲",
-        }
-    }
 }
 
 /// pressure desc, then runaway count desc, then name asc (§2.5).

@@ -63,6 +63,11 @@ pub fn summary(app: &App) -> String {
         let flow: Vec<String> = app.jira.columns().iter().map(|c| format!("{} {}", c.tickets.len(), c.status)).collect();
         out.push_str(&format!("  {} JIRA     {} · {over} overdue · {soon} due soon\n", mark(sev), flow.join(" › ")));
     }
+    // The insights: one line for each thing in trouble, worst first.
+    for i in app.insights().iter().filter(|i| i.level.is_problem()).take(8) {
+        let line: String = i.parts.iter().map(|(t, _)| t.as_str()).collect();
+        out.push_str(&format!("  {} {:<16} {line}\n", mark(i.level), i.label));
+    }
     if let Some(e) = app.tape.newest_first().next() {
         let text: String = e.parts.iter().map(|(t, _)| t.as_str()).collect();
         out.push_str(&format!("  {} TAPE     {} {text}\n", mark(e.level), app.time.local_hm(e.at as i64)));

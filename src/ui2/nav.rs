@@ -123,30 +123,55 @@ pub fn open(app: &mut App) {
     }
 }
 
-/// `e`: the provenance of the number under the cursor.
+/// `e`: the provenance of the number under the cursor; `e` again while it is open steps to the
+/// subject's next number.
 pub fn explain_now(app: &mut App) {
+    let step = app.shell.explain.as_ref().map_or(0, |e| e.step + 1);
+    explain_step(app, step);
+}
+
+/// The provenances about the subject under the cursor, in the order `e` steps through them.
+fn provenances(app: &App) -> Option<(Vec<provenance::Provenance>, Option<crate::model::NodeSnapshot>)> {
     let at = app.snapshot().map_or(SystemTime::now(), |s| s.taken_at);
-    let built = match target(app) {
+    let prev_node = |name: &str| app.prev_snapshot().and_then(|p| p.nodes.iter().find(|n| n.name == name).cloned());
+    match target(app) {
         PanelId::Fleet => app.with_view(|v| {
             let t = crate::model::fleet_totals(v);
-            explain::build(&provenance::explain_fleet_mem_pct(&t, at), &explain::polled(app, None))
+            (vec![provenance::explain_fleet_mem_pct(&t, at), provenance::explain_fleet_cpu_pct(&t, at)], None)
         }),
-        PanelId::Nodes => node::with_chosen(app, |n| explain::build(&provenance::explain_node_mem_pct(n.node, at), &explain::polled(app, Some(n.node)))),
+        PanelId::Nodes => node::with_chosen(app, |n| {
+            let prev = prev_node(n.name());
+            (vec![provenance::explain_node_mem_pct(n.node, at), provenance::explain_node_cpu_pct(n.node, prev.as_ref(), at)], Some(n.node.clone()))
+        }),
         PanelId::Node => node::with_chosen(app, |n| {
             let rows = node::rows(n);
             let row = &rows[node::cursor(app, &rows)];
-            let prov = if row.is_server() {
-                Some(provenance::explain_server_mem_pct(n, at))
+            let list = if row.is_server() {
+                vec![provenance::explain_server_mem_pct(n, at), provenance::explain_server_cpu_pct(n, at)]
             } else {
-                n.users.iter().find(|u| u.label() == row.key).map(|u| provenance::explain_user_mem_pct(u, n.node, at))
+                let Some(u) = n.users.iter().find(|u| u.label() == row.key) else { return (Vec::new(), None) };
+                let mut list = vec![provenance::explain_user_mem_pct(u, n.node, at), provenance::explain_user_cpu_pct(u, n.node, at)];
+                if let Some(q) = u.queries.first() {
+                    let prev_q = prev_node(n.name()).and_then(|p| p.queries.into_iter().find(|r| r.query_id == q.query.query_id));
+                    list.push(provenance::explain_query_cores(q, prev_q.as_ref(), n.node, at));
+                    list.push(provenance::explain_runaway(q, n.node, at));
+                }
+                list
             };
-            prov.map(|p| explain::build(&p, &explain::polled(app, Some(n.node))))
-        })
-        .flatten(),
+            (list, Some(n.node.clone()))
+        }),
         _ => None,
-    };
-    match built {
-        Some(e) => app.shell.explain = Some(e),
+    }
+}
+
+fn explain_step(app: &mut App, step: usize) {
+    match provenances(app).filter(|(list, _)| !list.is_empty()) {
+        Some((list, node)) => {
+            let k = step % list.len();
+            let prov = &list[k];
+            let polled = explain::polled(app, prov, node.as_ref());
+            app.shell.explain = Some(explain::build_step(prov, &polled, k, list.len()));
+        }
         None => toast(app, "nothing under the cursor to explain"),
     }
 }

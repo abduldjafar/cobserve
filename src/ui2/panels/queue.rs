@@ -100,6 +100,8 @@ fn body(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect, sev: Severity) {
         p.put(x + 1, i.y, "waiting", theme.muted());
         p.put(x + 1, i.y + 1, &format!("{running} running"), theme.text());
         p.put(x + 1, i.y + 2, &format!("{stale} stale"), theme.muted());
+        // The lines under the digits are as wide as under two digits, however many there are.
+        x = x.max(i.x + 8);
         let room = (x + 11).saturating_sub(i.x) as usize;
         let workers = match (q.workers_total, q.workers_busy) {
             (0, _) => "no live worker".to_string(),

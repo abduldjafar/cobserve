@@ -5,10 +5,6 @@
 //! `draw` is the only entry point: chrome, then the grid or the zoom, then the overlays and the
 //! toasts (`04-architecture.md` *Render pipeline*).
 
-// The shell is built in phases (`06-build-order.md`): pieces a later phase draws with are here
-// before their callers. Phase 6 removes this.
-#![allow(dead_code)]
-
 pub mod chrome;
 pub mod frame;
 pub mod glyph;
@@ -52,6 +48,30 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 }
 
+/// The terminal's own title, for a tab in the background: how the fleet is and the next prayer —
+/// its reminder, when it is near. Minutes, not seconds: a title that changes every second is
+/// noise in a tab bar.
+pub fn title(app: &App) -> String {
+    let mut title = "cobserve".to_string();
+    if app.snapshot().is_some() {
+        match panels::fleet::title(app).0.max(panels::queue::title(app).0) {
+            crate::severity::Severity::Crit => title.push_str(" ✖"),
+            crate::severity::Severity::Warn => title.push_str(" ▲"),
+            _ => {}
+        }
+    }
+    let now = app.now();
+    match (app.prayer_alert(), app.prayers.schedule.as_ref().and_then(|s| s.next_prayer(now))) {
+        (Some(crate::prayer::Alert::Soon { moment, left }), _) => {
+            title.push_str(&format!(" · ◷ {} in {} min", moment.name(), (left + 59) / 60));
+        }
+        (Some(crate::prayer::Alert::Now { moment, .. }), _) => title.push_str(&format!(" · {} now", moment.name())),
+        (None, Some(next)) => title.push_str(&format!(" · {} {}", next.name(), app.time.local_hm(next.at))),
+        (None, None) => {}
+    }
+    title
+}
+
 /// The tour was seen to its end or skipped: it does not come by itself again.
 pub fn tour_done(app: &mut App) {
     app.shell.tour = None;
@@ -66,6 +86,10 @@ pub fn tour_done(app: &mut App) {
 pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
     app.shell.last_size.set((area.width, area.height));
+    // What can be clicked is what this frame draws: today's views register their rows as they
+    // draw, so the last frame's go first.
+    app.viewport.hits.borrow_mut().clear();
+    app.viewport.console_text.set(None);
     let (grid, view_inside) = {
         let mut p = Painter::new(frame.buffer_mut());
         p.clear(area, theme.base());
@@ -100,7 +124,7 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     // Today's views, zoomed: they draw with ratatui's widgets into the frame.
     match view_inside {
         Some((Inside::Panel(zoom), inside)) => views::draw(frame, app, theme, zoom, inside),
-        Some((Inside::Local, inside)) => crate::ui::local::draw(frame, app, theme, inside),
+        Some((Inside::Local, inside)) => views::draw_local(frame, app, theme, inside),
         None => {}
     }
     // The floating session: its box, then the program's screen in it.
@@ -110,7 +134,7 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
             let mut p = Painter::new(frame.buffer_mut());
             overlay::float::draw(&mut p, app, theme, f, r);
         }
-        crate::ui::claude::pane(frame, app, theme, overlay::float::inner(r));
+        views::claude::pane(frame, app, theme, overlay::float::inner(r));
         // The which-key box goes over the screen.
         let mut p = Painter::new(frame.buffer_mut());
         overlay::float::which(&mut p, theme, f, r, app.clock);

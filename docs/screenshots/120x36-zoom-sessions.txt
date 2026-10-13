@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB
+╭ 8 SESSIONS · 4 ────────────────────────────────────────────────────────────── n new · / find · x x close · esc back ─╮
+│                                                                                                                      │
+│ SESSIONS  4                                                                                                          │
+│                                                                                                                      │
+│ ▎ ✻  billing export     7                                                                                            │
+│ ▎    ~/work/billing                                                                                                  │
+│                                                                                                                      │
+│   ▣  late partitions    8                                                                                            │
+│      ~/work/pipelines                                                                                                │
+│                                 starting claude in ~/work/billing …                                                  │
+│   ❯  make totals        9                                                                                            │
+│      ~/work/reports                                                                                                  │
+│                                                                                                                      │
+│   ▦  clickhouse3       10                                                                                            │
+│      read-only SQL                                                                                                   │
+│                                                                                                                      │
+│   +  new session                                                                                                     │
+│   ↻  past conversations                                                                                              │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ a session   ⏎ open it full   \ float it   n new   / find one               9/9 nodes · 1.0 s · read-only

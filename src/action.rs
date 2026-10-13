@@ -7,37 +7,18 @@
 //! replaces its stubs. `run` takes the key that
 //! was pressed, since one action can answer several (`1`–`8` focus a panel).
 
-// The overlays' and the zooms' scopes fill in as their phases land (`06-build-order.md`).
-#![allow(dead_code)]
-
 use crate::app::App;
 use crate::ui2::PanelId;
 use std::time::SystemTime;
-
-/// An overlay of the new shell, for the actions that live inside one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Overlay {
-    Palette,
-    Keys,
-    Explain,
-    Float,
-    Wizard,
-    Dialog,
-    Note,
-    Tour,
-}
 
 /// Where an action can be taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     /// On the grid and in any zoom.
     Everywhere,
-    /// While this panel has the focus, on the grid or zoomed.
-    Panel(PanelId),
-    /// Only while this panel is zoomed.
+    /// Only while this panel is zoomed. (The overlays — palette, explain, dialog, note, wizard,
+    /// tour, the floating pane — take their keys before the table; `ui2/keys.rs`.)
     Zoomed(PanelId),
-    /// Inside an overlay, which takes the keys first.
-    Overlay(Overlay),
 }
 
 pub struct Action {
@@ -68,10 +49,6 @@ impl std::fmt::Debug for Action {
 
 fn always(_: &App) -> bool {
     true
-}
-
-fn zoomed(app: &App) -> bool {
-    app.shell.zoom.is_some()
 }
 
 /// What a later phase builds: said, not silently ignored.
@@ -151,7 +128,11 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "filter", label: "filter", phrase: "filter this list", detail: "the focused list, by substring · esc clears", keys: &["/"], shown: "/", scope: Scope::Everywhere, rank: 14, enabled: always, run: |app, _| crate::ui2::nav::filter(app) },
     Action { id: "float", label: "float a session", phrase: "float the session", detail: "the chosen session over any panel · again: the prefix", keys: &["\\", "ctrl+\\", "ctrl+4"], shown: "\\", scope: Scope::Everywhere, rank: 15, enabled: always, run: |app, _| crate::ui2::sessions::toggle(app) },
     Action { id: "sql", label: "SQL on it", phrase: "SQL on this node", detail: "a SQL session on the chosen node, floating", keys: &["c"], shown: "c", scope: Scope::Everywhere, rank: 16, enabled: always, run: |app, _| crate::ui2::sessions::sql_on_node(app) },
-    Action { id: "density", label: "density", phrase: "density · comfortable → compact → focus", detail: "comfortable → compact → focus", keys: &["+"], shown: "+", scope: Scope::Everywhere, rank: 17, enabled: always, run: |app, _| app.shell.cycle_density() },
+    Action { id: "density", label: "density", phrase: "density · comfortable → compact → focus", detail: "comfortable → compact → focus", keys: &["+"], shown: "+", scope: Scope::Everywhere, rank: 17, enabled: always, run: |app, _| {
+        app.shell.cycle_density();
+        let word = app.shell.density.name();
+        app.shell.toast(format!("density · {word}"), false, SystemTime::now());
+    } },
     Action { id: "sort", label: "sort", phrase: "sort · pressure → memory → CPU → name", detail: "the nodes: pressure → memory → CPU → name", keys: &["s"], shown: "s", scope: Scope::Everywhere, rank: 18, enabled: always, run: |app, _| crate::ui2::nav::sort(app) },
     Action { id: "replay-back", label: "a minute back", phrase: "replay · back one minute", detail: "replay one minute back, up to 59", keys: &["["], shown: "[", scope: Scope::Everywhere, rank: 19, enabled: always, run: |app, _| crate::ui2::replay::back(app) },
     Action { id: "replay-forward", label: "a minute forward", phrase: "replay · forward one minute", detail: "replay one minute forward", keys: &["]"], shown: "]", scope: Scope::Everywhere, rank: 20, enabled: always, run: |app, _| crate::ui2::replay::forward(app) },
@@ -220,15 +201,12 @@ pub static ACTIONS: &[Action] = &[
 
 /// The actions that can be taken now: those of the scopes in force, enabled, by rank.
 pub fn actions_for(app: &App) -> Vec<&'static Action> {
-    let focus = app.shell.focus;
     let zoom = app.shell.zoom;
     let mut out: Vec<&'static Action> = ACTIONS
         .iter()
         .filter(|a| match a.scope {
             Scope::Everywhere => true,
-            Scope::Panel(p) => p == focus,
             Scope::Zoomed(p) => zoom == Some(p),
-            Scope::Overlay(_) => false,
         })
         .filter(|a| (a.enabled)(app))
         .collect();

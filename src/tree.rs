@@ -69,8 +69,10 @@ pub enum Kind {
 #[derive(Debug, Clone)]
 pub struct Row<'a> {
     pub id: RowId,
-    /// 0 = top level, 1 = under it, 2 = queries.
+    /// 0 = top level, 1 = under it, 2 = queries. Read by the tests; the screen keys rows by id.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub depth: u8,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub kind: Kind,
     pub payload: Payload<'a>,
 }
@@ -85,8 +87,6 @@ pub enum Payload<'a> {
     Closing(&'a NodeView<'a>),
     Folded {
         names: Vec<String>,
-        /// Worst pressure among the folded nodes, for the "(< 35%)" part of the line.
-        worst: f64,
     },
     FleetUser(&'a FleetUser<'a>),
     PivotNode {
@@ -140,6 +140,7 @@ impl TreeState {
         self.expanded_nodes.contains(node)
     }
 
+    #[cfg(test)]
     pub fn toggle_node(&mut self, node: &str) {
         if !self.expanded_nodes.remove(node) {
             self.expanded_nodes.insert(node.to_string());
@@ -167,6 +168,7 @@ impl TreeState {
         }
     }
 
+    #[cfg(test)]
     pub fn toggle_user(&mut self, parent: &str, child: &str) {
         let key = Self::user_key(parent, child);
         if !self.expanded_users.remove(&key) {
@@ -212,7 +214,6 @@ fn build_nodes<'a>(view: &'a FleetView<'a>, state: &TreeState) -> Vec<Row<'a>> {
 
     let mut rows = Vec::new();
     let mut folded: Vec<String> = Vec::new();
-    let mut worst = 0.0_f64;
 
     for node_view in views {
         if let Some(needle) = &needle
@@ -221,7 +222,6 @@ fn build_nodes<'a>(view: &'a FleetView<'a>, state: &TreeState) -> Vec<Row<'a>> {
             }
         if state.foldable(node_view) {
             folded.push(node_view.name().to_string());
-            worst = worst.max(node_view.pressure);
             continue;
         }
 
@@ -297,7 +297,7 @@ fn build_nodes<'a>(view: &'a FleetView<'a>, state: &TreeState) -> Vec<Row<'a>> {
             id: RowId::Folded,
             depth: 0,
             kind: Kind::Folded,
-            payload: Payload::Folded { names: folded, worst },
+            payload: Payload::Folded { names: folded },
         });
     }
     rows

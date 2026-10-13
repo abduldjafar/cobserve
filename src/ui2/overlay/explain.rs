@@ -11,8 +11,9 @@ use crate::ui2::paint::{lp, rp, tr, Painter};
 use crate::ui2::state::Explained;
 use ratatui::layout::Rect;
 
-/// The popover's lines for `prov`; `polled` says which poll and from where.
-pub fn build(prov: &Provenance, polled: &str) -> Explained {
+/// The popover's lines for `prov` — number `step` of `of` about one subject: its title says which, and that `e`
+/// goes on to the next; `polled` says which poll and from where.
+pub fn build_step(prov: &Provenance, polled: &str, step: usize, of: usize) -> Explained {
     let value = prov.value.map_or("—".to_string(), |v| prov.unit.show(v));
     let mut lines: Vec<(String, bool)> = Vec::new();
     let head = format!("{} = ", prov.quantity);
@@ -25,18 +26,26 @@ pub fn build(prov: &Provenance, polled: &str) -> Explained {
     if let Some(note) = &prov.note {
         lines.push((note.clone(), true));
     }
+    // The formula's own arithmetic over its inputs against what the model said: they agree to a
+    // tenth, or the popover says they do not (a bug, by CLAUDE.md's rule).
+    if let (Some(a), Some(b)) = (prov.evaluate(), prov.value)
+        && (a - b).abs() > 0.1
+    {
+        lines.push((format!("▲ the formula gives {}, the screen {}", prov.unit.show(a), prov.unit.show(b)), true));
+    }
     if !polled.is_empty() {
         lines.push((polled.to_string(), true));
     }
     lines.push((String::new(), true));
     lines.push((prov.reference.to_string(), true));
     let text = std::iter::once(prov.metric.clone()).chain(lines.iter().map(|(l, _)| l.clone())).collect::<Vec<_>>().join("\n");
-    Explained { title: format!("explain · {value}"), lines, text }
+    let title = if of > 1 { format!("explain · {value} · {} of {of} · e next", step + 1) } else { format!("explain · {value}") };
+    Explained { title, lines, text, step }
 }
 
-/// `polled 2 s ago · host:8123 · answered in 0.6 s`.
-pub fn polled(app: &App, node: Option<&crate::model::NodeSnapshot>) -> String {
-    let ago = app.data_age().map_or(String::new(), |d| format!("polled {} ago", fmt::dur(d.as_secs_f64())));
+/// `polled 2 s ago · host:8123 · answered in 0.6 s`, from the poll the provenance was taken at.
+pub fn polled(app: &App, prov: &Provenance, node: Option<&crate::model::NodeSnapshot>) -> String {
+    let ago = app.clock.duration_since(prov.at).map_or("polled just now".to_string(), |d| format!("polled {} ago", fmt::dur(d.as_secs_f64())));
     let mut parts = vec![ago];
     if let Some(n) = node {
         if !n.host.is_empty() {

@@ -3,8 +3,6 @@
 //! draws block elements one cell wide, and which program it is. The new shell picks its graph tier,
 //! its painted backgrounds and its link style from these.
 
-#![allow(dead_code)]
-
 /// How graphs are drawn (`docs/redesign/03-glyphs.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GraphTier {

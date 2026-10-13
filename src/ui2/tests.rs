@@ -31,14 +31,13 @@ fn ch(c: char) -> Event {
     key(KeyCode::Char(c))
 }
 
-/// The fake fleet after `polls` polls, the new shell on, the clock at the simulation's instant in
+/// The fake fleet after `polls` polls, the clock at the simulation's instant in
 /// Jakarta, and block graphs — the tier the screens were drawn in.
 fn app_after(polls: usize) -> App {
     // The polls end at the simulation's instant, so the history and the tape are of its hour.
     let start = std::time::UNIX_EPOCH + std::time::Duration::from_secs(MOMENT - 2 * polls.max(1) as u64);
     let mut fake = FakeSource::starting_at(start);
     let mut app = App::new();
-    app.shell.on = true;
     app.caps.graph = GraphTier::Block;
     for i in 0..polls.max(1) {
         app.update(Event::Snapshot(Box::new(fake.snapshot())));
@@ -368,7 +367,8 @@ fn explain_a_node_and_a_person() {
     app.update(ch('e'));
     let got = render(&app, 120, 36);
     let want = screen("120x36-explain-node");
-    assert_eq!(col(&got[12], "╭─ explain · 93.3% ─"), col(&want[12], "╭─ explain · 93.1% ─"));
+    // The title says which of the subject's numbers this is, and that `e` steps to the next.
+    assert_eq!(col(&got[12], "╭─ explain · 93.3% · 1 of 2 · e next ─"), col(&want[12], "╭─ explain · 93.1% ─"));
     // The screen writes the inputs `node.mem_used`; the provenance names them as its input rows do.
     assert!(got[13].contains("│ node.mem_pct = mem_used ÷ mem_total × 100   "), "the formula: {}", got[13]);
     assert!(want[13].contains("│ node.mem_pct = node.mem_used ÷ node.mem_total × 100"));
@@ -387,10 +387,15 @@ fn explain_a_node_and_a_person() {
     app.update(ch('e'));
     let got = render(&app, 120, 36);
     let want = screen("120x36-explain-user");
-    assert_eq!(col(&got[12], "╭─ explain · 12.8% ─"), col(&want[12], "╭─ explain · 25.5% ─"));
+    assert_eq!(col(&got[12], "╭─ explain · 12.8% · 1 of 4 · e next ─"), col(&want[12], "╭─ explain · 25.5% ─"));
     assert!(got[13].contains("│ user.mem_pct = user_memory ÷ mem_total × 100"), "{}", got[13]);
     let bottom = got.iter().position(|r| r.contains("╰─ ⏎ ask Claude about it · y copy · esc ─")).unwrap();
     assert_eq!(bottom, 22, "as tall as the screen's");
+    // e again: the person's CPU, then their longest query's cores, then whether it is a runaway.
+    for quantity in ["user.cpu_pct", "query.cores", "query.runaway", "user.mem_pct"] {
+        app.update(ch('e'));
+        assert!(render(&app, 120, 36)[13].contains(&format!("│ {quantity} = ")), "{quantity}");
+    }
     app.update(key(KeyCode::Esc));
     assert!(app.shell.explain.is_none() && app.shell.zoom == Some(PanelId::Node), "esc closes the popover only");
 }
@@ -608,10 +613,10 @@ fn a_session_floats_over_the_grid_with_its_prefix() {
     app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
     app.update(Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
     assert!(app.shell.float.is_none());
-    // F-keys work without the prefix: F3 hides it and focuses NODES.
+    // F-keys work without the prefix: F3 hides it and zooms NODES.
     app.update(ch('\\'));
     app.update(key(KeyCode::F(3)));
-    assert!(app.shell.float.is_none() && app.shell.focus == PanelId::Nodes);
+    assert!(app.shell.float.is_none() && app.shell.zoom == Some(PanelId::Nodes));
 }
 
 #[test]
@@ -817,4 +822,192 @@ fn every_size_renders_without_a_panic() {
     }
     let rows = render(&app, 39, 12);
     assert!(rows[0].starts_with("cobserve · too small"), "{}", rows[0]);
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots: `SHOT_DIR=docs/screenshots cargo test ui2::tests::export_screens -- --ignored`
+// writes the screens of docs/redesign from the fake fleet as text and as colour HTML (what
+// dev/screenshots.sh turns into PNGs). Ignored by default: it writes files.
+// ---------------------------------------------------------------------------
+
+fn css(color: ratatui::style::Color, fallback: &str) -> String {
+    use ratatui::style::Color;
+    match color {
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        Color::Reset => fallback.to_string(),
+        Color::Black => "#000000".into(),
+        Color::Red => "#cd3131".into(),
+        Color::Green => "#0dbc79".into(),
+        Color::Yellow => "#e5e510".into(),
+        Color::Blue => "#2472c8".into(),
+        Color::Magenta => "#bc3fbc".into(),
+        Color::Cyan => "#11a8cd".into(),
+        Color::Gray => "#e5e5e5".into(),
+        Color::DarkGray => "#666666".into(),
+        Color::LightRed => "#f14c4c".into(),
+        Color::LightGreen => "#23d18b".into(),
+        Color::LightYellow => "#f5f543".into(),
+        Color::LightBlue => "#3b8eea".into(),
+        Color::LightMagenta => "#d670d6".into(),
+        Color::LightCyan => "#29b8db".into(),
+        Color::White => "#ffffff".into(),
+        Color::Indexed(_) => fallback.to_string(),
+    }
+}
+
+fn html_with(buf: &ratatui::buffer::Buffer, title: &str, theme: &crate::theme::Theme) -> String {
+    use ratatui::style::Modifier;
+    let fg0 = css(theme.fg, "#dce2eb");
+    let bg0 = css(theme.bg, "#0f1219");
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title><style>\
+         body{{margin:0;background:{bg0};}}\
+         pre{{margin:0;padding:14px 16px;font:15px 'DejaVu Sans Mono',monospace;color:{fg0};background:{bg0};}}\
+         div{{height:18px;line-height:18px;white-space:pre;overflow:hidden}}\
+         span{{white-space:pre}}\
+         i{{display:inline-block;width:1ch;font-style:normal}}\
+         </style></head><body><pre>"
+    ));
+    let width = buf.area.width;
+    for y in 0..buf.area.height {
+        out.push_str("<div>");
+        let mut run = String::new();
+        let mut style: Option<(String, String, bool, bool)> = None;
+        let flush = |out: &mut String, run: &mut String, style: &Option<(String, String, bool, bool)>| {
+            if run.is_empty() {
+                return;
+            }
+            let (fg, bg, bold, underline) = style.clone().unwrap();
+            out.push_str(&format!(
+                "<span style=\"color:{fg};background:{bg};{}{}\">{run}</span>",
+                if bold { "font-weight:bold;" } else { "" },
+                if underline { "text-decoration:underline;text-underline-offset:4px;" } else { "" }
+            ));
+            run.clear();
+        };
+        for x in 0..width {
+            let cell = &buf[(x, y)];
+            let reversed = cell.modifier.contains(Modifier::REVERSED);
+            let (mut fg, mut bg) = (css(cell.fg, &fg0), css(cell.bg, &bg0));
+            if reversed {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+            if cell.modifier.contains(Modifier::DIM) {
+                fg = "#7a8596".into();
+            }
+            let this = (fg, bg, cell.modifier.contains(Modifier::BOLD), cell.modifier.contains(Modifier::UNDERLINED));
+            if style.as_ref() != Some(&this) {
+                flush(&mut out, &mut run, &style);
+                style = Some(this);
+            }
+            let symbol = cell.symbol().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let lines_and_blocks = symbol.chars().all(|c| ('\u{2500}'..='\u{259f}').contains(&c));
+            if !symbol.is_ascii() && !lines_and_blocks && unicode_width::UnicodeWidthStr::width(cell.symbol()) == 1 {
+                // A glyph the font lacks (⎇, ✳) comes from a fallback font with its own width;
+                // held to one column, it no longer pushes the rest of the line along. Lines and
+                // blocks are the font's own and come in long runs, where the browser's rounding
+                // of each held column would add up.
+                run.push_str(&format!("<i>{symbol}</i>"));
+            } else {
+                run.push_str(&symbol);
+            }
+        }
+        flush(&mut out, &mut run, &style);
+        out.push_str("</div>");
+    }
+    out.push_str("</pre></body></html>\n");
+    out
+}
+
+
+/// What a session in the floating pane looks like in the screenshot, written by hand — the
+/// real one is whatever Claude Code draws.
+const CLAUDE_DEMO: &[u8] = b"\x1b]0;\xe2\x9c\xb3 Stream the invoice export\x07\
+\x1b[38;2;215;119;87m\xe2\x9c\xbb\x1b[m \x1b[1mClaude Code\x1b[m  \x1b[2m~/work/billing\x1b[m\r\n\r\n\
+\x1b[2m>\x1b[m make the invoice export stream its rows instead of building one big Vec\r\n\r\n\
+\x1b[38;2;215;119;87m\xe2\x97\x8f\x1b[m I'll read the exporter first.\r\n\r\n\
+\x1b[32m\xe2\x97\x8f\x1b[m \x1b[1mRead\x1b[m(src/export/invoice.rs)\r\n\
+\x20\x20\x1b[2m\xe2\x94\x94  214 lines\x1b[m\r\n\r\n\
+\x1b[32m\xe2\x97\x8f\x1b[m \x1b[1mUpdate\x1b[m(src/export/invoice.rs)\r\n\
+\x20\x20\x1b[2m\xe2\x94\x94  18 lines added, 31 removed\x1b[m\r\n\r\n\
+\x1b[38;2;215;119;87m\xe2\x9c\xbb\x1b[m Running the tests\xe2\x80\xa6 \x1b[2m(esc to interrupt)\x1b[m\r\n\r\n\
+\x1b[2m\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\
+\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n\
+\xe2\x9d\xaf \r\n\
+\x1b[2m\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\
+\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[m\r\n";
+
+fn shot_buffer(app: &App, w: u16, h: u16, theme: &crate::theme::Theme) -> ratatui::buffer::Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("test terminal");
+    terminal.draw(|frame| draw_with(frame, app, theme)).expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+#[test]
+#[ignore]
+fn export_screens() {
+    let Ok(dir) = std::env::var("SHOT_DIR") else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("shot dir");
+    let dark = crate::theme::Theme::new(crate::theme::Depth::TrueColor, crate::theme::Variant::Dark);
+    let light = crate::theme::Theme::new(crate::theme::Depth::TrueColor, crate::theme::Variant::Light);
+    let write = |name: &str, app: &App, w: u16, h: u16, theme: &crate::theme::Theme| {
+        let buf = shot_buffer(app, w, h, theme);
+        let text: Vec<String> = (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>().trim_end().to_string()).collect();
+        std::fs::write(format!("{dir}/{name}.txt"), text.join("\n") + "\n").expect("text");
+        std::fs::write(format!("{dir}/{name}.html"), html_with(&buf, name, theme)).expect("html");
+    };
+    let fresh = || {
+        let mut app = app_after(120);
+        app.caps.graph = crate::caps::GraphTier::Braille;
+        app.update(Event::Local(Box::new(crate::fake::local(1, MOMENT as f64 - 2.0))));
+        app.update(Event::Local(Box::new(crate::fake::local(2, MOMENT as f64))));
+        app
+    };
+    for (w, h) in [(120, 36), (80, 24), (160, 48)] {
+        write(&format!("{w}x{h}-dash"), &fresh(), w, h, &dark);
+    }
+    for panel in PanelId::ALL {
+        let mut app = fresh();
+        if panel == PanelId::Sessions {
+            with_sessions(&mut app);
+        }
+        app.update(ch(char::from(b'0' + panel.number())));
+        app.update(key(KeyCode::Enter));
+        write(&format!("120x36-zoom-{}", panel.slug()), &app, 120, 36, &dark);
+    }
+    let mut app = fresh();
+    app.update(ch(':'));
+    write("120x36-palette", &app, 120, 36, &dark);
+    let mut app = fresh();
+    app.update(ch('e'));
+    write("120x36-explain-node", &app, 120, 36, &dark);
+    let mut app = fresh();
+    app.update(ch('2'));
+    app.update(key(KeyCode::Enter));
+    app.update(key(KeyCode::Down));
+    app.update(ch('x'));
+    write("120x36-cancel-dialog", &app, 120, 36, &dark);
+    let mut app = fresh();
+    with_sessions(&mut app);
+    app.update(ch('\\'));
+    if let Some(session) = app.claude.current_mut() {
+        session.branch = Some("main".into());
+        session.pane.start((23, 92), 1000);
+        session.pane.state = crate::claude::PaneState::Running;
+        session.pane.feed(CLAUDE_DEMO, true);
+    }
+    write("120x36-float-session", &app, 120, 36, &dark);
+    let mut app = fresh();
+    crate::ui2::wizard::open(&mut app, 0);
+    write("120x36-wizard", &app, 120, 36, &dark);
+    let mut app = fresh();
+    app.shell.tour = Some(0);
+    write("120x36-tour", &app, 120, 36, &dark);
+    let mut app = fresh();
+    app.update(ch('0'));
+    write("120x36-local", &app, 120, 36, &dark);
+    write("120x36-light", &fresh(), 120, 36, &light);
 }

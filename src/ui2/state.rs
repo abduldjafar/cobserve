@@ -51,6 +51,9 @@ pub struct Explained {
     pub lines: Vec<(String, bool)>,
     /// The text `y` copies and `⏎` hands to Claude.
     pub text: String,
+    /// Which of the subject's numbers: `e` again steps memory → CPU → (a query's) cores →
+    /// runaway, and round.
+    pub step: usize,
 }
 
 /// The floating session (`\\`): over any panel, or full; `prefix` is when `ctrl+\\` was pressed,
@@ -68,8 +71,6 @@ pub const WHICH_KEY_AFTER: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShellState {
-    /// The new shell is the one on screen (`UI=2`); the old one otherwise.
-    pub on: bool,
     /// What the top bar names after `cobserve ·`: the cluster, or `fake`.
     pub profile: String,
     pub focus: PanelId,
@@ -121,7 +122,6 @@ impl Default for ShellState {
     /// The focus starts on NODES (`01-screen.md` *Focus and zoom*).
     fn default() -> ShellState {
         ShellState {
-            on: false,
             profile: "prod".into(),
             focus: PanelId::Nodes,
             zoom: None,

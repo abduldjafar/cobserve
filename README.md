@@ -5,29 +5,30 @@ sessions you work with, all in one terminal. It **observes**: nothing in it can 
 ClickHouse query or a table. The one thing it does is cancel a Redash job you pick, after
 asking — what Redash's own Cancel button does.
 
-A terminal monitor for on call: the ClickHouse fleet and the Redash queue on one screen,
-**who** is using each node, and **what it means**: ranked insights, trends and forecasts, a
-fleet map, a tape of everything that changed, **every Airflow DAG's day** and **your Jira
-tickets** — and in the same window Claude Code, OpenCode or a shell, and a **SQL console on any
+A terminal monitor for on call, as **mission control**: one screen of eight numbered panels —
+the ClickHouse fleet, the Redash queue, every node as a tile, **who** holds the chosen node, **every
+Airflow DAG's day**, **your Jira tickets**, a tape of everything that changed, and your sessions —
+each framed in the colour of its worst finding and a key away from the whole screen. In the same
+window Claude Code, OpenCode or a shell, floating over any panel, and a **SQL console on any
 server** of the fleet, read-only, that suggests as you type and has Claude or OpenCode write the
-query for you. Around it all, the **day**: your local
-time, the prayer times where you are, and a reminder ten minutes before each.
+query for you. `e` on any number says where it comes from. Around it all, the **day**: your local
+time, the prayer times where you are, and a reminder before each.
 
-![NODES view](docs/screenshots/120x36-nodes.png)
+![The dashboard](docs/screenshots/120x36-dash.png)
 
 **New here?** [GUIDE.md](GUIDE.md) goes from zero to everyday use:
 
 - what you need, and installing it;
 - trying it with no fleet (`FAKE=1 cobserve`);
 - creating the read-only ClickHouse user and connecting it to your fleet and Redash;
-- a tour of every view and session, recipes for on call, and troubleshooting.
+- a tour of every panel and session, recipes for on call, and troubleshooting.
 
 The quick version:
 
 ```sh
 git clone https://github.com/abduldjafar/cobserve.git && cd cobserve
 cargo install --path .                 # Rust 1.88+; puts `cobserve` in ~/.cargo/bin
-FAKE=1 cobserve                        # a generated fleet: look around, ? for keys, q quits
+FAKE=1 cobserve                        # a generated fleet: look around, : for everything, q quits
 cobserve --credential ~/.config/cobserve/credentials.yaml    # your fleet (GUIDE.md §5)
 ```
 
@@ -42,67 +43,38 @@ on top of it and are listed in `DESIGN.md` §13.
 
 ## What is on screen
 
-| View | Key | What it answers |
+| Panel | Key | What it answers |
 |---|---|---|
-| **NODES** | `1` | Every node's memory and CPU against its own capacity, and who holds it: user rows (a query from Redash resolved to the person behind it) plus the server's own share always add up to the node (§5.3). Below the tree, **insights**; below them, the **drawer** for the selected row. |
-| **QUEUE** | `2` | Redash: per queue what **runs**, what **waits** and what is **stale**, and its workers. Every running job with its person, query and data source, and the ClickHouse query it became — live memory, cores and progress; who is waiting, and for how long against the 3-minute red line; and what RQ's started list holds although no worker runs it. The cursor opens the job's SQL; `x`, then `y`, cancels the job in Redash. |
-| **MAP** | `3` | The whole fleet as cards, marked by their severity, with bars and history. A forty-node fleet on one screen. |
-| **TAPE** | `4` | What changed, newest first: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining. |
-| **AIRFLOW** | `5` | Every DAG's last 24 hours: what **runs** now and how far its tasks are — a run going for a day is **stuck**, and says since when — what **waits**, what **failed** and at which task, and a line per DAG with its day on a timeline, an hour a cell, beside its schedule, its runs, when it last ran and when it runs next. |
-| **JIRA** | `6` | Your tickets in your board's columns — **In progress**, **In Review**, **Feedback** and what was **Done** this week — with their priority, how long each has been in its column, its due date against today and the time logged. |
-| **SESSIONS** | `7` | Claude Code itself — your own `claude`, signed in with your Pro or Max plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need, while the fleet and the Redash queue stay in sight above them. |
-| **LOCAL** | `0` | This machine, as Activity Monitor shows it: CPU against its cores, memory as app · wired · compressed · cached against all of it, the memory pressure the kernel reports and the swap — then every process, or every program (`g`), by CPU or memory (`s`), closed by *the rest*, so the rows add up to the machine. A line of it sits on every view, under REDASH. Beside it, **AI**: what Claude Code and OpenCode used today — tokens, their parts, OpenCode's cost and Claude Code's *≈ at API prices*, the plan's 5-hour window, the last seven days, by model and by project. Under Claude Code, the plan's own limits as `/usage` shows them — `Max 5x`, the session, the week, Fable's week, each with when it resets — read with Claude Code's login from the Keychain (one GET every five minutes, never refreshed). |
+| **FLEET** | `1` | The fleet's memory share in big digits with what it is of, the CPU share beside it, queries and runaways, and the history as a graph on a fixed scale. Zoomed: both graphs with ticks, and a row per node. |
+| **REDASH QUEUE** | `2` | Jobs waiting in big digits, running and stale, the workers, and how many running jobs hold a runaway ClickHouse query. Zoomed: per queue what **runs**, **waits** and is **stale**; every running job with its person, query, data source and the ClickHouse query it became — live memory, cores, progress; who waits and for how long. `x`, then `y`, cancels a job in Redash. |
+| **NODES** | `3` | A tile per node, worst first: memory bar and share, the last minutes, queries, runaways, the longest. Zoomed: bigger tiles with memory and CPU and their denominators. |
+| **NODE** | `4` | The chosen node: who holds it — user rows (a Redash query resolved to the person behind it) plus the server's own share, on one scale that adds up to the node (§5.3). Zoomed: GiB and cores per row, the chosen query and its SQL, memory and CPU over time. |
+| **AIRFLOW** | `5` | Every DAG's last 24 hours: a strip of the day, what **runs** now (a run going for a day is **stuck**), what **waits**, what **failed** and at which task. Zoomed: the runs, their tasks and logs, and a line per DAG with its day on a timeline; from 140 columns the loom weaves the day. |
+| **JIRA** | `6` | Your tickets: the flow across your board's columns, what is overdue, today's logged hours. Zoomed: the board as lanes, each ticket with its priority, time in the column, due date and time logged, the ticket in full, the month by ticket. |
+| **TAPE** | `7` | What changed, newest first, beside two strips of `✖` and `▲` a minute: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining, your cancels and notes. |
+| **SESSIONS** | `8` | Claude Code itself — your own `claude`, signed in with your plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need. `\` floats one over any panel. |
+| **this Mac** | `0` | This machine, as Activity Monitor shows it — CPU, memory and its pressure, every process or program — and what Claude Code and OpenCode used today and this month, with the plan's own limits. Its line joins the status bar from 140 columns. |
 
-![Query detail](docs/screenshots/140x40-query.png)
+Each panel's frame takes the colour of its worst finding and says its gist on its border. `:` is
+the palette — every action, and every node, person, query, job, DAG, ticket, session and tape
+line, fuzzy — and `e` explains the number under the cursor: its formula, the formula with the
+values, and the system table each input came from.
 
-### Jira and Airflow, wide
+![A node zoomed](docs/screenshots/120x36-zoom-node.png)
 
-From 140 columns, view 6 is a **board**: your board's columns as lanes side by side, each ticket a
-block with its priority, its summary in two lines, how long it has been there, its due date and the
-time logged — `← →` cross the lanes. View 5 is the **day woven**: the runs under way and the day's
-failures told in two lines each at the top, then a thread per DAG across the last 24 hours with
-its rhythm and next run beside it. Narrower, both are the lists described above.
+### The insights
 
-### The shelf
-
-Above every view: the fleet, the Redash queue and this machine. On a terminal of 150 columns and
-30 rows they are three cards side by side, each framed in its severity's colour with a word on why
-(`✖ 5 runaway · ▲ 2 hot`, `oldest 1m49s ▲`, `pressure normal`) and a click away from its view;
-narrower or shorter, the same numbers are a line each.
-
-### Insights
-
-One short line for each thing in trouble, worst first: a node, the Redash queue, a Redash
-query running twice. A node with several problems is still one line — its worst, then
-`+N more`. When all is well there is one line that says so.
-
-```
-✖ clickhouse5     no access · monitor needs SELECT on system.asynchronous_metrics
-✖ clickhouse3     memory 91.2% · CPU 93.5% · the server itself holds 46%  +1 more
-▲ clickhouse-bi   j.petrova's query at 88% of its memory limit  +2 more
-▲ Redash          queries: 16 waiting · oldest 1m49s · 2 of 6 workers on long queries
-▲ Redash #8585    running 2× · j.petrova
-```
-
-`tab` picks a line and the drawer shows the numbers behind it — who holds what, the forecast,
-the free memory against one more query, every finding about that node — and `⏎` goes to the
-row. What a line can say:
-
-- a node without numbers: **unreachable**, **no access** (it answered, but the login lacks a
-  grant — the grant is named), **login refused**, or **not polled** (no login for it);
-- memory or CPU hot, and whether a **person** or **the server itself** holds it;
-- memory **climbing** to full — *"↗ full in ~3m30s"*;
-- a query close to **its own** memory limit, and when ClickHouse will kill it;
-- long queries, replica lag;
-- the Redash queue backing up, and whether its workers are stuck on long ClickHouse queries;
-- the same Redash query running twice.
-
-The heaviest user, slow polls and new nodes are on screen elsewhere (`u`, the drawer, the tape)
-and are not repeated here.
+One short line for each thing in trouble, worst first — a node, the Redash queue, a Redash query
+running twice — is what the panels' frames sum up, and what `cobserve --plain` prints under the
+panels' summaries. What a line can say: a node without numbers (**unreachable**, **no access**
+with the missing grant, **login refused**, **not polled**); memory or CPU hot and whether a
+**person** or **the server itself** holds it; memory **climbing** to full (*"↗ full in ~3m30s"*);
+a query close to **its own** memory limit; long queries, replica lag; the queue backing up and
+whether its workers are stuck on long ClickHouse queries; the same Redash query running twice.
 
 ### The Redash queue
 
-View 2 reads what the Redash admins' own queue script reads, with the same admin API key:
+The queue reads what the Redash admins' own queue script reads, with the same admin API key:
 `/api/admin/queries/rq_status` for the queues and the workers, `/api/users/{id}` for who (name
 and address), `/api/queries/{id}` for the query (name and SQL) and `/api/data_sources` for what
 it runs on (name and type). The one thing it sends is a cancel you asked for.
@@ -113,7 +85,7 @@ it runs on (name and type). The one thing it sends is a cancel you asked for.
   *no worker holds it*. They take no worker; a Redash admin can clear them.
 - **IN CLICKHOUSE** follows a running job into ClickHouse by the `Job ID:` Redash writes into
   the comment of every query (and by its query number when there is none): `⏎` goes to the
-  query on view 1. A job on another database says so — *mysql · not ClickHouse*, *runs inside
+  query on its node. A job on another database says so — *mysql · not ClickHouse*, *runs inside
   Redash* for Query Results.
 - **WAITING** has names and ages only with Redis (`redis_url:`); Redash's API only counts the
   waiting jobs.
@@ -125,13 +97,12 @@ it runs on (name and type). The one thing it sends is a cancel you asked for.
   `KILL QUERY` — the question and the notice after it say so, and on which node, and the tape
   keeps a line for every cancel.
 
-![x on a running job: what a cancel will do, before anything is sent](docs/screenshots/120x36-queue-cancel.png)
+![x on a running job: what a cancel will do, before anything is sent](docs/screenshots/120x36-cancel-dialog.png)
 
-![Redash with leftovers in its started list](docs/screenshots/120x36-queue-leftovers.png)
 
 ### Airflow: every DAG's day
 
-View 5 reads Airflow's stable REST API (`/api/v1`, Airflow 2): every 15 s what runs and waits
+The AIRFLOW panel reads Airflow's stable REST API (`/api/v1`, Airflow 2): every 15 s what runs and waits
 and how the scheduler and the triggerer are, every minute the runs of the last 24 hours, every
 five minutes the DAGs. It signs in as the web UI does — the login form and its CSRF token, then
 the session cookie — because an Airflow whose API takes only its own session (the default)
@@ -173,15 +144,13 @@ one of them its tasks. `esc` goes back a page. `o` opens what is under the curso
 itself, `y` copies its link, `r` reads the page (or the view) again. Set `AIRFLOW_URL`, `AIRFLOW_USER` and `AIRFLOW_PASSWORD` (the login of its web UI), or
 an `airflow:` section in the credential file.
 
-![Airflow](docs/screenshots/120x36-airflow.png)
+![Airflow zoomed](docs/screenshots/120x36-zoom-airflow.png)
 
-![A failed run's tasks](docs/screenshots/120x36-airflow-tasks.png)
 
-![The failed task's log, at its end](docs/screenshots/120x36-airflow-log.png)
 
 ### Jira: your tickets
 
-View 6 is your Jira board, for you alone: the tickets assigned to the token's owner, in the
+The JIRA panel is your Jira board, for you alone: the tickets assigned to the token's owner, in the
 board's columns — by default **In progress**, **In Review**, **Feedback** and **Done**, the last
 only for what was resolved in the last seven days, as the board itself hides older ones. It
 reads the REST API of Jira Server and Data Center (`/rest/api/2`) with a personal access token,
@@ -224,30 +193,28 @@ every minute, GET only.
   chosen, its tickets and each one's share of it. `← →` choose the day (its column lit all the
   way down), `↑ ↓` a ticket, `⏎` opens that ticket in full, `esc` goes back.
 
-![The month's time by ticket](docs/screenshots/120x36-jira-time.png)
 
 Set `JIRA_URL` and `JIRA_TOKEN` (in Jira: Profile → Personal Access Tokens), or a `jira:` section
 in the credential file. For another board, `JIRA_STATUSES` names its columns, left to right
 (the last is where finished tickets go), and `JIRA_DONE_DAYS` how far back that one reaches.
 
-![Jira](docs/screenshots/120x36-jira.png)
+![Jira zoomed: the board](docs/screenshots/120x36-zoom-jira.png)
 
-![A ticket in full](docs/screenshots/120x36-jira-ticket.png)
 
 ### The day, and prayer times
 
-The line under the masthead is the day where you are, from Subuh to Isya: every prayer time a
+The top bar's middle is the day where you are, from Subuh to Isya: every prayer time a
 stop on it, the present a point moving between them — the way behind solid, the way ahead
 dotted — and the next stop saying how far off it is.
 
 ```text
-━ Subuh 04:21 ━━━━━━━ Terbit 05:33 ━━━━━━━ Dzuhur 11:45 ━━━━━━━ Ashar 14:48 ━━━●┄┄┄┄ Maghrib 17:50 · in 1h58m ┄┄┄┄ Isya 18:59 ┄  Jakarta
+04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59        (names from 80 free columns)
 ```
 
-Ten minutes before a prayer its reminder takes the line — `◷ Maghrib in 9:29 · 17:50 WIB` — and
+Ten minutes before a prayer its reminder takes the line — `◷ Maghrib in 9:29` — and
 is said once beyond the screen: the terminal's bell and a notification of your desktop (through
 iTerm2, Ghostty or WezTerm themselves, through macOS or `notify-send` elsewhere). At its time it
-says so for five minutes. `d` waves it away (`ctrl+\ d` in a session), as does a click on ✕.
+says so for five minutes. `d` waves it away.
 The terminal's own title carries the next prayer, for a tab in the background.
 
 - The times are computed here, from the sun, by **Kemenag**'s criteria — Subuh at 20°, Isya at
@@ -264,14 +231,12 @@ The terminal's own title carries the next prayer, for a tab in the background.
   machine's zone as it changes; `z` or a click on it shows UTC — the servers' own — and back.
   `TIME=utc` starts on UTC. The tape and the drawer follow the clock; prayer times stay local.
 
-![The reminder ten minutes before Maghrib](docs/screenshots/120x36-reminder.png)
 
 ### Claude, OpenCode and a terminal in the monitor
 
-View 7 runs programs in a terminal inside the monitor — the official `claude`, `opencode`, or
-your own shell: the shelf — the FLEET and REDASH lines and a card for every node — stays on
-top, the session gets the rest. Each is the same as in a terminal tab of its own — any
-project, any question, its own permission prompts.
+Panel 8 runs programs in a terminal inside the monitor — the official `claude`, `opencode`, or
+your own shell — each the same as in a terminal tab of its own: any project, any question, its
+own permission prompts.
 
 - **Claude** is Claude Code signed in with your **Pro or Max plan**: install it and sign in once
   (`claude`, then `/login`). `CLAUDE_CMD` runs something else, or the same with arguments:
@@ -285,96 +250,53 @@ project, any question, its own permission prompts.
   `REDASH_ADMIN_API_KEY`, `REDIS_URL`, `AIRFLOW_PASSWORD`, `JIRA_TOKEN`).
 - Each session works in a folder of its own — the first in the one the monitor was started
   from. What runs there can read files there, so keep the credential file somewhere else.
-  `--claude` opens on view 7.
+  `--claude` starts with a Claude session floating.
 
-Up to fifty sessions run side by side, each its own program with its own conversation, listed
-beside it like a terminal's tabs, the one on screen raised: what it runs (`✻` Claude, `▣`
-OpenCode, `❯` a terminal, `▦` SQL), its name — the one you gave it, what the program says it is
-working on, or else its folder — and number, and under them the folder and its git branch. A
-session that rings while you are elsewhere is marked `●` there and on `7 sessions`; one that
-ended, `✕`. The sessions are numbered on from the views: `1`–`6` are the monitor, `7` on the
-sessions — a digit picks the first three, `ctrl+\` then `↑` `↓` walks through all of them, and
-`ctrl+\` then `/` finds one by its name, folder, kind, server or number. The more there are, the
-closer the list packs them — a line each for many, the one on screen keeping its folder — and it
-follows the one on screen, with how many more are above and below it.
-
-From six sessions on more than one project the list sorts them **by project**: a project with
-two or more sessions is a group under its folder's name, with how many there are, `● n` when some
-rang, and its branch when they share one; the rest sit under `other`. A session is a line, the one
-on screen keeping where it works, and `ctrl+\` `↑` `↓` walk them in that order. `⌕ find one ctrl+\ /`
-over the list is the way to the one you want by name, folder, kind, server or number. Over it
-too, what Claude Code and OpenCode used today (`✻ 287M today · ≈ $191 · 5h 1h26m`), and on each
-session's line, faint, the tokens its own conversation used today — view 0's AI panel has the rest.
-
-The fleet stays in sight above the sessions, a card for every node — the worst first, marked
-`✖` or `▲` (a quiet one `●`), with its lag when it is behind — and on every card its memory and
-its CPU, a thin bar and the share each:
-
-```text
-      ✖ clickhouse3          ▲ clickhouse7 lag 12s  ● clickhouse-bi        +6 more
- mem  ━━━━━━━━━━━━━━╸━  91%  ━━━━━━━━━━╺━━━━━  62%  ━━━━━━━━━━━╺━━━━  67%  ≤ 42%
- cpu  ━━━━━━━━━━━━━━━╺  95%  ━━━━━╸━━━━━━━━━━  36%  ━━━━━━━━━━━━╺━━━  72%  ≤ 29%
-```
-
-A node that does not answer says why (`↯ no access`). As many cards as the width holds, then
-how many more and how high the rest go; a click on a card opens its node on view 1. On a
-terminal under 28 rows the cards give way to one line on the shelf, each node in a few words:
-`✖ clickhouse3 mem 91% cpu 95%`.
+**Three ways to see one.** Panel 8 lists them: what it runs (`✻` Claude, `▣` OpenCode, `❯` a
+terminal, `▦` SQL), its number, its name — the one you gave it, what the program says it is
+working on, or its folder — its folder and branch, and its state (`● running`, `! attention`
+when it rang while out of sight, `↻ kept`, `✕ ended`). `⏎` zooms it: the list — by project once
+there are many — beside the chosen session's screen, with what Claude Code and OpenCode used today
+over it; `⏎` again opens the session full, every key the program's, and `ctrl+\` comes back to the
+list. And `\` **floats** the chosen session over whatever panel you are on — the fleet stays in
+sight around it — `f` in the prefix makes it full, `ctrl+\` twice hides it.
 
 **Sessions are kept.** Quit — or close the terminal — and the next start lists them again,
 marked `↻`; each takes its conversation up where it was when you open it (`claude --resume`,
-`opencode --session`). **Past conversations** (`ctrl+\ p`, or the entry under the sessions)
-lists the conversations Claude Code and OpenCode had anywhere — in another terminal, in an
-earlier run — by title or first prompt, folder and age, newest first; one opens in a new
-session in its own folder, as a copy when it is still open in the other terminal. The picker of
-a new session lists the folder's own under **Open the session here**. Only the names of
-conversations are read, and nothing leaves the machine; the list of sessions is kept in
-`~/.local/state/cobserve/sessions.json`.
+`opencode --session`). **Past conversations** (the entry under the sessions in the zoom) lists the
+conversations Claude Code and OpenCode had anywhere — in another terminal, in an earlier run — by
+title or first prompt, folder and age, newest first; one opens in a new session in its own folder.
+Only the names of conversations are read, and nothing leaves the machine; the list of sessions
+is kept in `~/.local/state/cobserve/sessions.json`.
 
 A new session's folder is picked as in a file explorer, no typing needed: it starts in the
 folder the session on screen works in, a click on a folder goes into it, a click on a step of
 the path above (`~ › work › cobserve`) goes back up to it, and **Open the session here** (or
 `⏎`) starts it there. Above them, a click chooses what it runs — Claude, OpenCode, Terminal —
-or `shift+tab` does. Typing searches the folders below by name — up to six levels down,
-nearest first, `node_modules` and the like left out — and a path (`~/`, `/`, `../`) is
+or `shift+tab` does. Typing searches the folders below by name, and a path (`~/`, `/`, `../`) is
 completed like a shell does. A repository shows its branch.
 
-| On view 7 | |
+| In a floating session | |
 |---|---|
 | any key | goes to the session — `q`, the digits and `ctrl+c` too |
-| `⇧⏎` · `ctrl+j` | a new line in Claude's or OpenCode's prompt. `⇧⏎` (and `⌘⏎`, `ctrl+⏎`) where the terminal tells them from `⏎` — the kitty keyboard protocol: Ghostty, kitty, foot and others that speak it — and `ctrl+j`, `⌥⏎` (⌥ as Meta) or `\` then `⏎` in any; the footer says which |
-| `ctrl+\` then `1`…`6` | that view of the monitor |
-| `ctrl+\` then `7`…`9` | that session — the first three |
-| `ctrl+\` then `↑` `↓` | the one before or after, through all of them |
-| `ctrl+\` then `/` | find one: type part of its name, folder, kind, server or number, `↑` `↓`, `⏎` |
-| `ctrl+\` then `n` | a new session, of the kind on screen: pick its folder — `↑` `↓` choose, `⏎` opens it there, `→` goes in, `←` up, typing searches, `shift+tab` changes what it runs, `esc` clears the search or gives up |
-| `ctrl+\` then `c` · `o` · `t` · `q` | a new Claude, OpenCode, terminal or query session, the same way — a query session's picker lists the servers |
-| `ctrl+\` then `p` | past conversations, from any folder or terminal, to take up in a new session |
-| `ctrl+\` then `r` | rename the one on screen (an empty name gives the default back) |
-| `ctrl+\` then `x` `x` | close it — its conversation is still in **past conversations** |
-| `ctrl+\` then `z` · `d` | the clock local ↔ UTC · a prayer's reminder away |
-| `ctrl+\` then `esc` | back to the session |
-| `ctrl+\` `ctrl+\` | back to the monitor, where you came from |
-| `F1`…`F9` | the same tabs from anywhere, without `ctrl+\` |
-| a click | a tab in the masthead, the clock, a session, **+ new session**, **past conversations**, a folder, what to run, a node's card, the reminder's ✕ |
-| the wheel | over Claude, its page up and down; over a shell, back through what went past (a key comes back down), and in `less` or `vim` the arrow keys; over OpenCode, what it asked for; elsewhere, the cursor |
+| `⇧⏎` · `ctrl+j` | a new line in Claude's or OpenCode's prompt. `⇧⏎` where the terminal tells it from `⏎` (the kitty keyboard protocol), `ctrl+j`, `⌥⏎` or `\` then `⏎` in any |
+| `ctrl+\` then `1`…`6` | a panel, the pane hidden |
+| `ctrl+\` then `7`…`9` · `↑` `↓` | another session: the first three by number, or the one before or after |
+| `ctrl+\` then `/` | find one: part of its name, folder, kind, server or number |
+| `ctrl+\` then `n` · `c` `o` `t` `q` | a new session of the kind on screen · a new Claude, OpenCode, terminal or query session |
+| `ctrl+\` then `f` · `r` · `x` `x` | full ↔ floating · rename it · close it (its conversation stays in **past conversations**) |
+| `ctrl+\` then `esc` · `ctrl+\` `ctrl+\` | back to the session · hide the pane |
+| `F1`…`F8` · `F9` · `F10` | a panel · the next session · this Mac — from anywhere, without `ctrl+\` |
 
-From the monitor, `7`…`9` or `ctrl+\` go to the sessions. `ctrl+z` is not passed on to Claude
-or OpenCode — there is no shell around them to bring them back — but it is to a terminal,
-whose shell suspends its own jobs. With the mouse on, selecting text takes the terminal's
-modifier — Shift in most, ⌥ in iTerm2 and Terminal — and `MOUSE=0` leaves the mouse to the
-terminal altogether.
+![A session floating over the dashboard](docs/screenshots/120x36-float-session.png)
 
-![Claude, OpenCode and a terminal in view 7](docs/screenshots/160x48-claude.png)
+![The sessions zoomed](docs/screenshots/120x36-zoom-sessions.png)
 
-![A new session's folder, picked with clicks](docs/screenshots/160x48-claude-new.png)
-
-![Two dozen sessions, a line each](docs/screenshots/140x40-claude-many.png)
 
 ### SQL on any server: query sessions
 
-A query session is a SQL console on one server of the fleet, beside the other sessions on
-view 7: `c` on a node in view 1 (or a tile in view 3) opens one there, `ctrl+\ q` asks which
+A query session is a SQL console on one server of the fleet, beside the other sessions:
+`c` opens one on the chosen node, floating, `ctrl+\ q` in a floating session asks which
 server, and so does **▦ Query** in a new session's picker. Everything it runs is read-only —
 `readonly=1`, 30 seconds at most, the first 1000 rows — and stopped on the server when you stop
 it (`ctrl+c`) or close the session. The server is a chip at its top: a click, or `ctrl+o`,
@@ -417,11 +339,8 @@ switches it to any other server of the fleet, each with the login the monitor ha
 - What ran is kept: `↑` on the first line goes back through it, and the session — its server,
   its text and what ran — comes back with the next start.
 
-![A query session: what Claude wrote for a comment, and its answer](docs/screenshots/140x40-query-session.png)
 
-![A line of it selected, and Claude asked about that line alone](docs/screenshots/140x40-query-ask.png)
 
-![Suggestions as it is typed](docs/screenshots/140x40-query-suggest.png)
 
 | In a query session | |
 |---|---|
@@ -437,23 +356,23 @@ switches it to any other server of the fleet, each with the login the monitor ha
 | `ctrl+o` | run on another server |
 | `shift+tab` | the answer: the arrows move, `y` `Y` copy, `tab` comes back |
 | `↑` on the first line | what ran before |
-| `ctrl+\` | the session bar, as everywhere on view 7 |
+| `ctrl+\` | the prefix, as in every floating session |
 
 ### Reading the screen
 
 | | |
 |---|---|
 | `✖` `▲` | critical (red) · warning (amber), by `DESIGN.md` §7 |
-| `✕` | runaway query: ≥ 30 s, or ≥ 80% of its own memory limit |
+| `!` | runaway query: ≥ 30 s, or ≥ 80% of its own memory limit |
 | `↯` | node without numbers — unreachable, no access, login refused or not polled; unknown, never zero |
-| `↗ ↑ ↘ ↓` | rising · rising fast · falling, over the last minute |
-| `▁▂▃▅▇` | the last 4 minutes, each cell its worst moment, coloured by severity |
+| `▁▂▃▅▇` `⣀⣤⣶⣿` | the last 4 minutes on a fixed scale, each cell its worst moment, coloured by severity (braille by default, `GRAPH=block` or `ascii`) |
 | `NEW` | joined the fleet during this session |
 | `━━●┄┄` | the day: behind, now, ahead — prayer times at the place |
 | `↻` | a session kept from the last run, or a conversation to take up |
+| `◷` | replaying a minute (`[` `]`, `t` back to live) |
 
-Bars are thin lines with half-cell resolution and share one scale per column, so a node's bar
-is the sum of the bars under it.
+In the NODE panel the bars share one scale, so a node's people and its server fill exactly the
+node's share between them (§5.3).
 
 ## Running it
 
@@ -522,8 +441,8 @@ have a user the other one does not know.
 | `REDASH_URL` / `REDASH_ADMIN_API_KEY` | Redash admin API | optional — the strip says *not configured* |
 | `REDIS_URL` | Redash's RQ Redis (read-only), for the names of **waiting** jobs | optional |
 | `EMAIL_DOMAIN` | your organisation's e-mail domain: people there are shown by name alone (`grigol.gankava`), everyone else by the whole address | unset — every address whole |
-| `AIRFLOW_URL` / `AIRFLOW_USER` / `AIRFLOW_PASSWORD` | Airflow 2 for view 5, and the login of its web UI | optional — view 5 says how to set it |
-| `JIRA_URL` / `JIRA_TOKEN` | Jira Server or Data Center for view 6, and a personal access token | optional — view 6 says how to set it |
+| `AIRFLOW_URL` / `AIRFLOW_USER` / `AIRFLOW_PASSWORD` | Airflow 2 for panel 5, and the login of its web UI | optional — panel 5 says how to set it |
+| `JIRA_URL` / `JIRA_TOKEN` | Jira Server or Data Center for panel 6, and a personal access token | optional — panel 6 says how to set it |
 | `JIRA_STATUSES` | the board's columns, left to right, comma-separated; the last is where finished tickets go | `In progress,In Review,Feedback,Done` |
 | `JIRA_DONE_DAYS` | how many days of finished tickets the last column shows | `7` |
 | `CLAUDE_CMD` | what a Claude session runs, with its arguments | `claude` |
@@ -550,30 +469,31 @@ same cloth before the dye: a mori ground, soga ink, a deep tarum.
 
 | Key | |
 |---|---|
-| `↑ ↓` `j k` | move · `PgUp PgDn Home End` jump |
-| `⏎` | open / close a node or user · on an insight, a queue job, a tile or a tape line: go there · on a run, a DAG or a ticket: its detail here — tasks, a log, the ticket in full · `esc` back |
-| `← →` `h l` | collapse / expand |
-| `J K` `shift ↑↓` | scroll the SQL of the selected query or Redash job (it opens right under its row) |
-| `tab` | move between the tree and the insights |
-| `space` | fold / unfold the healthy nodes |
-| `u` | pivot node ↔ user: who is burning the fleet |
-| `c` | a query session on the node under the cursor — SQL, read-only (also on view 3) |
-| `s` | sort: pressure, memory, CPU, name |
-| `/` | filter by node, user, person, SQL or query id · `esc` clears |
-| `x` then `y` | view 2: cancel the Redash job under the cursor — any other key keeps it |
-| `o` · `y` · `r` | views 5 and 6: open the row (or the page) in the browser · copy its link · read it again now |
-| `1`…`6` | views: nodes, queue, map, tape, airflow, jira · `7`…`9` the sessions |
-| `F1`…`F9` | the same, from anywhere — Claude's screen too |
-| `ctrl+\` | the sessions (view 7); there, the key before a number — see *Claude, OpenCode and a terminal in the monitor* |
-| a click · the wheel | a row, an insight, a job, a run, a ticket, a tile or a tape line puts the cursor there, a second click opens it; a tab, a session · the wheel moves the cursor (on view 7, the session's page up and down) |
-| `p` | pause (the numbers stop, the clock does not) |
-| `?` | help · `q` quit |
+| `1`…`8` · `tab` | focus a panel (its title turns into a chip) · while zoomed, switch the zoom |
+| `⏎` · `esc` | the focused panel on the whole screen · back; inside a zoom `⏎` is the panel's own open — a node, a job's query, a run's tasks, a ticket in full, a tape line's subject |
+| `↑ ↓ ← →` `h j k l` | the focused panel's cursor · `PgUp PgDn Home End` jump |
+| `e` | explain the number under the cursor: formula, values, sources · `⏎` asks Claude, `y` copies |
+| `:` · `?` | the palette: every action and object, fuzzy, `tab` for the channels · the keys of this screen |
+| `/` · `s` | filter the tiles · sort them: pressure, memory, CPU, name |
+| `c` | a query session on the chosen node — SQL, read-only, floating |
+| `\\` · `ctrl+\\` | float a session · its prefix (see above) |
+| `x` then `y` | in the queue: cancel the Redash job under the cursor — any other key keeps it |
+| `o` · `y` · `r` | open the row in the browser · copy its link · read Airflow and Jira again now |
+| `J K` | scroll the SQL under a Redash job |
+| `n` | a note on the tape |
+| `[` `]` `t` | replay a minute back · forward · back to live |
+| `p` · `+` | layout: all → fleet → ops · density: comfortable → compact → focus |
+| `F1`…`F8` · `F10` | a panel zoomed · this Mac — from anywhere, a session's screen too |
+| `0` | this Mac |
+| a click · the wheel | a panel takes the focus, a second click opens it; inside a zoom a row puts the cursor there, a second click opens it · the wheel moves the cursor |
+| `space` | pause (the numbers stop, the clock does not) |
+| `q` | quit |
 
 Nothing here can kill or change a ClickHouse query: every request is `readonly=1`, and also capped at
 2 threads, 6 GB and 2 seconds when the server lets a session set those (a read-only user's
 own profile carries its caps otherwise). A query session's queries are `readonly=1` too, with
 30 seconds and 1000 rows when the server allows them; a write is refused by the server itself.
-The only request that changes anything goes to Redash, and only after `x` and `y` on view 2:
+The only request that changes anything goes to Redash, and only after `x` and `y` in the queue:
 the cancel of that one job.
 
 ## The desktop app
@@ -611,15 +531,15 @@ JIRA_TOKEN=personal-access-token
 
 The window has a header and a status bar of its own, drawn by the app, not in the terminal:
 
-- **the views as tabs** — Nodes to Sessions and Local, `⌘1` … `⌘8` or a click; Sessions shows
-  how many there are, and rings when one calls while out of sight;
+- **the panels as tabs** — Fleet to Sessions and Local, `⌘1` … `⌘9` or a click (it sends the
+  panel's F-key, which zooms it from anywhere); Sessions shows how many there are, and rings when
+  one calls while out of sight;
 - **the clock and the next prayer** on the right, and the fleet's worst as the dot by the name;
 - **a chip per thing watched** along the bottom — ClickHouse, Redash, Airflow, Jira, the hours
-  logged and this Mac — coloured by severity, a click opens its view.
+  logged and this Mac — coloured by severity, a click opens its panel.
 
 cobserve tells the app what to show with a private escape sequence (OSC 7700, JSON, only when
-`TERM_PROGRAM` is `cobserve-desktop` and only when it changed), and leaves its own masthead off,
-since the header says it. The numbers are the screen's own (`src/desktop.rs`).
+`TERM_PROGRAM` is `cobserve-desktop` and only when it changed). The numbers are the screen's own (`src/desktop.rs`).
 
 Files dropped on the window are typed in as their paths, quoted for the shell — for Claude Code or
 OpenCode in a session. Programs in `~/.opencode/bin`, `~/.claude/local`, `~/.local/bin`,
@@ -633,15 +553,17 @@ files: they hold logins.
 ## Developing
 
 ```sh
-cargo test                            # model, insights, tape, history, every view at every size
+cargo test                            # model, insights, tape, history, the screens of docs/redesign
 cargo clippy --all-targets -- -D warnings
-./dev/screenshots.sh                  # docs/screenshots/: text for every view, PNGs for these
+./dev/screenshots.sh                  # docs/screenshots/: text for every screen, PNGs for these
+cobserve --plain                      # no screen: the panels' summaries every poll
 cargo test -p cobserve-desktop        # the desktop app's own tests
-cargo test live_airflow_and_jira -- --ignored --nocapture   # views 5 and 6 against your own
+cargo test live_airflow_and_jira -- --ignored --nocapture   # Airflow and Jira against your own
                                       # Airflow and Jira, read once and drawn (AIRFLOW_*, JIRA_* set)
 ```
 
 | | |
 |---|---|
-| ![QUEUE](docs/screenshots/120x36-queue.png) | ![MAP](docs/screenshots/120x36-map.png) |
-| ![TAPE](docs/screenshots/120x36-tape.png) | |
+| ![The queue zoomed](docs/screenshots/120x36-zoom-queue.png) | ![The tiles zoomed](docs/screenshots/120x36-zoom-nodes.png) |
+| ![The palette](docs/screenshots/120x36-palette.png) | ![Explain this number](docs/screenshots/120x36-explain-node.png) |
+| ![80×24](docs/screenshots/80x24-dash.png) | ![160×48](docs/screenshots/160x48-dash.png) |

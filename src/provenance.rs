@@ -7,9 +7,6 @@
 //! formula as a function too, so the tests can check that evaluating the inputs reproduces what
 //! `model.rs` said — for every metric of the fake fleet.
 
-// Every §5 formula has its explain_*; the popover uses those its panels point at so far.
-#![allow(dead_code)]
-
 use crate::model::{self, FleetTotals, NodeSnapshot, NodeView, QueryRow, QueryStat, UserSlice};
 use std::time::SystemTime;
 
@@ -96,13 +93,6 @@ impl Provenance {
             None => format!("{text} = — (unknown)"),
         }
     }
-}
-
-/// A number with its provenance, for the panels that hand both to the popover.
-#[derive(Debug, Clone)]
-pub struct Metric<T> {
-    pub value: T,
-    pub prov: Provenance,
 }
 
 const MEM_USED: &str = "system.asynchronous_metrics · MemoryResident";

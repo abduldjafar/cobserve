@@ -132,15 +132,6 @@ pub fn sparkline(samples: &[Option<f64>], max: f64) -> String {
         .collect()
 }
 
-/// One slice in `per` of `samples`, the worst of each group: `width` columns from
-/// `width × per` samples for a series drawn at one sample a column.
-pub fn worst_of(samples: &[Option<f64>], per: usize) -> Vec<Option<f64>> {
-    samples
-        .chunks(per.max(1))
-        .map(|c| c.iter().flatten().copied().fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v)))))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +158,5 @@ mod tests {
         assert_eq!(rows(&buf), ["⣇"]);
         assert_eq!(stretch(vec![None, Some(1.0), None, Some(2.0), None]), [None, Some(1.0), Some(1.0), Some(2.0), Some(2.0)]);
         assert_eq!(sparkline(&[Some(0.0), Some(99.0), None], 100.0), "▁█ ");
-        assert_eq!(worst_of(&[Some(1.0), Some(3.0), None, None], 2), [Some(3.0), None]);
     }
 }

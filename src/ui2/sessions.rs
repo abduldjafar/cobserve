@@ -35,7 +35,7 @@ pub fn open(app: &mut App) {
     }
     if !app.caps.keyboard && !app.shell.fkeys_told {
         app.shell.fkeys_told = true;
-        toast(app, "if ctrl+\\ does not reach cobserve here: F1–F6 a panel · F9 next session · F10 hide");
+        toast(app, "if ctrl+\\ does not reach cobserve here: F1–F8 a panel · F9 the next session · F10 this machine");
     }
 }
 
@@ -93,18 +93,6 @@ pub fn float_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    if let KeyCode::F(n) = key.code {
-        match n {
-            1..=6 => {
-                app.shell.float = None;
-                app.shell.focus_on(PanelId::ALL[n as usize - 1]);
-            }
-            9 => app.claude.step(true),
-            10 => app.shell.float = None,
-            _ => {}
-        }
-        return;
-    }
     if prefix {
         if let Some(f) = app.shell.float.as_mut() {
             f.prefix = None;
@@ -155,7 +143,8 @@ fn prefix_key(app: &mut App, key: KeyEvent) {
             app.ask_new_session(Some(kind));
         }
         KeyCode::Char('r') => {
-            let name = app.claude.current().map(|s| s.label()).unwrap_or_default();
+            // Its own name to edit, empty when it has none (the label is the folder's, not a name).
+            let name = app.claude.current().and_then(|s| s.name.clone()).unwrap_or_default();
             app.shell.float = None;
             zoom(app);
             app.claude.mode = Mode::Naming(name);

@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › queue                                               esc back   ● live   15:52:07 WIB
+╭ 2 REDASH QUEUE · redash.example.net · 10.1.0 ───────────────────────────────────────── 7 workers, 6 busy · esc back ─╮
+│  redash.example.net · Redash 10.1.0 · 7 workers, 6 busy                                              read 1m57s ago  │
+│                                                                                                                      │
+│  QUEUE              RUNNING  WAITING  OLDEST   WORKERS               STALE   WAITING · last 4 min                    │
+│  queries                  4       13  3m43s ✖  ●●●● 4/4 busy             3          ▇█▇▆██▅██                        │
+│  scheduled_queries        2        3  1m01s ▲  ●● 2/2 busy               ·          ▃▃▃▃▃▃▃▃▃                        │
+│  default · emails · periodic · schemas  idle                                                                         │
+│                                                                                                                      │
+│ ─ RUNNING · 6 on a worker ────────────────────────────────────────────────────────────────────────────────────────── │
+│   FOR        WHO             QUERY                                SOURCE          IN CLICKHOUSE · mem · cores · done │
+│     6m38s ✕  grigol.gankava  #7438 Gateway transfers              clickhouse3     → clickhouse3 16.3G 3.1c 57%       │
+│ ▌   5m38s ✕  j.petrova       #8585 AML dashboard                  clickhouse-bi   → clickhouse-bi 21.2G 1.9c 96%     │
+│     ▎ SELECT   ╭─ Cancel Redash job run-2 · j.petrova? ─────────────────────────────────────────────╮                │
+│     ▎   toStart│                                                                                    │                │
+│     ▎   countIf│  #8585 AML dashboard · clickhouse-bi · running 5m38s                               │                │
+│     ▎ FROM open│  Its query on clickhouse-bi keeps running: Redash's cancel does not reach it, an…  │                │
+│     ▎ WHERE ts │  This cannot be undone. The job can be run again from Redash.                      │                │
+│     ▎ GROUP BY │                                                                                    │                │
+│     4m38s    m.│                                                                                    │ 1.2c 79%       │
+│     4m23s ✕  r.│  [y] cancel the job     [esc] keep it                                              │ 2.2c 77%       │
+│     2m51s    d.╰────────────────────────────────────────────────────────────────────────────────────╯use             │
+│       51s    a.vaitkus       #8470 Merchant risk · rollup         Query Results   runs inside Redash                 │
+│                                                                                                                      │
+│ ─ WAITING · 16 in the queues · 7 named ───────────────────────────────────────────────────────────────────────────── │
+│   WAIT              WHO             QUERY                                                           SOURCE           │
+│     3m43s ✖ ━━━━━━  r.simonyte      #8093 July close pack · by country                              clickhouse-bi    │
+│     3m25s ✖ ━━━━━━  j.petrova       #8113 AML dashboard · by country                                clickhouse3      │
+│     3m07s ✖ ━━━━━━  m.kairys        #7712 FX exposure · intraday                                    clickhouse-bi    │
+│     2m49s ▲ ━━━━━╸  grigol.gankava  #8092 Gateway transfers · hourly                                clickhouse3      │
+│ ─ cancel in Redash? · #8585 AML dashboard of j.petrova ───────────────────────────────────────────────────────────── │
+│ ⊘ running 5m38s on a worker of queries · j.petrova · on clickhouse-bi                                                │
+│ its worker is freed — but its query runs on in ClickHouse on clickhouse-bi until KILL QUERY stops it                 │
+│ y cancels it · any other key keeps it · DELETE /api/jobs/run-2, as Redash's Cancel does                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ move   ⏎ the node   x cancel job   J K scroll SQL                          9/9 nodes · 1.0 s · read-only

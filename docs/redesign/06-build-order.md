@@ -107,12 +107,22 @@ and the tiles; the other panels stay live until feature A1 stores their minutes.
 on the grid) zooms today's view 0; its line joins the status bar from 140 columns. `:theme` and
 `:prayer` came with the palette's settings.
 
-## Phase 6 — real data, parity, the swap (S–M)
+## Phase 6 — real data, parity, the swap (S–M) — done
 
 Run both shells against `dev/local-rig.sh` and then the fleet; the numbers must be identical (same
 engine). Move `dev/screenshots.sh` to the new screens, delete `src/ui/`, the view enum and the
 `UI=2` flag; write the new `DESIGN.md` §1, §3, §7 and §11 from this folder, keeping §4, §5, §6,
 §9 (now "environment-first"), §12 and §13. Update `README.md` and `GUIDE.md` §6–§8.
+
+As built: the views the zooms show moved to `src/ui2/views/` (moved, not rewritten — the
+"view 1" wording in them went with the move), the rest of `src/ui/` (the masthead, the band and
+its cards, the day rail, the tree, the map, the pivot, the insights panel, the help overlay, the
+footer) was deleted with its tests, and the old shell's tests of the views that stayed were
+ported to `src/ui2/views/tests.rs`. `UI=2` and `--shell` are gone. `app::View` stays as the
+selector of the views' state (`CLAUDE.md` says why); the key handling only the old shell used —
+the digit views, the tree, the map, the insights, help — went from `app.rs`. The desktop app's
+tabs are the panels (`⌘1`–`⌘9`, the F-keys). Parity needs no second run: both shells drew the
+same `App`, and the panels' numbers are held to the engine by the tests.
 
 ## Phase 7 — feature wave 1 · Phase 8 — wave 2
 

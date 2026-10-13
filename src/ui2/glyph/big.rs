@@ -22,11 +22,6 @@ fn glyph(ch: char) -> [&'static str; 3] {
     }
 }
 
-/// The width `text` takes in big digits.
-pub fn width(text: &str) -> u16 {
-    text.chars().map(|c| glyph(c)[0].chars().count() as u16 + 1).sum()
-}
-
 /// Draw `text` from (`x`, `y`); returns the column after the last glyph's gap, as `big()` does.
 pub fn draw(p: &mut Painter<'_>, x: u16, y: u16, text: &str, style: Style) -> u16 {
     let mut x = x;
@@ -53,6 +48,5 @@ mod tests {
         assert_eq!(draw(&mut p, 0, 0, "42%", Style::default()), 12);
         let rows: Vec<String> = (0..3).map(|y| (0..12).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
         assert_eq!(rows, ["█ █ ▀▀█ ▀ █ ", "▀▀█ █▀▀  ▄▀ ", "  █ █▄▄ █ ▄ "]);
-        assert_eq!(width("16"), 8);
     }
 }

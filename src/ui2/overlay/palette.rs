@@ -105,7 +105,9 @@ fn channel_items(app: &App, channel: &str) -> Vec<Item> {
             app.with_view(|v| {
                 for u in &v.users {
                     let on = u.nodes.iter().max_by_key(|n| n.mem_bytes).map(|n| n.node.name.clone());
-                    let detail = format!("{} on {} · {} queries", fmt::bytes(u.mem_bytes), fmt::plural(u.nodes.len(), "node", "nodes"), u.queries);
+                    let runaway = if u.nodes.iter().any(|n| n.runaway) { " · ! runaway" } else { "" };
+                    let longest = u.nodes.iter().map(|n| n.longest_s).fold(0.0, f64::max);
+                    let detail = format!("{} on {} · {} queries · longest {}{runaway}", fmt::bytes(u.mem_bytes), fmt::plural(u.nodes.len(), "node", "nodes"), u.queries, fmt::dur(longest));
                     let target = on.map_or(Target::Panel(PanelId::Nodes), Target::Node);
                     items.push(Item { label: u.label(), detail, key: String::new(), target });
                 }

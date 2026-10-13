@@ -1,8 +1,8 @@
 # cobserve redesign — the knowledge base
 
-**Status: concept approved by the owner (2026-10-13); phases 0 (the contracts), 1 (the shell
-skeleton, `UI=2`), 2 (NODES and NODE), 3 (QUEUE, AIRFLOW, JIRA, TAPE), 4 (SESSIONS, the floating
-pane) and 5 (setup, tour, replay, `--plain`) built — next is phase 6 (`06-build-order.md`).** This folder is
+**Status: built (phases 0–6 of `06-build-order.md`, October 2026). The new shell is the only
+one; `src/ui/` is gone and this folder is the specification of the screen, with
+`src/ui2/tests.rs` holding its screens to it.** This folder is
 everything the next agent needs to build the new shell: the decisions, the screen as text, the
 panels, the glyphs, the architecture, the keys, the build order and its tests. Read it in order;
 it is written for an implementer with no prior context, like `DESIGN.md` was for v1.

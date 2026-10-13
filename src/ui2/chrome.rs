@@ -85,7 +85,7 @@ pub fn top_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
             Alert::Now { moment, .. } => format!("☾ time for {} ", moment.name()),
         };
         let sev = if matches!(alert, Alert::Soon { .. }) { Severity::Warn } else { Severity::Ok };
-        p.putr(middle_end, y, &text, theme.sev(sev).add_modifier(Modifier::BOLD));
+        p.putr(middle_end, y, &text, theme.tint(sev).add_modifier(Modifier::BOLD));
         return;
     }
     let Some(schedule) = app.prayers.schedule.as_ref() else { return };
@@ -221,6 +221,12 @@ pub fn status_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
 
 /// The hints the status bar offers, in rank order: `(key, what it does)`.
 pub fn hints(app: &App) -> Vec<(String, String)> {
+    if let Some(keys) = session_mode_hints(app) {
+        return keys.iter().map(|(k, d)| (k.to_string(), d.to_string())).collect();
+    }
+    if let Some(keys) = session_full_hints(app) {
+        return keys;
+    }
     let actions = action::actions_for(app);
     if let Some(zoom) = app.shell.zoom {
         // A zoom: esc first, then the zoom's own actions.
@@ -237,4 +243,40 @@ pub fn hints(app: &App) -> Vec<(String, String)> {
             (a.shown.to_string(), label)
         })
         .collect()
+}
+
+/// While the zoomed sessions name a session, look for one or pick a new one's folder, every key
+/// is theirs: the status bar says which (the keys of today's view 7, `App::on_session_key`).
+fn session_mode_hints(app: &App) -> Option<&'static [(&'static str, &'static str)]> {
+    use crate::claude::{Kind, Mode};
+    if app.shell.zoom != Some(crate::ui2::PanelId::Sessions) {
+        return None;
+    }
+    Some(match &app.claude.mode {
+        Mode::Naming(_) => &[("⏎", "keep the name"), ("esc", "cancel")],
+        Mode::Finding { .. } => &[("↑↓", "choose"), ("⏎", "go there"), ("esc", "back")],
+        Mode::Opening(p) if p.kind == Kind::Query => &[("↑↓", "choose"), ("⏎", "open it on that server"), ("esc", "cancel")],
+        Mode::Opening(p) if p.searching() => &[("↑↓", "choose"), ("⏎", "open the session there"), ("→", "go in"), ("esc", "clear the search")],
+        Mode::Opening(_) => &[("↑↓", "choose"), ("⏎", "open the session there"), ("→", "go in"), ("←", "up"), ("esc", "cancel")],
+        _ => return None,
+    })
+}
+
+/// A session opened full: its program has every key but `ctrl+\\`.
+fn session_full_hints(app: &App) -> Option<Vec<(String, String)>> {
+    use crate::claude::Kind;
+    if app.shell.zoom != Some(crate::ui2::PanelId::Sessions) || !app.shell.sessions_full {
+        return None;
+    }
+    let s = app.claude.current()?;
+    let who = match s.kind {
+        _ if s.console.is_some() => "the query",
+        Kind::Terminal => "the shell",
+        other => other.title(),
+    };
+    Some(if s.console.is_some() || s.pane.is_running() {
+        vec![("ctrl+\\".into(), format!("the list · every other key goes to {who}"))]
+    } else {
+        vec![("⏎".into(), format!("start {}", s.kind.title())), ("ctrl+\\".into(), "the list".into())]
+    })
 }

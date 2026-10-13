@@ -63,19 +63,6 @@ pub enum View {
 }
 
 impl View {
-    pub fn title(self) -> &'static str {
-        match self {
-            View::Nodes => "NODES",
-            View::Queue => "QUEUE",
-            View::Map => "MAP",
-            View::Tape => "TAPE",
-            View::Airflow => "AIRFLOW",
-            View::Jira => "JIRA",
-            View::Claude => "SESSIONS",
-            View::Local => "LOCAL",
-        }
-    }
-
     /// The tab order of §1, which is also the `1` … `7`, `0` keymap.
     pub const ALL: [View; 8] = [View::Nodes, View::Queue, View::Map, View::Tape, View::Airflow, View::Jira, View::Claude, View::Local];
 
@@ -121,7 +108,6 @@ pub enum Focus {
 /// updates — state that belongs to the screen, not to the model.
 #[derive(Debug, Default)]
 pub struct Viewport {
-    pub tree: Cell<usize>,
     pub queue: Cell<usize>,
     pub airflow: Cell<usize>,
     pub jira: Cell<usize>,
@@ -131,17 +117,11 @@ pub struct Viewport {
     pub tape: Cell<usize>,
     /// The first row shown of a page's list on view 5 or 6.
     pub page: Cell<usize>,
-    pub map: Cell<usize>,
-    pub insights: Cell<usize>,
-    /// How many tiles fit in a row of the map, so ↑ ↓ can move by a row.
-    pub map_columns: Cell<usize>,
     /// How far the selected query's SQL can scroll, as last drawn.
     pub sql_max: Cell<usize>,
     /// What the mouse can click, as last drawn: the header's tabs, the sessions, Claude's pane,
     /// the folder picker's rows.
     pub hits: RefCell<Vec<(Rect, Hit)>>,
-    /// The nodes listed under the sessions, as last drawn, for `Hit::Node`.
-    pub listed_nodes: RefCell<Vec<String>>,
     /// Where a query session's text was last drawn, for a click or a drag in it.
     pub console_text: Cell<Option<TextLayout>>,
 }
@@ -161,7 +141,6 @@ pub struct TextLayout {
 /// Something on screen a click means something on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
-    View(View),
     Session(usize),
     NewSession,
     /// Claude's screen: clicks and the wheel go to the program.
@@ -174,10 +153,6 @@ pub enum Hit {
     Cancel,
     /// What the picker will open.
     Kind(Kind),
-    /// A node listed under the sessions, by its place in `Viewport::listed_nodes`.
-    Node(usize),
-    /// The clock: a click flips it between local time and UTC.
-    Clock,
     /// The way to a conversation had elsewhere, to take up in a new session.
     Resume,
     /// A query session's server: a click lists the others.
@@ -193,15 +168,10 @@ pub enum Hit {
     ConsoleAsk,
     /// One of the suggestions open, by its place among them: a click takes it.
     Suggestion(usize),
-    /// The way out of a prayer's reminder.
-    Dismiss,
-    /// A row of view 1's tree, an insight, a job of view 2, a line of the tape, a tile of the
-    /// map — by its place in their lists: a click puts the cursor there, a second opens it.
-    Row(usize),
-    Insight(usize),
+    /// A job of the queue, a line of the tape — by its place in their lists: a click puts the
+    /// cursor there, a second opens it.
     Job(usize),
     TapeLine(usize),
-    Tile(usize),
     /// A row of view 5 (a run, a DAG) and a ticket of view 6, by their place in the lists.
     AirflowRow(usize),
     Ticket(usize),
@@ -760,7 +730,7 @@ impl App {
     /// On the board: to the next lane with tickets that way, as far down it as the cursor was.
     fn cross_lane(&mut self, step: isize) {
         let lanes: Vec<Vec<String>> =
-            crate::ui::board_lanes(&self.jira).into_iter().map(|l| l.into_iter().map(|t| t.key.clone()).collect()).collect();
+            crate::ui2::views::board_lanes(&self.jira).into_iter().map(|l| l.into_iter().map(|t| t.key.clone()).collect()).collect();
         let Some(key) = self.jira_selected.clone() else {
             return self.move_jira(0);
         };
@@ -1026,9 +996,7 @@ impl App {
     pub fn tick_at(&mut self, at: SystemTime) {
         self.clock = at;
         self.shell.expire(at);
-        if self.shell.on {
-            crate::ui2::sessions::tick(self);
-        }
+        crate::ui2::sessions::tick(self);
         let now = self.now();
         if let Some(alert) = self.prayers.tick(now) {
             let moment = alert.moment();
@@ -1051,8 +1019,7 @@ impl App {
                 self.prayers.move_to(place);
                 self.on_tick();
             }
-            Event::Key(key) if self.shell.on => crate::ui2::keys::on_key(self, key),
-            Event::Key(key) => self.on_key(key),
+            Event::Key(key) => crate::ui2::keys::on_key(self, key),
             // While paused, live data is dropped rather than queued up: unpausing must show
             // the last thing on screen, not a burst of everything that happened since (§3).
             Event::Snapshot(snapshot) => {
@@ -1107,8 +1074,7 @@ impl App {
                     session.pane.state = PaneState::Exited(how);
                 }
             }
-            Event::Mouse(event) if self.shell.on => crate::ui2::mouse::on_mouse(self, event),
-            Event::Mouse(event) => self.on_mouse(event),
+            Event::Mouse(event) => crate::ui2::mouse::on_mouse(self, event),
             Event::Folders(found) => {
                 if let Mode::Opening(picker) = &mut self.claude.mode {
                     picker.found(found);
@@ -1150,7 +1116,7 @@ impl App {
                     console.assisted(ask, result);
                 }
             }
-            Event::Paste(text) if self.shell.on && crate::ui2::keys::paste(self, &text) => {}
+            Event::Paste(text) if crate::ui2::keys::paste(self, &text) => {}
             Event::Paste(text) => {
                 let line = text.lines().next().unwrap_or_default();
                 if self.view == View::Claude {
@@ -1201,21 +1167,6 @@ impl App {
         } else {
             let active = self.claude.active;
             self.claude.select(active);
-        }
-    }
-
-    /// Session `number` (7–9) on view 7. The first visit opens session 7; a number with no
-    /// session behind it says how to open one.
-    fn open_session(&mut self, number: usize) {
-        match self.claude.index_of(number) {
-            Some(index) => {
-                self.open_claude();
-                self.claude.select(index);
-            }
-            None if self.claude.list.is_empty() && number == crate::claude::FIRST_NUMBER => self.open_claude(),
-            None => {
-                self.notice = Some((format!("no session {number} yet — ctrl+\\ then n opens one"), SystemTime::now()));
-            }
         }
     }
 
@@ -1273,14 +1224,6 @@ impl App {
                 format!("{} sessions is as many as there can be — close one with ctrl+\\ x x", crate::claude::MAX_SESSIONS),
                 SystemTime::now(),
             ));
-        }
-    }
-
-    /// The node of the row under view 1's cursor: the node, a user or a query on it.
-    fn node_at_cursor(&self) -> Option<String> {
-        match self.selected()? {
-            RowId::Node(node) | RowId::User { node, .. } | RowId::Query { node, .. } | RowId::PivotNode { node, .. } => Some(node.clone()),
-            _ => None,
         }
     }
 
@@ -1411,8 +1354,6 @@ impl App {
         }
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => match hit {
-                Some(Hit::View(View::Claude)) => self.open_claude(),
-                Some(Hit::View(view)) => self.go_to_view(view),
                 Some(Hit::Session(index)) => {
                     self.open_claude();
                     self.claude.select(index);
@@ -1437,16 +1378,6 @@ impl App {
                         picker.kind = kind;
                     }
                 }
-                // A node under the sessions opens on view 1, as an insight does; the session
-                // goes on where it was.
-                Some(Hit::Node(index)) => {
-                    let name = self.viewport.listed_nodes.borrow().get(index).cloned();
-                    if let Some(name) = name {
-                        self.claude.mode = Mode::Typing;
-                        self.go_to(&Subject::Node(name));
-                    }
-                }
-                Some(Hit::Clock) => self.time.flip(),
                 Some(Hit::ConsoleServer) => {
                     let servers = self.server_names();
                     if let Some(console) = self.claude.current_mut().and_then(|s| s.console.as_deref_mut()) {
@@ -1507,48 +1438,18 @@ impl App {
                     self.open_claude();
                     self.ask_past_conversation();
                 }
-                Some(Hit::Dismiss) => {
-                    let now = self.now();
-                    self.prayers.dismiss(now);
-                }
-                Some(Hit::Row(index)) => {
-                    let id = self.with_rows(|_, rows| rows.get(index).map(|row| row.id.clone())).flatten();
-                    let again = self.focus == Focus::Tree && id.is_some() && id == self.selected;
-                    if id.is_some() {
-                        self.selected = id;
-                        self.focus = Focus::Tree;
-                    }
-                    if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                    }
-                }
-                Some(Hit::Insight(index)) => {
-                    let again = self.focus == Focus::Insights && self.insight_selection == index;
-                    self.focus = Focus::Insights;
-                    self.insight_selection = index;
-                    if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                    }
-                }
                 Some(Hit::Job(index)) => {
                     let again = self.queue_selection == Some(index);
                     self.queue_selection = Some(index);
                     if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        self.view_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
                 Some(Hit::TapeLine(index)) => {
                     let again = self.tape_selection == index;
                     self.tape_selection = index;
                     if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                    }
-                }
-                Some(Hit::Tile(index)) => {
-                    let again = self.map_selection == index;
-                    self.map_selection = index;
-                    if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        self.view_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
                 Some(Hit::AirflowRow(index)) => {
@@ -1559,7 +1460,7 @@ impl App {
                         self.airflow_selected = key;
                     }
                     if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        self.view_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
                 Some(Hit::Process(index)) => self.local.select(index),
@@ -1571,7 +1472,7 @@ impl App {
                         self.jira_selected = key;
                     }
                     if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        self.view_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
                 Some(Hit::PageRow(index)) => {
@@ -1580,7 +1481,7 @@ impl App {
                         page.cursor = index.min(page.rows().saturating_sub(1));
                     }
                     if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        self.view_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
                 Some(Hit::TimeDay(day)) => {
@@ -1594,7 +1495,7 @@ impl App {
                         page.ticket = index;
                     }
                     if again {
-                        self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        self.view_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     }
                 }
                 Some(Hit::Pane) | None => {}
@@ -1702,7 +1603,7 @@ impl App {
 
     /// A key for today's handling as it stands — the new shell's sessions hand theirs here.
     pub fn on_key_passthrough(&mut self, key: KeyEvent) {
-        self.on_key(key);
+        self.on_session_key(key);
     }
 
     /// `r` in the new shell: the sources that can be asked again at once (ClickHouse and Redash
@@ -2338,6 +2239,11 @@ impl App {
         self.snapshot.as_deref()
     }
 
+    /// The poll before it: the other side of every delta (§5.2), for the explain popover.
+    pub fn prev_snapshot(&self) -> Option<&FleetSnapshot> {
+        self.prev.as_deref()
+    }
+
     /// A recent source error, for the footer. Expires on its own (§3: the footer is
     /// contextual, and a stale error is worse than no error).
     pub fn notice(&self) -> Option<&str> {
@@ -2364,103 +2270,17 @@ impl App {
             .flatten()
     }
 
-    /// Where the cursor sits and which row it is on, for the drawer (§2.4).
-    pub fn selected_row(&self) -> Option<(usize, RowId)> {
-        let index = self.selected_index()?;
-        let id = self
-            .with_rows(|_, rows| rows.get(index).map(|row| row.id.clone()))
-            .flatten()?;
-        Some((index, id))
-    }
-
-    pub fn filter_input(&self) -> Option<&str> {
-        self.filter_input.as_deref()
-    }
-
     // -- keys ------------------------------------------------------------
 
-    fn on_key(&mut self, key: KeyEvent) {
+    /// A key for the session on screen (`ui2::sessions` hands them here): the folder picker, a
+    /// name or a search while one is open, else the session's console or its program — every key
+    /// a terminal would get — and `⏎` starts one that is not running.
+    fn on_session_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
             return;
         }
-
-        // `x` on view 2 asked whether to cancel a job: `y` does; any other key keeps it, and
-        // does nothing else, so a stray key cannot both answer and act.
-        if let Some(id) = self.queue_confirm.take() {
-            if self.view == View::Queue && matches!(key.code, KeyCode::Char('y' | 'Y')) {
-                self.cancel_job(&id);
-            }
-            self.sync_view_state();
-            return;
-        }
-
-        // Filter entry swallows everything except Esc, Enter and the printable characters.
-        if self.filter_input.is_some() {
-            let mut input = self.filter_input.take().unwrap_or_default();
-            match key.code {
-                KeyCode::Esc => self.tree.filter.clear(),
-                KeyCode::Enter => self.tree.filter = input.clone(),
-                KeyCode::Backspace => {
-                    input.pop();
-                    self.tree.filter = input.clone();
-                }
-                KeyCode::Char(c) => {
-                    input.push(c);
-                    self.tree.filter = input.clone();
-                }
-                _ => {}
-            }
-            // Esc leaves filter mode; Enter keeps the text and leaves it too.
-            self.filter_input = match key.code {
-                KeyCode::Esc | KeyCode::Enter => None,
-                _ => Some(input),
-            };
-            self.sync_view_state();
-            return;
-        }
-
-        if self.help && !matches!(key.code, KeyCode::Char('q') | KeyCode::Char('?')) {
-            self.help = false;
-            self.sync_view_state();
-            return;
-        }
-
-        let typing_text = matches!(self.claude.mode, Mode::Naming(_) | Mode::Opening(_) | Mode::Finding { .. }) && self.view == View::Claude;
-        // F1–F6 the views, F7–F9 the sessions, F10 this machine — from anywhere, Claude's screen
-        // too, and with no key before them: a terminal that keeps ctrl+\ for itself still has these.
-        if let (KeyCode::F(n @ 1..=10), false) = (key.code, typing_text) {
-            if n == 10 {
-                self.go_to_view(View::Local);
-            } else if n <= View::MONITOR {
-                if let Some(view) = View::from_number(n) {
-                    self.go_to_view(view);
-                }
-            } else {
-                self.open_session(usize::from(n));
-            }
-            self.sync_view_state();
-            return;
-        }
-
-        // ctrl+\ opens Claude from the monitor; on view 5 it opens the session bar, and once more
-        // goes back to the monitor.
-        if crate::claude::is_switch_key(&key) {
-            match (self.view, &self.claude.mode) {
-                (View::Claude, Mode::Bar) => {
-                    self.claude.mode = Mode::Typing;
-                    self.view = self.claude.back_to;
-                }
-                (View::Claude, _) => {
-                    self.claude.mode = Mode::Bar;
-                    self.claude.closing = false;
-                }
-                _ => self.open_claude(),
-            }
-            self.sync_view_state();
-            return;
-        }
-        if self.view == View::Claude {
-            match self.claude.mode {
+        self.view = View::Claude;
+        match self.claude.mode {
                 Mode::Naming(_) => return self.on_naming_key(key),
                 Mode::Opening(_) => return self.on_opening_key(key),
                 Mode::Finding { .. } => return self.on_finding_key(key),
@@ -2504,147 +2324,7 @@ impl App {
                 self.sync_view_state();
                 return;
             }
-        }
-
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // Keys that mean the same thing everywhere.
-        match key.code {
-            KeyCode::Char('c') if ctrl => {
-                self.quit = true;
-                return;
-            }
-            KeyCode::Char('q') => {
-                self.quit = true;
-                return;
-            }
-            KeyCode::Char(c @ '1'..='9') if c as u8 - b'0' > View::MONITOR => {
-                self.open_session(c as usize - '0' as usize);
-                self.sync_view_state();
-                return;
-            }
-            KeyCode::Char(c @ '0'..='9') => {
-                if let Some(view) = View::from_number(c as u8 - b'0') {
-                    self.view = view;
-                    self.focus = Focus::Tree;
-                    if view != View::Queue {
-                        self.queue_selection = None;
-                    }
-                }
-                self.sync_view_state();
-                return;
-            }
-            KeyCode::Char('?') => {
-                self.help = true;
-                self.sync_view_state();
-                return;
-            }
-            KeyCode::Char('p') => {
-                self.paused = !self.paused;
-                self.sync_view_state();
-                return;
-            }
-            KeyCode::Char('z') => {
-                self.time.flip();
-                return;
-            }
-            KeyCode::Char('d') if self.prayer_alert().is_some() => {
-                let now = self.now();
-                self.prayers.dismiss(now);
-                return;
-            }
-            _ => {}
-        }
-
-        match self.view {
-            View::Nodes if self.focus == Focus::Insights => self.on_insights_key(key.code),
-            View::Nodes => self.on_tree_key(key),
-            View::Queue => self.on_queue_key(key),
-            View::Map => self.on_map_key(key.code),
-            View::Tape => self.on_tape_key(key.code),
-            View::Airflow => self.on_airflow_key(key.code),
-            View::Jira => self.on_jira_key(key.code),
-            View::Local => self.on_local_key(key.code),
-            // Nothing running: ⏎ starts it (above); nothing else to do here.
-            View::Claude => {}
-        }
         self.sync_view_state();
-    }
-
-    fn on_tree_key(&mut self, key: KeyEvent) {
-        if key.modifiers.contains(KeyModifiers::SHIFT) {
-            match key.code {
-                KeyCode::Up => return self.scroll_sql(-1),
-                KeyCode::Down => return self.scroll_sql(1),
-                _ => {}
-            }
-        }
-        match key.code {
-            KeyCode::Char('K') => self.scroll_sql(-1),
-            KeyCode::Char('J') => self.scroll_sql(1),
-            KeyCode::Char('s') => self.tree.sort = self.tree.sort.next(),
-            // A query's id, to look it up in system.query_log.
-            KeyCode::Char('y') => {
-                if let Some(crate::tree::RowId::Query { query_id, .. }) = self.selected().cloned() {
-                    self.notice = Some((format!("copied query id {query_id}"), SystemTime::now()));
-                    self.clipboard.push(query_id);
-                }
-            }
-            // SQL on the node under the cursor, in a query session of its own.
-            KeyCode::Char('c') => {
-                let node = self.node_at_cursor();
-                self.open_query_on(node);
-            }
-            KeyCode::Char('u') => {
-                self.tree.pivot = !self.tree.pivot;
-                // Identity is per direction, so the cursor cannot stay on a row that is gone.
-                self.selected = None;
-                self.tree.clear_expansions();
-            }
-            KeyCode::Char(' ') => self.tree.fold_healthy = !self.tree.fold_healthy,
-            KeyCode::Char('/') => {
-                self.filter_input = Some(String::new());
-                self.tree.filter.clear();
-            }
-            KeyCode::Tab => {
-                if !self.insights().is_empty() {
-                    self.focus = Focus::Insights;
-                }
-            }
-            KeyCode::Esc => self.tree.filter.clear(),
-            KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
-            KeyCode::Down | KeyCode::Char('j') => self.move_by(1),
-            KeyCode::PageUp => self.move_by(-10),
-            KeyCode::PageDown => self.move_by(10),
-            KeyCode::Home => self.move_to(0),
-            KeyCode::End => self.move_to(usize::MAX),
-            KeyCode::Left | KeyCode::Char('h') => self.collapse(),
-            KeyCode::Right | KeyCode::Char('l') => self.expand(),
-            KeyCode::Enter => self.toggle(),
-            _ => {}
-        }
-    }
-
-    /// `tab` moved the cursor into the insights: ↑ ↓ pick one, ⏎ goes to what it is about.
-    fn on_insights_key(&mut self, code: KeyCode) {
-        let len = self.insights().len();
-        match code {
-            KeyCode::Tab | KeyCode::Esc => self.focus = Focus::Tree,
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.insight_selection = self.insight_selection.saturating_sub(1)
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.insight_selection = (self.insight_selection + 1).min(len.saturating_sub(1))
-            }
-            KeyCode::Home => self.insight_selection = 0,
-            KeyCode::End => self.insight_selection = len.saturating_sub(1),
-            KeyCode::Enter => {
-                if let Some(insight) = self.insights().get(self.insight_selection) {
-                    let subject = insight.subject.clone();
-                    self.go_to(&subject);
-                }
-            }
-            _ => {}
-        }
     }
 
     fn on_queue_key(&mut self, key: KeyEvent) {
@@ -2669,39 +2349,6 @@ impl App {
             KeyCode::Char('x') => self.ask_to_cancel(),
             _ => {}
         }
-    }
-
-    fn on_map_key(&mut self, code: KeyCode) {
-        let len = self.map_nodes().len();
-        if len == 0 {
-            return;
-        }
-        let columns = self.viewport.map_columns.get().max(1);
-        let current = self.map_selection.min(len - 1);
-        self.map_selection = match code {
-            KeyCode::Left | KeyCode::Char('h') => current.saturating_sub(1),
-            KeyCode::Right | KeyCode::Char('l') => (current + 1).min(len - 1),
-            KeyCode::Up | KeyCode::Char('k') => current.saturating_sub(columns),
-            KeyCode::Down | KeyCode::Char('j') => (current + columns).min(len - 1),
-            KeyCode::Home => 0,
-            KeyCode::End => len - 1,
-            KeyCode::Char('s') => {
-                self.tree.sort = self.tree.sort.next();
-                current
-            }
-            KeyCode::Enter => {
-                if let Some(name) = self.map_nodes().get(current).cloned() {
-                    self.go_to(&Subject::Node(name));
-                }
-                return;
-            }
-            KeyCode::Char('c') => {
-                let node = self.map_nodes().get(current).cloned();
-                self.open_query_on(node);
-                return;
-            }
-            _ => current,
-        };
     }
 
     /// View 0: the cursor, the sort and whether a program is one row.
@@ -2829,83 +2476,6 @@ impl App {
         }
     }
 
-    /// `←` collapses, `→` expands, vim-style (§3).
-    fn collapse(&mut self) {
-        let Some((_, id)) = self.selected_row() else {
-            return;
-        };
-        match &id {
-            RowId::Node(name) => {
-                self.tree.expanded_nodes.remove(name);
-            }
-            RowId::FleetUser(user) => {
-                self.tree.expanded_nodes.remove(user);
-            }
-            RowId::PivotNode { user, node } => {
-                self.tree.expanded_users.remove(&(user.clone(), node.clone()));
-            }
-            RowId::User { .. } | RowId::Closing(_) | RowId::Folded => {
-                // Move onto the parent and collapse it: the visible effect of ← on a child.
-                if let Some(parent) = id.parent() {
-                    if let RowId::Node(name) | RowId::FleetUser(name) = &parent {
-                        self.tree.expanded_nodes.remove(name);
-                    }
-                    self.selected = Some(parent);
-                }
-            }
-            RowId::Query { .. } => {
-                if let Some(parent) = id.parent() {
-                    self.selected = Some(parent);
-                }
-            }
-        }
-    }
-
-    fn expand(&mut self) {
-        let Some((_, id)) = self.selected_row() else {
-            return;
-        };
-        match id {
-            RowId::Node(name) => {
-                self.tree.expanded_nodes.insert(name);
-            }
-            RowId::FleetUser(user) => {
-                self.tree.expanded_nodes.insert(user);
-            }
-            RowId::User { node, user, person } => {
-                let key = match &person {
-                    Some(p) => format!("{user}\u{1}{p}"),
-                    None => user.clone(),
-                };
-                self.tree.expanded_users.insert((node, key));
-            }
-            RowId::PivotNode { user, node } => {
-                self.tree.expanded_users.insert((user, node));
-            }
-            RowId::Query { .. } | RowId::Closing(_) | RowId::Folded => {}
-        }
-    }
-
-    fn toggle(&mut self) {
-        let Some((_, id)) = self.selected_row() else {
-            return;
-        };
-        match id {
-            RowId::Node(name) => self.tree.toggle_node(&name),
-            RowId::FleetUser(user) => self.tree.toggle_node(&user),
-            RowId::User { node, user, person } => {
-                let key = match &person {
-                    Some(p) => format!("{user}\u{1}{p}"),
-                    None => user.clone(),
-                };
-                self.tree.toggle_user(&node, &key);
-            }
-            RowId::PivotNode { user, node } => self.tree.toggle_user(&user, &node),
-            // A folded line and a closing row have nothing to open.
-            RowId::Query { .. } | RowId::Closing(_) | RowId::Folded => {}
-        }
-    }
-
     /// Move the cursor onto the queue's running job and switch to view 1 (§2.8): the arrow in
     /// the RUNNING half is the stitch between a Redash job and its ClickHouse query.
     ///
@@ -3030,8 +2600,7 @@ pub fn row_title(row: &Row<'_>) -> String {
 mod tests {
     use super::*;
     use crate::fake::FakeSource;
-    use crate::model::SortKey;
-    use crate::tree::{Kind, Payload};
+    use crate::tree::Kind;
 
     fn key(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -3045,22 +2614,6 @@ mod tests {
         app
     }
 
-    fn titles(app: &App) -> Vec<String> {
-        app.with_rows(|_, rows| {
-            rows.iter()
-                .map(|r| {
-                    let mut t = row_title(r);
-                    if let Payload::Node(view) = &r.payload
-                        && app.tree.new_nodes.contains(view.name()) {
-                            t.push_str(" NEW");
-                        }
-                    t
-                })
-                .collect()
-        })
-        .unwrap()
-    }
-
     #[test]
     fn the_first_snapshot_opens_the_top_node() {
         let app = app_with_fake();
@@ -3070,118 +2623,6 @@ mod tests {
             .unwrap();
         assert_eq!(rows[0], "clickhouse3");
         assert!(rows.iter().any(|r| r.starts_with("r_redash → grigol")));
-    }
-
-    #[test]
-    fn enter_expands_and_collapses_the_selected_node() {
-        let mut app = app_with_fake();
-        // Walk down to the next node row that is not open yet.
-        let mut target = None;
-        for index in 1..app.with_rows(|_, rows| rows.len()).unwrap_or(1) {
-            let candidate = app.with_rows(|_, rows| {
-                rows.get(index)
-                    .filter(|r| r.kind == Kind::Node)
-                    .map(row_title)
-            });
-            if let Some(name) = candidate.flatten()
-                && !app.tree.node_expanded(&name) {
-                    target = Some(name);
-                    break;
-                }
-        }
-        let target = target.expect("the fleet has collapsed nodes");
-
-        for _ in 0..40 {
-            let on_target = app
-                .selected_row()
-                .map(|(_, id)| matches!(&id, RowId::Node(name) if name == &target))
-                .unwrap_or(false);
-            if on_target {
-                break;
-            }
-            app.update(key(KeyCode::Down));
-        }
-        assert!(app
-            .selected_row()
-            .map(|(_, id)| matches!(&id, RowId::Node(name) if name == &target))
-            .unwrap_or(false), "walked onto {target}");
-
-        let closed = app.with_rows(|_, rows| rows.len()).unwrap();
-        app.update(key(KeyCode::Enter));
-        assert!(app.tree.node_expanded(&target));
-        assert!(
-            app.with_rows(|_, rows| rows.len()).unwrap() > closed,
-            "opening a node adds its user rows"
-        );
-
-        app.update(key(KeyCode::Enter));
-        assert!(!app.tree.node_expanded(&target));
-    }
-
-    #[test]
-    fn arrows_move_the_cursor_and_stop_at_the_edges() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Up));
-        assert_eq!(app.selected_index(), Some(0));
-        let last = app.with_rows(|_, rows| rows.len()).unwrap() - 1;
-        app.update(key(KeyCode::Down));
-        assert_eq!(app.selected_index(), Some(1));
-        app.update(key(KeyCode::End));
-        assert_eq!(app.selected_index(), Some(last));
-        app.update(key(KeyCode::Down));
-        assert_eq!(app.selected_index(), Some(last), "no wrap-around");
-    }
-
-    #[test]
-    fn s_cycles_the_sort_and_the_selection_follows_its_identity() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Down));
-        app.update(key(KeyCode::Down));
-        let before = app.selected().cloned();
-        for _ in 0..4 {
-            app.update(key(KeyCode::Char('s')));
-        }
-        assert_eq!(app.tree.sort, SortKey::Pressure, "four presses is a full cycle");
-        assert_eq!(app.selected(), before.as_ref(), "cursor stays on the same row");
-    }
-
-    #[test]
-    fn u_pivots_and_clears_the_expansions() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Char('u')));
-        assert!(app.tree.pivot);
-        assert!(app.tree.expanded_nodes.is_empty());
-        let rows: Vec<String> = app
-            .with_rows(|_, rows| rows.iter().map(|r| row_title(r)).collect())
-            .unwrap();
-        assert!(rows[0].starts_with("r_redash →"), "{rows:?}");
-        app.update(key(KeyCode::Char('u')));
-        assert!(!app.tree.pivot);
-    }
-
-    #[test]
-    fn space_toggles_the_healthy_fold() {
-        let mut app = app_with_fake();
-        let folded = titles(&app).iter().any(|t| t.contains("ch4"));
-        assert!(folded, "the fold line lists the healthy nodes by name");
-        app.update(key(KeyCode::Char(' ')));
-        assert!(!app.tree.fold_healthy);
-        let rows = app.with_rows(|_, rows| rows.len()).unwrap();
-        assert!(rows > 4, "unfolding brings the nodes back: {rows}");
-    }
-
-    #[test]
-    fn slash_types_a_filter_and_escape_clears_it() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Char('/')));
-        assert_eq!(app.footer, Footer::Filter);
-        for c in "j.petrova".chars() {
-            app.update(key(KeyCode::Char(c)));
-        }
-        assert_eq!(app.tree.filter, "j.petrova");
-        app.update(key(KeyCode::Esc));
-        assert_eq!(app.tree.filter, "");
-        assert_eq!(app.footer, Footer::Keys);
     }
 
     #[test]
@@ -3198,7 +2639,7 @@ mod tests {
     fn p_pauses_without_losing_the_last_snapshot() {
         let mut app = app_with_fake();
         let before = app.snapshot().map(|s| s.nodes.len()).unwrap();
-        app.update(key(KeyCode::Char('p')));
+        app.update(key(KeyCode::Char(' ')));
         assert!(app.paused);
         // A poll that arrives while paused is still applied, but the app reports paused so
         // the header can hollow its dot; nothing is dropped on the floor.
@@ -3248,102 +2689,6 @@ mod tests {
     }
 
     #[test]
-    fn view_keys_switch_views() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Char('2')));
-        assert_eq!(app.view, View::Queue);
-        app.update(key(KeyCode::Char('3')));
-        assert_eq!(app.view, View::Map);
-        app.update(key(KeyCode::Char('4')));
-        assert_eq!(app.view, View::Tape);
-        app.update(key(KeyCode::Char('1')));
-        assert_eq!(app.view, View::Nodes);
-        assert_eq!(View::from_number(9), None);
-    }
-
-    #[test]
-    fn tab_moves_into_the_insights_and_enter_goes_to_their_subject() {
-        let mut app = app_with_fake();
-        let insights = app.insights();
-        assert!(!insights.is_empty());
-        app.update(key(KeyCode::Tab));
-        assert_eq!(app.focus, Focus::Insights);
-
-        // Go to what clickhouse7's line is about — the node, or the query that leads it.
-        let target = insights
-            .iter()
-            .position(|i| i.label == "clickhouse7")
-            .expect("clickhouse7 has something to say (lag 12 s)");
-        for _ in 0..target {
-            app.update(key(KeyCode::Down));
-        }
-        assert_eq!(app.insight_selection(), target);
-        app.update(key(KeyCode::Enter));
-        assert_eq!(app.focus, Focus::Tree, "⏎ hands the cursor back to the tree");
-        match &insights[target].subject {
-            Subject::Node(node) => assert_eq!(app.selected(), Some(&RowId::Node(node.clone()))),
-            Subject::Query { query_id, .. } => assert!(
-                matches!(app.selected(), Some(RowId::Query { query_id: id, .. }) if id == query_id),
-                "{:?}",
-                app.selected()
-            ),
-            other => panic!("a node's line is about the node or a query on it, not {other:?}"),
-        }
-        assert!(app.tree.node_expanded("clickhouse7"));
-
-        // Esc and tab both leave the insights.
-        app.update(key(KeyCode::Tab));
-        app.update(key(KeyCode::Esc));
-        assert_eq!(app.focus, Focus::Tree);
-    }
-
-    #[test]
-    fn an_insight_about_a_query_lands_on_that_query() {
-        let mut app = app_with_fake();
-        let (index, query_id) = app
-            .insights()
-            .iter()
-            .enumerate()
-            .find_map(|(i, insight)| match &insight.subject {
-                Subject::Query { query_id, .. } => Some((i, query_id.clone())),
-                _ => None,
-            })
-            .expect("the fake fleet has a runaway insight");
-        app.update(key(KeyCode::Tab));
-        for _ in 0..index {
-            app.update(key(KeyCode::Down));
-        }
-        app.update(key(KeyCode::Enter));
-        assert!(
-            matches!(app.selected(), Some(RowId::Query { query_id: id, .. }) if *id == query_id),
-            "{:?}",
-            app.selected()
-        );
-    }
-
-    #[test]
-    fn the_map_moves_by_tile_and_by_row_and_opens_a_node() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Char('3')));
-        app.viewport.map_columns.set(4);
-        app.update(key(KeyCode::Right));
-        assert_eq!(app.map_selection(), 1);
-        app.update(key(KeyCode::Down));
-        assert_eq!(app.map_selection(), 5, "down is one row of four");
-        app.update(key(KeyCode::Up));
-        app.update(key(KeyCode::Left));
-        assert_eq!(app.map_selection(), 0);
-        app.update(key(KeyCode::End));
-        let last = app.map_nodes().len() - 1;
-        assert_eq!(app.map_selection(), last);
-
-        let name = app.map_nodes()[last].clone();
-        app.update(key(KeyCode::Enter));
-        assert_eq!(app.view, View::Nodes);
-        assert_eq!(app.selected(), Some(&RowId::Node(name)));
-    }
-
-    #[test]
     fn the_tape_records_what_happened_and_follows_new_lines() {
         let mut fake = FakeSource::new();
         let mut app = App::new();
@@ -3356,7 +2701,7 @@ mod tests {
             .any(|e| e.text().starts_with("watching")));
 
         // Scrolled down, the cursor stays on its line when new ones arrive.
-        app.update(key(KeyCode::Char('4')));
+        app.update(key(KeyCode::Char('7')));
         app.update(key(KeyCode::Down));
         let reading = app.tape.get_newest(app.tape_selection()).unwrap().text();
         let mut broken = app.snapshot().cloned().unwrap();
@@ -3506,129 +2851,6 @@ mod tests {
     }
 
     #[test]
-    fn seven_opens_claude_and_asks_for_it_to_start() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Char('2')));
-        app.update(key(KeyCode::Char('7')));
-        assert_eq!(app.view, View::Claude);
-        assert_eq!(app.claude.list.len(), 1, "the first visit opens a session");
-        assert_eq!(pane(&mut app).state, PaneState::Starting);
-        assert_eq!(app.claude.back_to, View::Queue);
-        // ctrl+\ opens the bar, and once more goes back where it came from.
-        pane(&mut app).state = PaneState::Running;
-        app.update(ctrl('\\'));
-        assert_eq!((app.view, &app.claude.mode), (View::Claude, &Mode::Bar));
-        app.update(ctrl('4'));
-        assert_eq!(app.view, View::Queue, "crossterm's name for ctrl+\\ works too");
-        app.update(ctrl('\\'));
-        assert_eq!(app.view, View::Claude, "and from the monitor it opens Claude again");
-        assert_eq!(app.claude.mode, Mode::Typing);
-        assert_eq!(app.claude.list.len(), 1, "a running session is not started twice");
-    }
-
-    #[test]
-    fn on_view_five_every_key_but_the_switch_is_claudes() {
-        let mut app = app_with_fake();
-        app.open_claude();
-        pane(&mut app).state = PaneState::Running;
-        app.update(key(KeyCode::Char('q')));
-        app.update(ctrl('c'));
-        app.update(key(KeyCode::Char('1')));
-        app.update(key(KeyCode::Enter));
-        assert!(!app.quit, "q and ctrl+c are Claude's here");
-        assert_eq!(app.view, View::Claude, "and so are the digits");
-        assert_eq!(pane(&mut app).take_outbox(), b"q\x031\r");
-        app.update(ctrl('z'));
-        assert!(pane(&mut app).take_outbox().is_empty(), "suspended, it could never come back");
-        assert!(app.notice().is_some_and(|n| n.contains("ctrl+z")));
-        app.update(Event::Paste("two\nlines".into()));
-        assert_eq!(pane(&mut app).take_outbox(), b"two\rlines");
-    }
-
-    #[test]
-    fn the_bar_opens_switches_renames_and_closes_sessions() {
-        let mut app = app_with_fake();
-        app.claude.default_dir = "~/work/cobserve".into();
-        app.open_claude();
-        pane(&mut app).state = PaneState::Running;
-        let first = app.claude.current().unwrap().id;
-
-        // ctrl+\ n opens the picker where the one on screen works; ← goes up a folder, and ⏎
-        // on one opens the session there, on screen.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('n')));
-        let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
-        let Mode::Opening(picker) = &app.claude.mode else {
-            panic!("{:?}", app.claude.mode);
-        };
-        assert_eq!(picker.dir, home.join("work/cobserve"), "where the one on screen works, to start from");
-        answer(&mut app, &["docs", "src"]);
-        app.update(key(KeyCode::Left));
-        answer(&mut app, &["airflow", "cobserve"]);
-        // Past the way to every folder's conversations and the way up, to airflow.
-        for _ in 0..3 {
-            app.update(key(KeyCode::Down));
-        }
-        app.update(key(KeyCode::Enter));
-        assert_eq!((app.claude.list.len(), app.claude.active), (2, 1));
-        assert_eq!(app.claude.current().unwrap().dir, "~/work/airflow");
-        assert_eq!(app.claude.mode, Mode::Typing, "straight back to typing, into the new one");
-        assert!(pane(&mut app).take_outbox().is_empty(), "the directory was not typed into Claude");
-        // As main.rs leaves it once its program has started.
-        pane(&mut app).state = PaneState::Running;
-
-        // ctrl+\ r: rename it.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('r')));
-        for c in "infrx".chars() {
-            app.update(key(KeyCode::Char(c)));
-        }
-        app.update(key(KeyCode::Backspace));
-        app.update(key(KeyCode::Char('a')));
-        app.update(key(KeyCode::Enter));
-        assert_eq!(app.claude.current().unwrap().name.as_deref(), Some("infra"));
-
-        // ctrl+\ 7: the first session — the sessions are numbered on from the views.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('7')));
-        assert_eq!(app.claude.current().unwrap().id, first);
-        // ctrl+\ 4: straight to the tape; ctrl+\ 6 to Jira.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('6')));
-        assert_eq!(app.view, View::Jira);
-        app.update(key(KeyCode::Char('7')));
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('4')));
-        assert_eq!(app.view, View::Tape);
-        // And 8 from the monitor is session 8.
-        app.update(key(KeyCode::Char('8')));
-        assert_eq!((app.view, app.claude.current().unwrap().name.as_deref()), (View::Claude, Some("infra")));
-        app.update(key(KeyCode::Char('9')));
-        assert_eq!(pane(&mut app).take_outbox(), b"9", "on view 7 a digit is Claude's");
-
-        // ctrl+\ x x: closed — once is not enough.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('x')));
-        assert_eq!(app.claude.list.len(), 2, "one x only asks");
-        assert!(app.claude.closing);
-        app.update(key(KeyCode::Char('x')));
-        assert_eq!(app.claude.list.len(), 1);
-        assert_eq!(app.claude.current().unwrap().id, first);
-
-        // A rename can be given up, and esc leaves the bar for Claude.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('r')));
-        app.update(key(KeyCode::Char('z')));
-        app.update(key(KeyCode::Esc));
-        assert_eq!(app.claude.current().unwrap().name, None);
-        assert_eq!(app.claude.mode, Mode::Typing);
-        // m on the bar is the monitor, as is ctrl+\ twice.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('m')));
-        assert_eq!(app.view, View::Tape, "back where it came from");
-    }
-
-    #[test]
     fn the_picker_s_keys_search_go_up_and_give_up_in_that_order() {
         let mut app = app_with_fake();
         app.claude.default_dir = "~/work/cobserve".into();
@@ -3639,7 +2861,8 @@ mod tests {
             Mode::Opening(picker) => picker.clone(),
             other => panic!("not picking: {other:?}"),
         };
-        app.update(ctrl('\\'));
+        // The sessions zoomed, then a new one: its folder is picked first.
+        app.update(key(KeyCode::F(8)));
         app.update(key(KeyCode::Char('n')));
         answer(&mut app, &["docs", "src", "tests"]);
         // The wheel moves the cursor, three rows a tick; it stays in the list.
@@ -3667,134 +2890,14 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_backslash_c_o_t_open_claude_opencode_or_a_terminal() {
-        let mut app = app_with_fake();
-        app.claude.default_dir = "~/work/cobserve".into();
-        app.open_claude();
-        assert_eq!(app.claude.current().unwrap().kind, crate::claude::Kind::Claude, "the first visit is Claude");
-        pane(&mut app).state = PaneState::Running;
-        let picking = |app: &App| match &app.claude.mode {
-            Mode::Opening(picker) => picker.kind,
-            other => panic!("not picking: {other:?}"),
-        };
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('o')));
-        assert_eq!(picking(&app), crate::claude::Kind::OpenCode);
-        app.update(key(KeyCode::Enter));
-        assert_eq!(app.claude.current().unwrap().kind, crate::claude::Kind::OpenCode);
-        pane(&mut app).state = PaneState::Running;
-        app.update(ctrl('z'));
-        assert!(pane(&mut app).take_outbox().is_empty(), "suspended, OpenCode could not come back either");
-        assert!(app.notice().is_some_and(|n| n.contains("OpenCode")));
-
-        // n: the kind on screen; shift+tab: the next one; a click: that one.
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('n')));
-        assert_eq!(picking(&app), crate::claude::Kind::OpenCode);
-        app.update(Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)));
-        assert_eq!(picking(&app), crate::claude::Kind::Terminal);
-        app.viewport.hits.borrow_mut().push((Rect::new(10, 3, 12, 1), Hit::Kind(crate::claude::Kind::Claude)));
-        app.update(Event::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 12, row: 3, modifiers: KeyModifiers::NONE }));
-        assert_eq!(picking(&app), crate::claude::Kind::Claude);
-        app.update(key(KeyCode::Esc));
-
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('t')));
-        app.update(key(KeyCode::Enter));
-        assert_eq!(app.claude.current().unwrap().kind, crate::claude::Kind::Terminal);
-        pane(&mut app).state = PaneState::Running;
-        app.update(ctrl('z'));
-        assert_eq!(pane(&mut app).take_outbox(), [0x1a], "in a shell ctrl+z is the shell's, for its jobs");
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('c')));
-        assert_eq!(picking(&app), crate::claude::Kind::Claude);
-    }
-
-    #[test]
-    fn f_keys_reach_every_tab_without_ctrl_backslash() {
-        let mut app = app_with_fake();
-        app.open_claude();
-        pane(&mut app).state = PaneState::Running;
-        let f = |n| Event::Key(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
-        app.update(f(4));
-        assert_eq!(app.view, View::Tape, "F4 from Claude's screen, not passed on to it");
-        assert!(pane(&mut app).take_outbox().is_empty());
-        app.update(f(7));
-        assert_eq!(app.view, View::Claude);
-        app.update(f(5));
-        assert_eq!(app.view, View::Airflow);
-        app.update(f(6));
-        assert_eq!(app.view, View::Jira);
-        app.update(f(2));
-        assert_eq!(app.view, View::Queue);
-        app.update(f(9));
-        assert_eq!(app.view, View::Queue, "no session 9: nothing happens but a word on how to open one");
-        assert!(app.notice().is_some_and(|n| n.contains("no session 9")));
-    }
-
-    #[test]
-    fn a_click_opens_a_tab_or_a_session_and_the_wheel_moves() {
-        let mut app = app_with_fake();
-        app.open_claude();
-        pane(&mut app).state = PaneState::Running;
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('n')));
-        app.update(key(KeyCode::Enter));
-        // What the last frame drew: two tabs, the first session, the +, Claude's screen.
-        let rect = |x, y, w, h| Rect::new(x, y, w, h);
-        app.viewport.hits.borrow_mut().extend([
-            (rect(80, 0, 8, 1), Hit::View(View::Tape)),
-            (rect(90, 0, 10, 1), Hit::View(View::Claude)),
-            (rect(1, 6, 26, 2), Hit::Session(0)),
-            (rect(24, 4, 3, 1), Hit::NewSession),
-            (rect(30, 4, 80, 25), Hit::Pane),
-        ]);
-        let click = |x, y| {
-            Event::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE })
-        };
-        app.update(click(2, 7));
-        assert_eq!(app.claude.active, 0, "the first session, clicked");
-        app.update(click(83, 0));
-        assert_eq!(app.view, View::Tape, "a tab of the header, clicked");
-        app.update(click(92, 0));
-        assert_eq!(app.view, View::Claude);
-        app.update(click(25, 4));
-        assert!(matches!(app.claude.mode, Mode::Opening(_)), "the + asks where");
-        app.update(key(KeyCode::Esc));
-        // The wheel over Claude's screen is Claude's; over the tape it moves the cursor.
-        pane(&mut app).take_outbox();
-        let wheel = |kind| Event::Mouse(MouseEvent { kind, column: 50, row: 10, modifiers: KeyModifiers::NONE });
-        for _ in 0..3 {
-            app.update(wheel(MouseEventKind::ScrollUp));
-        }
-        assert_eq!(pane(&mut app).take_outbox(), b"\x1b[5~", "a turn of the wheel is a page of Claude's");
-    }
-
-    #[test]
-    fn after_claude_ends_the_view_is_the_monitor_s_again() {
-        let mut app = app_with_fake();
-        app.open_claude();
-        let id = app.claude.current().unwrap().id;
-        app.update(Event::PaneExited(id, "it exited".into()));
-        assert_eq!(pane(&mut app).state, PaneState::Exited("it exited".into()));
-        app.update(key(KeyCode::Enter));
-        assert_eq!(pane(&mut app).state, PaneState::Starting, "⏎ starts it again");
-        pane(&mut app).state = PaneState::Failed("claude is not installed".into());
-        app.update(key(KeyCode::Char('1')));
-        assert_eq!(app.view, View::Nodes, "with nothing running, the keys are the monitor's");
-        app.update(key(KeyCode::Char('q')));
-        assert!(app.quit);
-    }
-
-    #[test]
     fn a_bell_from_a_session_not_on_screen_marks_it() {
         let mut app = app_with_fake();
         app.open_claude();
         pane(&mut app).state = PaneState::Running;
         let first = app.claude.current().unwrap().id;
-        app.update(ctrl('\\'));
-        app.update(key(KeyCode::Char('n')));
-        app.update(key(KeyCode::Enter));
+        // A second session goes on screen, floating; the first rings behind it.
+        app.claude.open_new("", crate::claude::Kind::Claude);
+        app.update(key(KeyCode::Char('\\')));
         app.update(Event::Pane(first, b"all done\x07".to_vec()));
         assert!(app.claude.list[0].pane.attention, "rang behind the session on screen");
         assert!(app.claude.calling());
@@ -3839,15 +2942,6 @@ mod tests {
             KeyModifiers::CONTROL,
         )));
         assert!(app.quit);
-    }
-
-    #[test]
-    fn the_help_overlay_opens_and_closes() {
-        let mut app = app_with_fake();
-        app.update(key(KeyCode::Char('?')));
-        assert!(app.help);
-        app.update(key(KeyCode::Char('x')));
-        assert!(!app.help, "any key but ? and q closes it");
     }
 
     #[test]

@@ -77,7 +77,7 @@ fn cells(rows: &[Row], width: usize) -> Vec<usize> {
 
 fn row_style(theme: &Theme, r: &Row) -> (Style, Style) {
     if r.is_server() {
-        return (theme.muted(), theme.muted());
+        return (Style::default().fg(theme.server_bar), theme.muted());
     }
     let sev = severity::user_share(r.mem_pct);
     let fill = if sev.is_problem() { theme.sev(sev) } else { theme.accent() };
