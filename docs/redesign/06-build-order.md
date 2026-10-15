@@ -124,6 +124,17 @@ the digit views, the tree, the map, the insights, help — went from `app.rs`. T
 tabs are the panels (`⌘1`–`⌘9`, the F-keys). Parity needs no second run: both shells drew the
 same `App`, and the panels' numbers are held to the engine by the tests.
 
+## The zooms, redrawn (October 2026) — done
+
+REDASH QUEUE, AIRFLOW, JIRA and SESSIONS zoomed were still today's views inside the zoom's frame;
+they are redrawn from zero as `09-zooms.md` designs them: cards for the facts, one list for the
+rows, the row under the cursor in a card, and what runs now moving every second. The only engine
+touches are the Airflow tasks read for the Gantt without a page (`App::airflow_tasks`),
+`ClaudePane::last_output`, and the fake's tasks spread over their run.
+
+Acceptance: `*-zoom-queue.txt`, `120x36-cancel-dialog.txt`, `*-zoom-airflow.txt`,
+`*-zoom-jira.txt`, `*-zoom-sessions.txt`, `*-zoom-sessions-list.txt`; the zooms' resize fuzz.
+
 ## Phase 7 — feature wave 1 · Phase 8 — wave 2
 
 `07-features.md`.

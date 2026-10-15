@@ -79,8 +79,47 @@ pub fn choose(app: &mut App, key: &str) {
         }
         PanelId::Queue | PanelId::Airflow | PanelId::Jira | PanelId::Tape => crate::ui2::views::pass(app, key),
         PanelId::Sessions => match key {
-            "Up" | "k" | "PageUp" => app.claude.step(false),
-            "Down" | "j" | "PageDown" => app.claude.step(true),
+            "Up" | "k" => app.claude.step(false),
+            "Down" | "j" => app.claude.step(true),
+            "PageUp" | "PageDown" => {
+                // A page: what the list's window holds, or the whole grid.
+                let order = app.claude.order();
+                let at = order.iter().position(|&i| i == app.claude.active).unwrap_or(0);
+                let page = usize::from(app.shell.sessions_shape.get().1.max(1));
+                let to = if key == "PageUp" { at.saturating_sub(page) } else { (at + page).min(order.len().saturating_sub(1)) };
+                if let Some(&index) = order.get(to) {
+                    app.claude.select(index);
+                }
+            }
+            "Left" | "h" | "Right" | "l" => {
+                let back = matches!(key, "Left" | "h");
+                let order = app.claude.order();
+                let at = order.iter().position(|&i| i == app.claude.active).unwrap_or(0);
+                let column = usize::from(app.shell.sessions_shape.get().0);
+                let to = if column > 0 {
+                    // The grid: the card beside, a column's worth along the order.
+                    if back { at.checked_sub(column) } else { Some(at + column).filter(|t| *t < order.len()) }
+                } else {
+                    // The list: the previous or the next project's first session.
+                    let groups = app.claude.groups();
+                    let mut starts = Vec::new();
+                    let mut k = 0;
+                    for (_, members) in &groups {
+                        starts.push(k);
+                        k += members.len();
+                    }
+                    let group = starts.iter().rposition(|&s| s <= at).unwrap_or(0);
+                    if back {
+                        let start = starts[group];
+                        if at > start { Some(start) } else { group.checked_sub(1).map(|g| starts[g]) }
+                    } else {
+                        starts.get(group + 1).copied()
+                    }
+                };
+                if let Some(&index) = to.and_then(|t| order.get(t)) {
+                    app.claude.select(index);
+                }
+            }
             "Home" => {
                 if let Some(&first) = app.claude.order().first() {
                     app.claude.select(first);

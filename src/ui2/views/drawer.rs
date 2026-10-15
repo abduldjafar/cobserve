@@ -52,7 +52,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     }
 }
 
-type Drawer = (Vec<Span<'static>>, Vec<Line<'static>>);
+pub(super) type Drawer = (Vec<Span<'static>>, Vec<Line<'static>>);
 
 fn title(text: impl Into<String>, theme: &Theme) -> Vec<Span<'static>> {
     vec![Span::styled(text.into(), theme.strong())]
@@ -1028,7 +1028,7 @@ fn airflow_dag(
     (head, lines)
 }
 
-fn jira(app: &App, theme: &Theme, width: usize) -> Drawer {
+pub(super) fn jira(app: &App, theme: &Theme, width: usize) -> Drawer {
     let board = &app.jira;
     if !board.reachable {
         return (title("jira", theme), Vec::new());

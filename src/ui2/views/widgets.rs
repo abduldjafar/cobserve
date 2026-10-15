@@ -169,8 +169,6 @@ pub fn thin_bar(value: Option<f64>, cells: usize, fill: Color, theme: &Theme) ->
 /// How a sparkline maps values to heights.
 #[derive(Debug, Clone, Copy)]
 pub enum Scale {
-    /// A fixed range — counts that start at zero.
-    Fixed(f64, f64),
     /// The range of the data itself, but never narrower than `min_span` (so noise is not
     /// drawn as drama) and never outside `[floor, ceil]`. The bar next to it already says how
     /// high the number is; the sparkline's job is the shape — climbing, sawing, flat.
@@ -186,7 +184,6 @@ pub const PCT_SHAPE: Scale = Scale::Auto {
 
 fn resolve(scale: Scale, values: &[Option<f64>]) -> (f64, f64) {
     match scale {
-        Scale::Fixed(lo, hi) => (lo, hi),
         Scale::Auto { min_span, floor, ceil } => {
             let mut known = values.iter().flatten().copied();
             let Some(first) = known.next() else {
@@ -433,7 +430,7 @@ mod tests {
             s.push(f64::from(i) * 2.0, f64::from(i % 100));
         }
         let now = s.last_t().unwrap();
-        let spans = sparkline(Some(&s), now, 12, Scale::Fixed(0.0, 100.0), |_| Color::Blue);
+        let spans = sparkline(Some(&s), now, 12, PCT_SHAPE, |_| Color::Blue);
         assert_eq!(fmt::width(&text(&spans)), 12);
         let none = sparkline(None, now, 6, PCT_SHAPE, |_| Color::Blue);
         assert_eq!(text(&none), "      ");
@@ -451,7 +448,6 @@ mod tests {
         // Near the floor the window shifts up instead of going negative.
         let (lo, hi) = resolve(PCT_SHAPE, &[Some(1.0), Some(2.0)]);
         assert_eq!((lo, hi), (0.0, 10.0));
-        assert_eq!(resolve(Scale::Fixed(0.0, 5.0), &[Some(9.0)]), (0.0, 5.0));
         assert_eq!(resolve(PCT_SHAPE, &[None, None]), (0.0, 100.0));
     }
 

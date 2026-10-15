@@ -1,48 +1,48 @@
  ❖ cobserve · prod    dashboard › sessions                                                                                    esc back   ● live   15:52:07 WIB
-╭ 8 SESSIONS · 4 ────────────────────────────────────────────────────────────────────────────────────────────────────── n new · ↻ past · x x close · esc back ─╮
-│ SESSIONS       ✻ 287M today · ≈ $191  │✻ claude · ~/work/billing ⎇ main · ● working                                                                          │
-│                                       │                                                                                                                      │
-│▌ ✻  billing export                 7  │› make the invoice export stream its rows instead of building one big Vec                                             │
-│▌    ~/work/billing ⎇ ma…   ● working  │                                                                                                                      │
-│                                       │● I'll read the exporter first.                                                                                       │
-│  ▣  late partitions                8  │                                                                                                                      │
-│     ~/work/pipelines ⎇ …  ! approval  │● Read(src/export/invoice.rs)                                                                                         │
-│                                       │  └ 214 lines                                                                                                         │
-│  ▦  sql · clickhouse3              9  │                                                                                                                      │
-│     —                         ○ idle  │● Update(src/export/invoice.rs)                                                                                       │
-│                                       │  └ 18 lines added, 31 removed                                                                                        │
-│  ❯  make totals                   10  │                                                                                                                      │
-│     ~/work/reports ⎇ ad…      ○ idle  │✻ Running the tests… (esc to interrupt)                                                                               │
-│                                       │                                                                                                                      │
-│  +  new session · claude · opencod…   │                                                                                                                      │
-│  ↻  past conversations · from any …   │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │                                                                                                                      │
-│                                       │⏎ opens it full, keys go to the program · \ floats it over any panel · ctrl+\ 1-8 back to a panel                     │
+╭ 8 SESSIONS · 4 ────────────────────────────────────────────────────────────────────────────────────────────────────── n new · / find · x x close · esc back ─╮
+│                                                                                                                         4 sessions · 1 working · 1 needs you │
+│ n new session · ↻ past conversations · / find one · x x close · \ float it · ⏎ open it full · r rename it                                                    │
+│ ╭ ✻ 7 · billing export ────────────── ◒ working ─╮  ╭ ❯ 9 · make totals ──────────────────── ○ idle ─╮  ╭ + new session ─────────────────────────────────╮   │
+│ │ ~/work/billing  ⎇ main · claude                │  │ ~/work/reports  ⎇ main · terminal              │  │                                                │   │
+│ │ ✻ Claude Code  ~/work/billing                  │  │ $ make totals                                  │  │                                                │   │
+│ │                                                │  │ python3 totals.py --month 2026-10              │  │                                                │   │
+│ │ > make the invoice export stream its rows inste│  │ reading 31 files... done                       │  │                                                │   │
+│ │                                                │  │ writing totals-2026-10.csv (12,418 rows)       │  │                                                │   │
+│ │ ● I'll read the exporter first.                │  │ $ wc -l totals-2026-10.csv                     │  │                                                │   │
+│ │                                                │  │ 12419 totals-2026-10.csv                       │  │                                                │   │
+│ │ ● Read(src/export/invoice.rs)                  │  │ $                                              │  │                                                │   │
+│ │   └  214 lines                                 │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │ n · Claude, OpenCode, a terminal or a query s… │   │
+│ │ ● Update(src/export/invoice.rs)                │  │                                                │  │                                                │   │
+│ │   └  18 lines added, 31 removed                │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │ ✻ Running the tests… (esc to interrupt)        │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │ ───────────────────────────────────────────────│  │                                                │  │                                                │   │
+│ │ ❯                                              │  │                                                │  │                                                │   │
+│ │ ───────────────────────────────────────────────│  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ ╰─ ⏎ opens it full · \ floats it · r renames it ─╯  ╰────────────────────────────────────────────────╯  ╰────────────────────────────────────────────────╯   │
+│ ╭ ▣ 8 · late partitions ─────────── ! needs you ─╮  ╭ ▦ 10 · clickhouse3 ────────────────── ○ ready ─╮  ╭ ↻ past conversations ──────────────────────────╮   │
+│ │ ~/work/pipelines  ⎇ fix/late-parts · opencode  │  │ SQL on clickhouse3 · read-only                 │  │                                                │   │
+│ │ ▣ opencode ~/work/pipelines                    │  │                                                │  │                                                │   │
+│ │                                                │  │ read-only SQL                                  │  │                                                │   │
+│ │ > find why the 03:00 partitions land late      │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │ I checked the scheduler log: the merge of      │  │                                                │  │                                                │   │
+│ │ 2026-10-12 waited on parts_to_delay_insert.    │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │ Permission needed to run:                      │  │                                                │  │                                                │   │
+│ │   clickhouse-client --query "SELECT ..."       │  │                                                │  │ a conversation had elsewhere, taken up here    │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │   [a]llow  [d]eny  [e]dit                      │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ │                                                │  │                                                │  │                                                │   │
+│ ╰────────────────────────────────────────────────╯  ╰────────────────────────────────────────────────╯  ╰────────────────────────────────────────────────╯   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- esc back   ↑↓ a session   ⏎ open it full   \ float it   n new   / find one                                                 4 sessions · 1 waiting for approval
+ esc back   ↑↓ a session   ⏎ open it full   \ float it   n new   / find one   x x close   r rename                                9/9 nodes · 1.1 s · read-only

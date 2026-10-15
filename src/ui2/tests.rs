@@ -453,8 +453,8 @@ fn the_zoomed_queue_and_the_cancel_dialog() {
     assert_eq!(trimmed(&got[1]), trimmed(&want[1]), "the zoom's title: the instance and its workers");
     same_frames(&got, &want, 1..=34, "zoom queue");
     let text = got.join("\n");
-    // Today's view 2, moved: the table, the sections, the stitch, the drawer.
-    for part in ["QUEUE ", "RUNNING", "queries ", "─ RUNNING · 6 on a worker ─", "→ clickhouse3 16.3G 3.1c", "─ WAITING · ", "─ job · queries · grigol.gankava ─"] {
+    // The cards, the sections, the stitch, the job's card.
+    for part in ["╭ waiting ", "╭ queues ", "4/4 busy", "─ RUNNING · 6 on a worker ─", "→ clickhouse3", "16.3G  3.1c", "─ WAITING · ", "% of 3 min", "╭ #7438 Gateway transfers · grigol.gankava"] {
         assert!(text.contains(part), "{part}:\n{text}");
     }
     assert_eq!(trimmed(&got[35]).split("   ").take(4).collect::<Vec<_>>(), trimmed(&want[35]).split("   ").take(4).collect::<Vec<_>>());
@@ -489,7 +489,7 @@ fn the_zoomed_queue_and_the_cancel_dialog() {
 fn the_zoomed_airflow_jira_and_tape_are_today_s_views() {
     let mut app = app_after(30);
     for (digit, name, parts) in [
-        ('5', "120x36-zoom-airflow", vec!["RUNNING", "test_clickhouse_connection", "QUEUED", "FAILED", "replication_app_consistency_check"]),
+        ('5', "120x36-zoom-airflow", vec!["NOW ·", "╭ ✖ test_clickhouse_connection", "THE DAY", "kyc_onboarding_tables", "╭ test_clickhouse_connection · manual"]),
         ('6', "120x36-zoom-jira", vec!["DATA-2207", "DATA-2647", "IN PROGRESS"]),
         ('7', "120x36-zoom-tape", vec!["TAPE", "runaway m.kairys on clickhouse-bi"]),
     ] {
@@ -549,6 +549,82 @@ fn with_sessions(app: &mut App) {
     app.claude.open_query(Some("clickhouse3"));
     app.claude.select(0);
 }
+
+/// A session's program up and having printed `bytes`, as `main.rs` leaves it.
+fn run_pane(app: &mut App, index: usize, bytes: &[u8], working: bool) {
+    let clock = app.clock;
+    let session = &mut app.claude.list[index];
+    session.pane.start((33, 116), 1000);
+    session.pane.state = crate::claude::PaneState::Running;
+    session.pane.feed(bytes, false);
+    session.pane.last_output = if working { Some(clock) } else { clock.checked_sub(std::time::Duration::from_secs(60)) };
+}
+
+/// The sessions of `with_sessions`, their programs running: what a screenshot of the zoom shows.
+fn with_running_sessions(app: &mut App) {
+    with_sessions(app);
+    app.claude.list[0].branch = Some("main".into());
+    app.claude.list[1].branch = Some("fix/late-parts".into());
+    app.claude.list[2].branch = Some("main".into());
+    run_pane(app, 0, CLAUDE_DEMO, true);
+    run_pane(app, 1, OPENCODE_DEMO, false);
+    run_pane(app, 2, SHELL_DEMO, false);
+    app.claude.list[1].pane.attention = true;
+}
+
+/// `n` sessions on seven projects, as the list + preview mockups have them; the chosen one's
+/// program running.
+pub(crate) fn with_many_sessions(app: &mut App, n: usize) {
+    use crate::claude::Kind;
+    const SET: [(&str, Kind, &str); 20] = [
+        ("~/work/billing", Kind::Claude, "billing export"),
+        ("~/work/pipelines", Kind::OpenCode, "late partitions"),
+        ("~/work/reports", Kind::Terminal, "make totals"),
+        ("", Kind::Query, "clickhouse3"),
+        ("~/work/airflow-dags", Kind::OpenCode, "airflow-agent"),
+        ("~/work/airflow-dags", Kind::Claude, "MetricsAtomic"),
+        ("~/code/apitap-lib", Kind::OpenCode, "apitap-opencode"),
+        ("~/work/airflow-dags", Kind::Claude, "airflow-dq"),
+        ("~/code/apitap-lib", Kind::Claude, "apitap-lib-qa"),
+        ("~/code/cobserve", Kind::Claude, "integrate-jira-api"),
+        ("~/code/apitap-lib", Kind::Terminal, "shell"),
+        ("~/work/billing", Kind::Claude, "invoice tests"),
+        ("~/work/billing", Kind::Terminal, "shell"),
+        ("~/work/pipelines", Kind::Claude, "backfill 03:00"),
+        ("~/work/pipelines", Kind::Claude, "dq checks"),
+        ("~/work/pipelines", Kind::Terminal, "shell"),
+        ("~/work/airflow-dags", Kind::Claude, "docs-move"),
+        ("", Kind::Query, "clickhouse-bi"),
+        ("~/code/cobserve", Kind::Claude, "zoom redesign"),
+        ("~/notes", Kind::Claude, "weekly notes"),
+    ];
+    for k in 0..n {
+        let (dir, kind, name) = SET[k % SET.len()];
+        let name = if k < SET.len() { name.to_string() } else { format!("{name} {}", k / SET.len() + 1) };
+        if kind == Kind::Query {
+            app.claude.open_query(Some(&name));
+        } else {
+            let dir = if k < SET.len() { dir.to_string() } else { format!("{dir}-{}", k / SET.len() + 1) };
+            app.claude.open_new(&dir, kind);
+            app.claude.rename_current(&name);
+        }
+    }
+    for i in 0..app.claude.list.len() {
+        if app.claude.list[i].dir.contains("airflow-dags") {
+            app.claude.list[i].branch = Some("docs-move".into());
+        }
+    }
+    let chosen = 7.min(n.saturating_sub(1));
+    run_pane(app, chosen, CLAUDE_DEMO, true);
+    if n > 1 {
+        app.claude.list[1].pane.attention = true;
+    }
+    app.claude.select(chosen);
+}
+
+const OPENCODE_DEMO: &[u8] = b"\x1b[1m\xe2\x96\xa3 opencode\x1b[m \x1b[2m~/work/pipelines\x1b[m\r\n\r\n> find why the 03:00 partitions land late\r\n\r\nI checked the scheduler log: the merge of\r\n2026-10-12 waited on parts_to_delay_insert.\r\n\r\n\x1b[33mPermission needed to run:\x1b[m\r\n  clickhouse-client --query \"SELECT ...\"\r\n\r\n  [a]llow  [d]eny  [e]dit\r\n";
+
+const SHELL_DEMO: &[u8] = b"\x1b[32m$\x1b[m make totals\r\npython3 totals.py --month 2026-10\r\nreading 31 files... done\r\nwriting totals-2026-10.csv (12,418 rows)\r\n\x1b[32m$\x1b[m wc -l totals-2026-10.csv\r\n12419 totals-2026-10.csv\r\n\x1b[32m$\x1b[m ";
 
 #[test]
 fn the_sessions_panel_and_zoom() {
@@ -770,6 +846,11 @@ fn theme_and_prayer_from_the_palette() {
 fn dump() {
     let (w, h) = std::env::var("SIZE").ok().and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))).unwrap_or((120, 36));
     let mut app = app_after(30);
+    match std::env::var("SESSIONS").ok().and_then(|n| n.parse::<usize>().ok()) {
+        Some(4) => with_running_sessions(&mut app),
+        Some(n) => with_many_sessions(&mut app, n),
+        None => {}
+    }
     for c in std::env::var("KEYS").unwrap_or_default().chars() {
         app.update(match c {
             '⏎' => key(KeyCode::Enter),
@@ -782,7 +863,18 @@ fn dump() {
             c => ch(c),
         });
     }
+    answer_asks(&mut app);
     println!("{}", render(&app, w, h).join("\n"));
+}
+
+/// What the screen asked to read — a run's tasks for the Gantt, a page — answered by the fake,
+/// as the loop does.
+fn answer_asks(app: &mut App) {
+    let now = app.now();
+    for ask in app.take_detail_asks() {
+        let body = crate::fake::detail(&ask, now);
+        app.update(Event::Detail(ask, body));
+    }
 }
 
 #[test]
@@ -972,12 +1064,18 @@ fn export_screens() {
     for panel in PanelId::ALL {
         let mut app = fresh();
         if panel == PanelId::Sessions {
-            with_sessions(&mut app);
+            with_running_sessions(&mut app);
         }
         app.update(ch(char::from(b'0' + panel.number())));
         app.update(key(KeyCode::Enter));
+        answer_asks(&mut app);
         write(&format!("120x36-zoom-{}", panel.slug()), &app, 120, 36, &dark);
     }
+    let mut app = fresh();
+    with_many_sessions(&mut app, 20);
+    app.update(ch('8'));
+    app.update(key(KeyCode::Enter));
+    write("120x36-zoom-sessions-list", &app, 120, 36, &dark);
     let mut app = fresh();
     app.update(ch(':'));
     write("120x36-palette", &app, 120, 36, &dark);
@@ -1010,4 +1108,49 @@ fn export_screens() {
     app.update(ch('0'));
     write("120x36-local", &app, 120, 36, &dark);
     write("120x36-light", &fresh(), 120, 36, &light);
+}
+
+/// The four redrawn zooms at sizes from tiny to huge, the cursor first, in the middle and last,
+/// the sessions with none, a grid's worth, a list's and the most there can be: never a panic.
+#[test]
+fn the_zooms_render_at_every_size_without_a_panic() {
+    let mut seed: u64 = 0x2026_1015;
+    let mut next = |m: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % m
+    };
+    for sessions in [0usize, 4, 20, 50] {
+        let mut app = app_after(30);
+        if sessions == 4 {
+            with_running_sessions(&mut app);
+        } else if sessions > 0 {
+            with_many_sessions(&mut app, sessions);
+        }
+        for digit in ['2', '5', '6', '8'] {
+            app.update(key(KeyCode::Esc));
+            app.update(key(KeyCode::Esc));
+            app.update(ch(digit));
+            app.update(key(KeyCode::Enter));
+            answer_asks(&mut app);
+            for round in 0..40 {
+                let w = 20 + next(231) as u16;
+                let h = 8 + next(73) as u16;
+                let moves = match round % 3 {
+                    0 => 0,
+                    1 => 6,
+                    _ => 60,
+                };
+                for _ in 0..moves {
+                    app.update(key(KeyCode::Down));
+                }
+                let screen = render(&app, w, h);
+                assert_eq!(screen.len(), h as usize, "zoom {digit}, {sessions} sessions, {w}×{h}");
+                if round % 3 == 2 {
+                    app.update(key(KeyCode::Home));
+                }
+            }
+        }
+    }
 }

@@ -3,7 +3,7 @@
 //! (`views.rs`): the list beside the chosen session's screen, opened full with `⏎`.
 
 use crate::app::App;
-use crate::claude::{Kind, PaneState, Session, Sessions};
+use crate::claude::{Kind, Session, Sessions};
 use crate::severity::Severity;
 use crate::theme::Theme;
 use crate::ui2::paint::{tr, Painter};
@@ -23,19 +23,11 @@ pub fn glyph(kind: Kind) -> &'static str {
 
 /// A session's state in words, and its severity: it rang (done, or asking) amber; running
 /// green; kept or not started dim; ended dim with `✕`.
-pub fn state(s: &Session) -> (&'static str, Severity) {
-    if s.console.is_some() {
-        return ("○ ready", Severity::None);
-    }
-    if s.pane.attention {
-        return ("! attention", Severity::Warn);
-    }
-    match &s.pane.state {
-        PaneState::Running | PaneState::Starting => ("● running", Severity::Ok),
-        PaneState::Exited(_) | PaneState::Failed(_) => ("✕ ended", Severity::None),
-        PaneState::Idle if s.waiting() => ("↻ kept", Severity::None),
-        PaneState::Idle => ("○ idle", Severity::None),
-    }
+/// A session's state in a word, as the zoom says it (`views::claude::state_word`): `◐ working`
+/// while it prints, `! needs you` when it rang, `○ idle`, `✕ ended`, `↻ kept`.
+pub fn state(s: &Session, clock: std::time::SystemTime) -> (String, Severity) {
+    let (word, mark, sev, _) = crate::ui2::views::claude::state_word(s, clock);
+    (format!("{mark} {word}"), sev)
 }
 
 pub fn kind_style(theme: &Theme, kind: Kind) -> Style {
@@ -90,7 +82,7 @@ fn body(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect, focused: bool) {
         p.put(i.x + 2, y, &Sessions::number_of(index).to_string(), theme.muted());
         let name_w = 18.min(w.saturating_sub(30));
         p.put(i.x + 5, y, &tr(&s.label(), name_w), if chosen { theme.strong() } else { theme.text() });
-        let (word, sev) = state(s);
+        let (word, sev) = state(s, app.clock);
         if w >= 46 {
             p.put(i.x + 24, y, &tr(&place(s), w.saturating_sub(38)), theme.muted());
         }
@@ -99,7 +91,7 @@ fn body(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect, focused: bool) {
             Severity::Warn => theme.sev(Severity::Warn).add_modifier(Modifier::BOLD),
             _ => theme.muted(),
         };
-        p.putr(i.x + i.width, y, word, style);
+        p.putr(i.x + i.width, y, &word, style);
     }
     if room > order.len() {
         p.put(i.x, i.y + order.len() as u16, &tr("+ new session · ↻ past conversations", w), theme.muted());

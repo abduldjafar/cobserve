@@ -108,15 +108,6 @@ impl Series {
         (n > 0).then(|| sum / n as f64)
     }
 
-    pub fn max_in(&self, window_s: f64) -> Option<f64> {
-        let last = self.last_t()?;
-        self.points
-            .iter()
-            .filter(|(t, _)| last - t <= window_s)
-            .map(|(_, v)| *v)
-            .reduce(f64::max)
-    }
-
     /// Least-squares slope, in value per second, over the points of the last `window_s`.
     ///
     /// A regression rather than first-minus-last, because a single noisy poll at either end

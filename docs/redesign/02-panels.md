@@ -49,10 +49,11 @@ zoomed). `[` `]` move the replay cursor, drawn as a highlighted column on the gr
 | frame | red when oldest wait ≥ 180 s or all workers busy with runaways; amber ≥ 60 s | §7 |
 | title right | `oldest 3m43s ✖` | `now − min(enqueued_at)` (Redis), `—` without Redis |
 
-Zoomed: the queue table (`QUEUE · RUNNING · WAITING · OLDEST · WORKERS · STALE · last 4 min`),
-then RUNNING / WAITING / STALE as today's view 2 (same columns, same stitch `→ clickhouse3 16.3G
-3.1c 57%`), a drawer with the explanation line, and `x` → dialog → `y` for the cancel. `⏎` on a
-running job opens its node (panel 4) with that person selected.
+Zoomed (`09-zooms.md` §1): three cards — the jobs waiting in big digits, a worker board per
+queue, the waiting line of the last 4 minutes — then RUNNING (a spinner, a live age, the stitch
+`→ clickhouse3 ━━━╺━━━━ 37% 16.3G 3.1c`), WAITING (each wait a bar to the red line at 3 min) and
+STALE, and the job under the cursor in a card with its SQL (`J K`); `x` → dialog → `y` for the
+cancel. `⏎` on a running job opens its node (panel 4) with that person selected.
 
 ## 3 · NODES
 
@@ -99,15 +100,15 @@ floats Claude with the row in its prompt (`enter()` on a person seeds that promp
 Dashboard: the day in numbers (`217 runs ✔ 211 ✖ 3 ▸ 2 ◌ 1 ↻ 1`), a 24-hour strip of all DAGs
 (`▪` ran, `✖` a failure, `▸━` running now), the hours of the clock under it, then the rows of
 today's view 5 in order: running (stuck ones red, with the age), queued, failed, then the DAGs.
-Zoomed: today's view 5 (RUNNING, QUEUED, FAILED, ACTIVITY with the hourly timeline) plus, under
-it, the **Gantt** of the run under the cursor, one row per task (`━` span, `✔ ✖ ▸ ◌ ↻`), with
-`usually 1h48m (median of 30)` in its title; `⏎` on a task opens its log as today.
+Zoomed (`09-zooms.md` §2): a card for every run running, queued or failed today, then the day as
+a loom with a `┃` now line, then the **Gantt** of the run under the cursor, one row per task (`━`
+span, `✔ ✖ ◐ ◌ ↻`); `⏎` opens the run's tasks, and a task's log, as pages.
 
 ## 6 · JIRA
 
 Dashboard: the flow (`4 › 4 › 1 › 3 done`), `✖ 1 overdue`, today's hours against the norm with the
-month's mini bars, then the tickets with key, summary and due/age. Zoomed: LOGGED (the month's
-bars as today) then the **board**: the columns as lanes side by side, each ticket a 4-row block
+month's mini bars, then the tickets with key, summary and due/age. Zoomed (`09-zooms.md` §3, at every width): LOGGED (the month's
+bars) then the **board**: the columns as lanes side by side, each ticket a 4-row block
 (key and priority, the summary in two lines, time in column · due · logged); `←→` cross lanes,
 `↑↓` walk a lane, `⏎` the ticket in full (today's page).
 
@@ -124,9 +125,10 @@ Dashboard: one row per session: kind glyph (`✻` Claude, `▣` OpenCode, `▦` 
 number, name, folder ⎇ branch, state (`● working` green, `! approval` amber, `○ idle` dim,
 `✕ ended`). `↑↓` choose; `⏎` zooms; `\` floats the chosen session.
 
-Zoomed: the list on the left (two rows a session, then `+ new session` and `↻ past
-conversations`), the chosen session's screen on the right (read-only until opened); `⏎` opens it
-full: the PTY takes the body and every key goes to the program, `ctrl+\` as today.
+Zoomed (`09-zooms.md` §4): while the sessions fit as cards, a grid of live thumbnails — each the
+bottom of its own screen — and past that every session a line, grouped by project, beside the
+chosen one's screen; `⏎` opens it full: the PTY takes the body and every key goes to the program,
+`ctrl+\` as today.
 
 ## Overlays (drawn over whichever screen is under them)
 

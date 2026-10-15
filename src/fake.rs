@@ -1414,8 +1414,14 @@ fn fake_tasks(run: &crate::airflow::Run, now: i64) -> Vec<crate::airflow::TaskRu
         (_, Some((running, _))) if !running.is_empty() => names[at] = running.to_string(),
         _ => {}
     }
+    // The tasks spread over the run, as a real run's are, so its Gantt has bars; a run going
+    // now has its running task reach the clock.
     let start = run.start.unwrap_or(now);
-    let step = 40;
+    let span = run.end.unwrap_or(now) - start;
+    let step = match run.state {
+        RunState::Running => (span / (at as i64 + 1)).max(40),
+        _ => (span / count.max(1) as i64).max(40),
+    };
     names
         .into_iter()
         .enumerate()

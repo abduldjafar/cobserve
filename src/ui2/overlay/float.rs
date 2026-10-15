@@ -46,7 +46,7 @@ const WHICH: [(&str, &str); 10] = [
 pub fn draw(p: &mut Painter<'_>, app: &App, theme: &Theme, f: &Float, r: Rect) {
     let list = &app.claude;
     let title = match list.current() {
-        Some(s) => format!("{} {} · {} · {}", Sessions::number_of(list.active), s.kind.title().to_lowercase(), sessions::place(s), sessions::state(s).0),
+        Some(s) => format!("{} {} · {} · {}", Sessions::number_of(list.active), s.kind.title().to_lowercase(), sessions::place(s), sessions::state(s, app.clock).0),
         None => "no session yet · ⏎ starts Claude here".to_string(),
     };
     frame::overlay(p, theme, r, &title, theme.strong(), "");

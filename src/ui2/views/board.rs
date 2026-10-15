@@ -1,38 +1,34 @@
-//! View 6 on a wide terminal: the tickets as a board — the columns side by side as lanes, each
-//! ticket a block of its own rather than a row of a table.
+//! JIRA zoomed (`docs/redesign/09-zooms.md` §3): *what is on my board, and what is late?* The
+//! zoom is the board at every width — the columns as lanes side by side, each ticket a block of
+//! its own: the key and its priority, the summary in two lines, how long it has been in the
+//! column, its due date and the time logged. A ticket that is late or nearly so carries a stripe
+//! in its severity down its left edge; the cursor's block a bar of the accent. The month's time
+//! sits above the lanes; the ticket under the cursor in full in a card under them.
 //!
 //! ```text
-//!  in progress 4 ✖1            in review 4                 feedback 1        done 8 in 7 days
-//!  ━━━━━━━━━━━━━━━━━━━━━━━━━   ───────────────────────     ──────────────    ────────────────
-//! ▌DATA-2207           High    DATA-2647           ASAP    DATA-1289  High   DATA-2638   ✔ 2h
-//! ▌Product metrics integration Client account balances     Daily per-cove…   Enrich accounting…
-//! ▌— PostHog + ClickHouse →…   as a daily warehouse ta…    statement vs …    statement_misma…
-//! ▌11d                         4d · overdue 2d · 7h12m     12d · 4h          2h
+//!  IN PROGRESS 4 ▲ 1 due soon   IN REVIEW 4 ✖ 1 overdue      FEEDBACK 1      DONE 8 in 7 days
+//!  ━━━━━━━━━━━━━━━━━━━━━━━━━━━  ───────────────────────────  ──────────────  ────────────────
+//!  ▌DATA-2207             High  ▎DATA-2647             ASAP   DATA-1289  High DATA-2638  ✔ 2h
+//!  ▌Product metrics             ▎Client account balances      Daily per-cove… Enrich accounti…
+//!  ▌integration — PostHog + C…  ▎as a daily warehouse tabl…   statement vs …  statement_misma…
+//!  ▌11d in column               ▎4d · overdue 2d · 7h12m      12d · 4h logged 2h logged
 //! ```
 //!
-//! A lane's title says its count and, for open work, how much of it is overdue; the lane holding
-//! the cursor is underlined in tarum. A block: the key and its priority, the summary in two
-//! lines, and under them how long it has been in the column, its due date (coloured by how near)
-//! and the time logged — a finished one when it was finished. `↑ ↓` walk a lane and on into the
-//! next, `← →` cross the lanes. The month's time sits above the board, as on the narrow view.
+//! `↑ ↓` walk a lane and on into the next, `← →` cross the lanes.
 
-use super::widgets::{fit, Cells};
-use crate::app::{scroll_into_view, App, Hit};
+use super::kit::{self, Card};
+use super::widgets::Cells;
+use crate::app::{scroll_into_view, App, Feed, Hit};
 use crate::fmt;
 use crate::jira::{self, Ticket};
 use crate::severity::Severity;
 use crate::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use crate::ui2::paint::Painter;
+use ratatui::text::Span;
 use ratatui::Frame;
 
-/// The narrowest terminal that gets the board; below it, the list (`jira.rs`).
-pub const FROM_WIDTH: usize = 140;
-const GAP: usize = 3;
-/// A block's lines, and the blank under it.
-const BLOCK: usize = 4;
 
 /// A lane: its title, whether it holds finished work, and its tickets in the order drawn.
 pub struct Lane<'a> {
@@ -56,7 +52,7 @@ pub fn lanes(board: &jira::Board) -> Vec<Lane<'_>> {
 }
 
 /// Words to `width` cells, in at most `max` lines, the last cut with an ellipsis if need be.
-fn wrap(text: &str, width: usize, max: usize) -> Vec<String> {
+pub(super) fn wrap(text: &str, width: usize, max: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
@@ -81,27 +77,23 @@ fn wrap(text: &str, width: usize, max: usize) -> Vec<String> {
     lines
 }
 
-/// One piece of a board line: `cells` in `width` cells, on the selection's band when chosen.
-fn segment(cells: Cells, width: usize, band: Option<Style>) -> Vec<Span<'static>> {
-    let spans = fit(cells.into_spans(), width, true);
-    match band {
-        Some(band) => spans.into_iter().map(|s| Span::styled(s.content, band.patch(s.style))).collect(),
-        None => spans,
-    }
-}
-
-/// A ticket's block: its four lines, each `width` cells.
-fn block(ticket: &Ticket, finished: bool, selected: bool, now: i64, today: i64, theme: &Theme, width: usize) -> Vec<Vec<Span<'static>>> {
-    let band = selected.then(|| theme.selected());
-    let inner = width.saturating_sub(2);
-    let bar = |cells: &mut Cells| {
-        cells.push(if selected { "▌" } else { " " }, theme.accent());
-        cells.push(" ", Style::default());
+/// A ticket's block, `width` cells wide: the key and its priority (or, finished, when), the
+/// summary in `summary_lines`, then how long in the column, the due date and the time logged.
+#[allow(clippy::too_many_arguments)]
+fn block(ticket: &Ticket, finished: bool, selected: bool, summary_lines: usize, now: i64, today: i64, theme: &Theme, width: usize) -> Vec<Cells> {
+    let due = if finished { Severity::None } else { ticket.due_day().map_or(Severity::None, |d| jira::due_severity(d, today, false)) };
+    let edge = |cells: &mut Cells| {
+        match (selected, due) {
+            (true, _) => cells.push("▌", theme.accent()),
+            (false, Severity::Crit | Severity::Warn) => cells.push("▎", theme.sev(due)),
+            _ => cells.push(" ", Style::default()),
+        };
     };
+    let inner = width.saturating_sub(1);
 
     // The key, and on the right its priority — or, finished, when.
     let mut first = Cells::new();
-    bar(&mut first);
+    edge(&mut first);
     first.push(ticket.key.clone(), if finished { theme.muted() } else { theme.accent().add_modifier(Modifier::BOLD) });
     let mut right = Cells::new();
     match (finished, ticket.resolved) {
@@ -109,7 +101,9 @@ fn block(ticket: &Ticket, finished: bool, selected: bool, now: i64, today: i64, 
             right.push("✔ ", theme.sev(Severity::Ok));
             right.push(jira::age(now - at), theme.muted());
         }
-        _ if ticket.priority_unset() => {}
+        _ if ticket.priority_unset() => {
+            right.push("—", theme.faint());
+        }
         _ => {
             let word = ticket.priority.clone().unwrap_or_default();
             let style = match ticket.priority_severity() {
@@ -126,161 +120,246 @@ fn block(ticket: &Ticket, finished: bool, selected: bool, now: i64, today: i64, 
         first.spans(right.into_spans());
     }
 
-    // The summary in two lines, the team's tag left off: every ticket of the board has it.
+    // The summary, the team's tag left off: every ticket of the board has it.
     let words = jira::split_tag(&ticket.summary).1;
     let text_style = if finished { theme.text2() } else if selected { theme.strong() } else { theme.text() };
-    let mut summary: Vec<Cells> = wrap(words, inner, 2)
-        .into_iter()
-        .map(|text| {
-            let mut cells = Cells::new();
-            bar(&mut cells);
-            cells.push(text, text_style);
-            cells
-        })
-        .collect();
-    while summary.len() < 2 {
+    let mut lines = vec![first];
+    let mut summary = wrap(words, inner, summary_lines);
+    summary.resize(summary_lines, String::new());
+    for text in summary {
         let mut cells = Cells::new();
-        bar(&mut cells);
-        summary.push(cells);
+        edge(&mut cells);
+        cells.push(text, text_style);
+        lines.push(cells);
     }
 
-    // How long in the column, the due date, the time logged.
-    let mut last = Cells::new();
-    bar(&mut last);
-    let mut pieces: Vec<(String, Style)> = Vec::new();
+    // How long in the column, the due date, the time logged: the words go first when cut.
+    let mut pieces: Vec<(String, String, Style)> = Vec::new();
     if !finished {
         if let Some(age) = ticket.in_status(now) {
-            pieces.push((jira::age(age), theme.text2()));
+            pieces.push((jira::age(age), " in column".into(), theme.text2()));
         }
         if let Some(day) = ticket.due_day() {
-            let sev = jira::due_severity(day, today, false);
-            let style = if sev.is_problem() { theme.sev(sev).add_modifier(Modifier::BOLD) } else { theme.muted() };
-            pieces.push((jira::due_label(day, today), style));
+            let style = if due.is_problem() { theme.sev(due).add_modifier(Modifier::BOLD) } else { theme.muted() };
+            pieces.push((jira::due_label(day, today), String::new(), style));
         }
     }
     if let Some(logged) = ticket.logged_s.filter(|s| *s > 0) {
-        pieces.push((format!("{} logged", jira::logged(logged)), theme.muted()));
+        pieces.push((jira::logged(logged), " logged".into(), theme.muted()));
     }
-    for (i, (text, style)) in pieces.into_iter().enumerate() {
+    let alone = pieces.len() == 1;
+    let full = |words: bool| -> usize {
+        pieces.iter().map(|(t, w, _)| fmt::width(t) + if words && (alone || !w.contains("column")) { fmt::width(w) } else { 0 }).sum::<usize>() + 3 * pieces.len().saturating_sub(1)
+    };
+    let words = full(true) <= inner;
+    let mut last = Cells::new();
+    edge(&mut last);
+    for (i, (text, word, style)) in pieces.into_iter().enumerate() {
         if i > 0 {
             last.push(" · ", theme.faint());
         }
         last.push(text, style);
+        if words && (alone || !word.contains("column")) {
+            last.push(word, theme.faint());
+        }
     }
-
-    let mut lines = vec![segment(first, width, band)];
-    lines.extend(summary.into_iter().map(|c| segment(c, width, band)));
-    lines.push(segment(last, width, band));
+    lines.push(last);
     lines
 }
 
-/// The board, under `head` (the title and the month's time), in `area`.
-pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, head: Vec<Line<'static>>) {
-    let board = &app.jira;
-    let width = area.width as usize;
-    let height = area.height as usize;
-    let now = app.now();
-    let today = jira::today(now, app.time.offset_s(now));
-    let lanes = lanes(board);
-    let count = lanes.len().max(1);
-    let lane_w = width.saturating_sub(GAP * (count - 1)) / count;
-    let selected = app.jira_selection();
-    let holding = lanes.iter().position(|l| l.tickets.iter().any(|t| Some(t.key.as_str()) == selected));
+/// A lane's title: `IN REVIEW 4 ✖ 1 overdue`, `DONE 8 in 7 days`.
+fn lane_header(lane: &Lane<'_>, board: &jira::Board, today: i64, theme: &Theme, width: usize) -> Cells {
+    let mut title = Cells::new();
+    title.push(lane.title.to_uppercase(), if lane.tickets.is_empty() { theme.muted() } else { theme.section() });
+    title.push(format!(" {}", lane.tickets.len()), if lane.tickets.is_empty() { theme.faint() } else { theme.strong() });
+    if lane.finished && board.done_days > 0 {
+        title.push(format!(" in {}", fmt::plural(board.done_days as usize, "day", "days")), theme.faint());
+    }
+    if !lane.finished {
+        let judged: Vec<Severity> = lane.tickets.iter().filter_map(|t| t.due_day()).map(|d| jira::due_severity(d, today, false)).collect();
+        let overdue = judged.iter().filter(|s| **s == Severity::Crit).count();
+        let soon = judged.iter().filter(|s| **s == Severity::Warn).count();
+        // The words when they fit the lane, the marks and counts alone when not.
+        let words = title.width() + if overdue > 0 { 12 } else { 0 } + if soon > 0 { 13 } else { 0 } <= width;
+        if overdue > 0 {
+            title.push(if words { format!(" ✖ {overdue} overdue") } else { format!(" ✖{overdue}") }, theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
+        }
+        if soon > 0 {
+            title.push(if words { format!(" ▲ {soon} due soon") } else { format!(" ▲{soon}") }, theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        }
+    }
+    title
+}
 
-    // The lanes' titles, and a thread under each — tarum under the lane holding the cursor.
-    let mut titles: Vec<Span<'static>> = Vec::new();
-    let mut threads: Vec<Span<'static>> = Vec::new();
-    for (i, lane) in lanes.iter().enumerate() {
-        if i > 0 {
-            titles.push(Span::raw(" ".repeat(GAP)));
-            threads.push(Span::raw(" ".repeat(GAP)));
+pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, i: Rect) {
+    if i.height == 0 || i.width < 10 {
+        return;
+    }
+    let mut p = Painter::new(frame.buffer_mut());
+    let clip = Rect::new(i.x.saturating_sub(1), i.y, i.width + 2, i.height);
+    p.within(clip, |p| body(p, app, theme, i));
+}
+
+fn body(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect) {
+    let board = &app.jira;
+    if !board.reachable {
+        let calm = ("◌", theme.muted());
+        match board.error.as_deref() {
+            Some(jira::NOT_CONFIGURED) => kit::message(
+                p,
+                theme,
+                i,
+                calm,
+                "Jira is not configured",
+                &["JIRA_URL and JIRA_TOKEN (a personal access token, from your Jira profile) turn it on", ":setup jira · or jira: url, token in the --credential file"],
+            ),
+            Some(jira::NOT_READ) | None => kit::message(p, theme, i, calm, "reading Jira…", &["your tickets and this month's worklogs"]),
+            Some(why) => kit::message(p, theme, i, ("✖", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)), "Jira could not be read", &[why, "r reads again"]),
         }
-        let mut title = Cells::new();
-        title.push(" ", Style::default());
-        title.push(lane.title.clone(), if lane.tickets.is_empty() { theme.muted() } else { theme.section() });
-        title.push(format!(" {}", lane.tickets.len()), theme.faint());
-        if lane.finished && board.done_days > 0 {
-            title.push(format!(" in {}", fmt::plural(board.done_days as usize, "day", "days")), theme.faint());
+        return;
+    }
+    // The lanes are always lanes: `← →` cross them at every width.
+    app.viewport.jira_board.set(true);
+    let now = app.now();
+    let offset_s = app.time.offset_s(now);
+    let today = jira::today(now, offset_s);
+    let w = i.width as usize;
+    let fresh = kit::freshness(board.age(app.clock), board.error.as_deref(), app.is_reading(Feed::Jira), theme, w / 2);
+
+    // The month's time: the chart when there is height for it, a line otherwise.
+    let mut y = i.y;
+    if board.worklogs_read && i.height >= 26 {
+        let bars = if i.height >= 40 { 3 } else { 2 };
+        for line in super::jira::month_chart(board, now, offset_s, bars, theme, w) {
+            kit::put_line(p, i.x.saturating_sub(2), y, line, w + 2);
+            y += 1;
         }
-        if !lane.finished {
-            let judged: Vec<Severity> = lane.tickets.iter().filter_map(|t| t.due_day()).map(|d| jira::due_severity(d, today, false)).collect();
-            let overdue = judged.iter().filter(|s| **s == Severity::Crit).count();
-            let soon = judged.iter().filter(|s| **s == Severity::Warn).count();
-            if overdue > 0 {
-                title.push(format!("  ✖ {overdue} overdue"), theme.sev(Severity::Crit).add_modifier(Modifier::BOLD));
-            } else if soon > 0 {
-                title.push(format!("  ▲ {soon} due soon"), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
-            }
+        kit::put_spans_r(p, i.right(), i.y, fresh.into_spans());
+        y += 1;
+    } else {
+        let mut cells = Cells::new();
+        if board.worklogs_read {
+            let month = jira::Month::of(now, offset_s);
+            let days = month.per_day(&board.worklogs);
+            let total: u64 = days.iter().sum();
+            let today_s = days.get(month.today as usize - 1).copied().unwrap_or(0);
+            cells.push("LOGGED", theme.section());
+            cells.push(format!(" · {} · ", month.name.split(' ').next().unwrap_or_default()), theme.muted());
+            cells.push(jira::hours(total), theme.strong());
+            cells.push(format!(" in {}", fmt::plural(month.working_days_so_far().max(1) as usize, "working day", "working days")), theme.muted());
+            cells.push(" · today ", theme.faint());
+            cells.push(jira::hours(today_s), if today_s > 0 { theme.accent().add_modifier(Modifier::BOLD) } else { theme.muted() });
+            cells.push("   t by ticket", theme.faint());
+        } else {
+            cells.push("reading this month's worklogs…", theme.accent());
         }
-        titles.extend(segment(title, lane_w, None));
-        let (glyph, style) = if holding == Some(i) { ("━", theme.accent()) } else { ("─", theme.rule()) };
-        threads.push(Span::styled(format!(" {}", glyph.repeat(lane_w.saturating_sub(2))), style));
-        threads.push(Span::raw(" "));
+        let room = w.saturating_sub(fresh.width() + 2);
+        kit::put_cells(p, i.x, y, cells, room);
+        kit::put_spans_r(p, i.right(), y, fresh.into_spans());
+        y += 1;
     }
 
-    // Each lane as a column of blocks; the board's rows, lane beside lane.
+    let card_h: u16 = if i.height >= 30 { 5 } else { 0 };
+    let lanes_r = Rect::new(i.x, y, i.width, i.bottom().saturating_sub(card_h).saturating_sub(y));
+    lanes_view(p, app, theme, lanes_r, now, today);
+    if card_h > 0 {
+        detail(p, app, theme, Rect::new(i.x, i.bottom() - card_h, i.width, card_h));
+    }
+}
+
+fn lanes_view(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, now: i64, today: i64) {
+    if r.height < 3 {
+        return;
+    }
+    let board = &app.jira;
+    let lanes = lanes(board);
+    let count = lanes.len().max(1);
+    let width = r.width as usize;
+    let gap = if width >= 100 { 2 } else { 1 };
+    let lane_w = width.saturating_sub(gap * (count - 1)) / count;
+    let summary_lines = if width >= 100 && r.height >= 14 { 2 } else { 1 };
+    let block_h = summary_lines + 2;
+    let selected = app.jira_selection();
+    let holding = lanes.iter().position(|l| l.tickets.iter().any(|t| Some(t.key.as_str()) == selected));
+    let lane_x = |l: usize| r.x + (l * (lane_w + gap)) as u16;
+
+    // The lanes' titles, and a thread under each — the accent under the lane holding the cursor.
+    for (l, lane) in lanes.iter().enumerate() {
+        kit::put_cells(p, lane_x(l), r.y, lane_header(lane, board, today, theme, lane_w), lane_w);
+        let (glyph, style) = if holding == Some(l) { ("━", theme.accent()) } else { ("─", theme.rule()) };
+        p.put(lane_x(l), r.y + 1, &glyph.repeat(lane_w.saturating_sub(1)), style);
+    }
+
+    // Each lane a column of blocks, all lanes on one vertical offset.
     let mut index = 0usize;
-    let mut columns: Vec<Vec<Vec<Span<'static>>>> = Vec::new();
-    let mut spots: Vec<(usize, usize, usize)> = Vec::new(); // (lane, first row, ticket index)
+    let mut columns: Vec<Vec<Cells>> = Vec::new();
+    let mut spots: Vec<(usize, usize, usize, bool)> = Vec::new(); // lane, first row, ticket index, chosen
     let mut selected_row = None;
     for (l, lane) in lanes.iter().enumerate() {
-        let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
+        let mut rows: Vec<Cells> = Vec::new();
         for ticket in &lane.tickets {
             let chosen = Some(ticket.key.as_str()) == selected;
             if chosen {
                 selected_row = Some(rows.len());
             }
-            spots.push((l, rows.len(), index));
+            spots.push((l, rows.len(), index, chosen));
             index += 1;
-            rows.extend(block(ticket, lane.finished, chosen, now, today, theme, lane_w));
-            rows.push(vec![Span::raw(" ".repeat(lane_w))]);
+            rows.extend(block(ticket, lane.finished, chosen, summary_lines, now, today, theme, lane_w));
+            rows.push(Cells::new());
         }
         if lane.tickets.is_empty() {
             let mut none = Cells::new();
-            none.push("  nothing here", theme.faint());
-            rows.push(segment(none, lane_w, None));
+            none.push(" nothing here", theme.faint());
+            rows.push(none);
         }
         columns.push(rows);
     }
     let tall = columns.iter().map(Vec::len).max().unwrap_or(0);
-
-    let mut lines = head;
-    lines.push(Line::from(titles));
-    lines.push(Line::from(threads));
-    let fixed = lines.len().min(height);
-    let room = height - fixed;
+    let room = r.height.saturating_sub(2) as usize;
     // The block under the cursor whole on screen: its first row and its last.
-    let offset = scroll_into_view(app.viewport.jira.get(), selected_row.map(|r| r + BLOCK - 1), room, tall);
+    let offset = scroll_into_view(app.viewport.jira.get(), selected_row.map(|row| row + block_h - 1), room, tall);
     let offset = match selected_row {
-        Some(r) if r < offset => r,
+        Some(row) if row < offset => row,
         _ => offset,
     };
     app.viewport.jira.set(offset);
-    for row in offset..(offset + room).min(tall) {
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        for (l, column) in columns.iter().enumerate() {
-            if l > 0 {
-                spans.push(Span::raw(" ".repeat(GAP)));
-            }
-            match column.get(row) {
-                Some(segment) => spans.extend(segment.iter().cloned()),
-                None => spans.push(Span::raw(" ".repeat(lane_w))),
+    let top = r.y + 2;
+    for &(l, first, _, chosen) in &spots {
+        if !chosen {
+            continue;
+        }
+        for k in first..first + block_h {
+            if k >= offset && k < offset + room {
+                p.band(Rect::new(lane_x(l), top + (k - offset) as u16, lane_w as u16, 1), theme.selected());
             }
         }
-        lines.push(Line::from(spans));
     }
-
+    for (l, column) in columns.into_iter().enumerate() {
+        for (k, cells) in column.into_iter().enumerate().skip(offset).take(room) {
+            kit::put_cells(p, lane_x(l), top + (k - offset) as u16, cells, lane_w);
+        }
+    }
     let mut hits = app.viewport.hits.borrow_mut();
-    for (lane, first, ticket) in spots {
-        let (top, bottom) = (first.max(offset), (first + BLOCK).min(offset + room));
-        if top < bottom {
-            let x = area.x + (lane * (lane_w + GAP)) as u16;
-            let y = area.y + (fixed + top - offset) as u16;
-            hits.push((Rect::new(x, y, lane_w as u16, (bottom - top) as u16), Hit::Ticket(ticket)));
+    for (lane, first, ticket, _) in spots {
+        let (a, b) = (first.max(offset), (first + block_h).min(offset + room));
+        if a < b {
+            hits.push((Rect::new(lane_x(lane), top + (a - offset) as u16, lane_w as u16, (b - a) as u16), Hit::Ticket(ticket)));
         }
     }
-    drop(hits);
-    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// The ticket under the cursor in full: its summary with the tag, who and when, its link.
+fn detail(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect) {
+    let (head, lines) = super::drawer::jira(app, theme, r.width.saturating_sub(4) as usize);
+    let right = vec![Span::styled("⏎ in full · o in Jira · y copy link · r read now", theme.muted())];
+    let inner = Card::new(theme.border()).title(head).right(right).draw(p, r);
+    for (k, mut line) in lines.into_iter().enumerate().take(inner.height as usize) {
+        // The link alone: the keys are in the card's title.
+        if k == 2 && line.spans.len() > 1 {
+            line.spans.truncate(1);
+        }
+        kit::put_line(p, inner.x, inner.y + k as u16, line, inner.width as usize);
+    }
 }
 
 #[cfg(test)]

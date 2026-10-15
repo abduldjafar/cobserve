@@ -11,8 +11,8 @@ pub mod console;
 pub mod detail;
 pub mod drawer;
 pub mod jira;
+pub mod kit;
 pub mod local;
-pub mod loom;
 pub mod queue;
 pub mod tape;
 pub mod usage;
@@ -145,20 +145,29 @@ pub fn draw(frame: &mut ratatui::Frame, app: &App, theme: &crate::theme::Theme, 
     let body = Rect::new(inside.x, inside.y, inside.width, inside.height - drawer_h);
     let drawer = Rect::new(inside.x, inside.y + body.height, inside.width, drawer_h);
     match zoom {
-        PanelId::Queue => queue::draw(frame, app, theme, body),
+        PanelId::Queue => {
+            queue::draw(frame, app, theme, inside);
+            return;
+        }
         PanelId::Tape => tape::draw(frame, app, theme, body),
         PanelId::Sessions => {
-            claude::draw(frame, app, theme, inside, 0);
+            claude::draw(frame, app, theme, inside);
             return;
         }
         PanelId::Airflow => match app.page() {
             Some(page) => detail::draw(frame, app, theme, body, page),
-            None => airflow::draw(frame, app, theme, body),
+            None => {
+                airflow::draw(frame, app, theme, inside);
+                return;
+            }
         },
         PanelId::Jira => match (app.page(), app.jira_time) {
             (Some(page), _) => detail::draw(frame, app, theme, body, page),
             (None, Some(time)) => jira::draw_time(frame, app, theme, body, time),
-            (None, None) => jira::draw(frame, app, theme, body),
+            (None, None) => {
+                board::draw(frame, app, theme, inside);
+                return;
+            }
         },
         _ => return,
     }

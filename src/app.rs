@@ -394,6 +394,10 @@ pub struct App {
     pub airflow_pages: Vec<crate::detail::Page>,
     /// What those pages asked for, for the loop to read.
     detail_asks: Vec<crate::detail::Ask>,
+    /// The tasks of the run under the zoomed Airflow's cursor, for its Gantt: read without a
+    /// page, kept a while, keyed by (DAG, run); and the reads asked and not answered yet.
+    pub airflow_tasks: HashMap<(String, String), (Vec<crate::airflow::TaskRun>, SystemTime)>,
+    tasks_asked: Vec<(String, String)>,
     /// The masthead is drawn outside the terminal — by Cobserve.app's own header — so the screen
     /// leaves it out.
     pub outside_chrome: bool,
@@ -489,6 +493,8 @@ impl App {
             jira_page: None,
             airflow_pages: Vec::new(),
             detail_asks: Vec::new(),
+            airflow_tasks: HashMap::new(),
+            tasks_asked: Vec::new(),
             jira_time: None,
             outside_chrome: false,
         }
@@ -581,6 +587,13 @@ impl App {
 
     /// An answer for a page: to every page that asked it.
     fn on_detail(&mut self, ask: crate::detail::Ask, result: Result<crate::detail::Body, String>) {
+        if let crate::detail::Ask::Tasks { dag, run } = &ask {
+            let key = (dag.clone(), run.clone());
+            self.tasks_asked.retain(|k| *k != key);
+            if let Ok(crate::detail::Body::Tasks(tasks)) = &result {
+                self.airflow_tasks.insert(key, (tasks.clone(), self.clock));
+            }
+        }
         let pages = self.jira_page.iter_mut().chain(self.airflow_pages.iter_mut());
         for page in pages.filter(|p| p.ask == ask) {
             page.body = Some(result.clone());
@@ -798,6 +811,29 @@ impl App {
         }
     }
 
+    /// The tasks of the run under the zoomed Airflow's cursor, asked without a page when they are
+    /// not known or older than half a minute — the Gantt under the list draws them. Never asked
+    /// twice before an answer; what is older than ten minutes is let go.
+    fn peek_tasks(&mut self) {
+        use crate::airflow::RowKey;
+        let now = self.clock;
+        let age = |at: &SystemTime| now.duration_since(*at).unwrap_or_default();
+        self.airflow_tasks.retain(|_, (_, at)| age(at) < Duration::from_secs(600));
+        if self.shell.zoom != Some(crate::ui2::PanelId::Airflow) || !self.airflow_pages.is_empty() || !self.airflow.reachable {
+            return;
+        }
+        let Some(RowKey::Running(dag, run) | RowKey::Queued(dag, run) | RowKey::Failed(dag, run)) = self.airflow_selected.clone() else {
+            return;
+        };
+        let key = (dag, run);
+        let fresh = self.airflow_tasks.get(&key).is_some_and(|(_, at)| age(at) < Duration::from_secs(30));
+        if fresh || self.tasks_asked.contains(&key) {
+            return;
+        }
+        self.tasks_asked.push(key.clone());
+        self.detail_asks.push(crate::detail::Ask::Tasks { dag: key.0, run: key.1 });
+    }
+
     /// `⏎` on view 5's lists: a run's tasks, or a DAG's runs, in a page here.
     fn open_airflow_row(&mut self) {
         use crate::airflow::RowKey;
@@ -1013,13 +1049,19 @@ impl App {
 
     pub fn update(&mut self, event: Event) {
         match event {
-            Event::Tick => self.on_tick(),
+            Event::Tick => {
+                self.on_tick();
+                self.peek_tasks();
+            }
             Event::Zone(zone, place) => {
                 self.time.zone = zone;
                 self.prayers.move_to(place);
                 self.on_tick();
             }
-            Event::Key(key) => crate::ui2::keys::on_key(self, key),
+            Event::Key(key) => {
+                crate::ui2::keys::on_key(self, key);
+                self.peek_tasks();
+            }
             // While paused, live data is dropped rather than queued up: unpausing must show
             // the last thing on screen, not a burst of everything that happened since (§3).
             Event::Snapshot(snapshot) => {
@@ -1065,8 +1107,10 @@ impl App {
                 let on_screen = self.view == View::Claude
                     && !matches!(self.claude.mode, Mode::Opening(_))
                     && self.claude.current().is_some_and(|s| s.id == id);
+                let clock = self.clock;
                 if let Some(session) = self.claude.by_id_mut(id) {
                     session.pane.feed(&bytes, on_screen);
+                    session.pane.last_output = Some(clock);
                 }
             }
             Event::PaneExited(id, how) => {
