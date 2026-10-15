@@ -270,13 +270,13 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     app.update(Event::Pane(first, b"\x07".to_vec()));
 
     let screen = render(&app, 140, 40);
-    assert!(screen.contains("SESSIONS"), "{screen}");
+    assert!(screen.contains("2 sessions") && screen.contains("1 needs you"), "{screen}");
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
-    assert!(row("✻  cobserve").contains("● 7"), "the first, by its folder, which rang: {screen}");
-    assert!(row("✻  infra").contains('8'), "the second, by its name: {screen}");
-    assert!(row("✻  infra").contains('▎') && !row("✻  cobserve").contains('▎'), "the one on screen is lit: {screen}");
-    assert!(screen.contains("the second session") && !screen.contains("the first session"), "only the session on screen: {screen}");
-    assert!(screen.contains("+  new session"), "{screen}");
+    assert!(row("✻ 7 · cobserve").contains("! needs you"), "the first, by its folder, which rang: {screen}");
+    assert!(row("✻ 8 · infra").contains("working"), "the second, by its name, printing: {screen}");
+    assert_eq!(app.claude.current().map(|s| s.id), app.claude.list.get(1).map(|s| s.id), "the second is the chosen one");
+    assert!(screen.contains("the second session") && screen.contains("the first session"), "each card shows its own screen: {screen}");
+    assert!(screen.contains("n new session") && screen.contains("↻ past conversations"), "{screen}");
     // The zoom's keys are on the status bar.
     let keys = footer(&screen);
     assert!(keys.contains("↑↓ a session") && keys.contains("⏎ open it full") && keys.contains("\\ float it"), "{keys}");
@@ -343,7 +343,6 @@ fn a_new_session_s_folder_is_picked_with_clicks_like_in_an_explorer() {
     assert!(row(&screen, "Open the session here").contains('▌'), "the cursor starts on it: {screen}");
     assert!(row(&screen, "↰  ..").contains("up to ~/work"), "{screen}");
     assert!(row(&screen, "▸  tools").contains("⎇ dev"), "a repository, with its branch: {screen}");
-    assert!(screen.contains("choose its folder →"), "the new session's card, framed: {screen}");
 
     // A click on a folder goes into it; one on a step of the path goes back up to it.
     click_on(&mut app, Hit::Pick(PickRow::Folder(0)));
@@ -395,9 +394,8 @@ fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
     run_session(&mut app, b"$ ls\r\n");
     let screen = render(&app, 160, 40);
     let row = |screen: &str, text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
-    assert!(row(&screen, "✻  cobserve").contains('7'), "Claude's mark: {screen}");
-    assert!(row(&screen, "▣  notes").contains('8'), "OpenCode's: {screen}");
-    assert!(row(&screen, "❯  scripts").contains('9'), "a shell's: {screen}");
+    assert!(row(&screen, "✻ 7 · cobserve").contains("▣ 8 · notes"), "Claude's mark, and OpenCode's beside it: {screen}");
+    assert!(row(&screen, "❯ 9 · scripts").contains("❯"), "a shell's: {screen}");
     app.update(key(KeyCode::Enter));
     assert!(footer(&render(&app, 160, 40)).contains("every other key goes to the shell"), "opened full");
     app.update(ctrl('\\'));
@@ -417,9 +415,13 @@ fn opencode_and_a_terminal_sit_in_the_list_beside_claude() {
     app.claude.select(1);
     app.claude.current_mut().unwrap().pane.state = PaneState::Failed("opencode is not installed here (not on PATH)".into());
     let failed = render(&app, 160, 40);
-    assert!(failed.contains("opencode auth login") && failed.contains("OPENCODE_CMD"), "{failed}");
+    assert!(row(&failed, "▣ 8 · notes").contains("✕ ended"), "{failed}");
+    assert!(failed.contains("opencode is not installed here"), "the reason in its card: {failed}");
+    // Opened full, the whole of how to get it.
     app.update(key(KeyCode::Enter));
-    assert!(footer(&render(&app, 160, 40)).contains("⏎ start OpenCode"), "opened full, it says how to start it");
+    let full = render(&app, 160, 40);
+    assert!(full.contains("opencode auth login") && full.contains("OPENCODE_CMD"), "{full}");
+    assert!(footer(&full).contains("⏎ start OpenCode"), "opened full, it says how to start it");
     assert_eq!(app.claude.mode, Mode::Typing);
 }
 
@@ -472,9 +474,9 @@ fn sessions_of_the_last_run_wait_marked_and_a_conversation_can_be_taken_up() {
     sessions(&mut app);
     let screen = render(&app, 140, 40);
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
-    assert!(row("▣  pipelines").contains("↻ 8"), "kept, not started: {screen}");
-    assert!(!row("✻  billing").contains('↻'), "the one on screen started: {screen}");
-    assert!(screen.contains("↻  past conversations"), "{screen}");
+    assert!(row("▣ 8 · pipelines").contains("↻ kept"), "kept, not started: {screen}");
+    assert!(!app.claude.list[0].waiting() && row("✻ 7 · billing").contains("◌ starting"), "the one on screen started: {screen}");
+    assert!(screen.contains("↻ past conversations"), "{screen}");
 
     // The way to a conversation had elsewhere: every folder's, newest first.
     click_on(&mut app, Hit::Resume);
@@ -517,6 +519,8 @@ fn a_shell_scrolled_back_says_how_far() {
     app.claude.open_new("~/work/scripts", Kind::Terminal);
     let lines: String = (1..=80).map(|n| format!("output {n}\r\n")).collect();
     run_session(&mut app, lines.as_bytes());
+    // The pane takes the wheel opened full.
+    app.update(key(KeyCode::Enter));
     render(&app, 160, 40);
     let pane = app.viewport.hits.borrow().iter().find(|(_, h)| *h == crate::app::Hit::Pane).map(|(r, _)| *r).unwrap();
     for _ in 0..4 {
@@ -529,19 +533,19 @@ fn a_shell_scrolled_back_says_how_far() {
     }
     let screen = render(&app, 160, 40);
     assert!(screen.contains("↑ 12 lines back"), "{screen}");
-    // Opened full, a key goes to the shell, and the pane comes back down.
-    app.update(key(KeyCode::Enter));
+    // A key goes to the shell, and the pane comes back down.
     app.update(key(KeyCode::Char('q')));
     assert!(!render(&app, 160, 40).contains("lines back"), "a key comes back down");
 }
 
 #[test]
-fn a_narrow_terminal_puts_the_sessions_on_a_bar() {
-    let app = app_with_claude(b"one\r\n");
+fn a_session_opened_full_has_the_others_on_a_bar() {
+    let mut app = app_with_claude(b"one\r\n");
+    app.update(key(KeyCode::Enter));
     let screen = render(&app, 96, 30);
     let bar = screen.lines().find(|l| l.contains(" 7 ✻ cobserve ")).unwrap_or_else(|| panic!("{screen}"));
     assert!(bar.contains(" + "), "{bar}");
-    assert!(!inner(screen.lines().nth(2).unwrap()).contains("SESSIONS"), "no list beside the pane: {screen}");
+    assert!(!screen.contains("╭ ✻ 7 · cobserve"), "no card: the pane edge to edge: {screen}");
 }
 
 #[test]
@@ -756,16 +760,18 @@ fn airflow_shows_what_runs_waits_and_failed_and_every_dag_s_day() {
     assert_eq!(app.view, View::Airflow);
     let screen = render(&app, 120, 36);
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
-    assert!(row("Airflow 2.10.2").contains("airflow.example.net") && row("Airflow 2.10.2").contains("scheduler ●"), "{screen}");
+    assert!(row("AIRFLOW · airflow.example.net · 2.10.2").contains("scheduler ●"), "{screen}");
     assert!(row("last 24 h").contains("✖ 3"), "three failures in the day: {screen}");
-    assert!(row("RUNNING").contains("1 stuck"), "{screen}");
-    assert!(row("test_clickhouse_connection").contains("262d"), "the stuck run says for how long: {screen}");
-    assert!(row("statement_daily_agg_reload").contains("4/7"), "a run says how far its tasks are: {screen}");
-    assert!(row("QUEUED").contains("1"), "{screen}");
-    assert!(row("FAILED").contains("3 in the last 24 h"), "{screen}");
-    assert!(row("▌").contains("test_clickhouse_connection"), "the cursor starts on the first row: {screen}");
-    // The drawer says what the stuck run's task waits for.
-    assert!(screen.contains("stuck: running for more than a day"), "{screen}");
+    let now = row("NOW ·");
+    assert!(now.contains("2 running") && now.contains("1 stuck") && now.contains("1 queued") && now.contains("3 failed today"), "{now}");
+    assert!(row("stuck · running").contains("262d"), "the stuck run says for how long: {screen}");
+    assert!(row("running 2h12m").contains("4 of 7"), "a run says how far its tasks are: {screen}");
+    assert!(row("failed at check_consistency").contains("failed at build_cohorts"), "the failures, card beside card: {screen}");
+    assert_eq!(app.airflow_selection(), app.airflow.sections(app.now()).keys().first(), "the cursor starts on the first card");
+    assert!(row("╭ ✖ test_clickhouse_connection").contains("╭ ▸ statement_daily_agg_reload"), "{screen}");
+    // What the stuck run's task waits for, and its tasks under it once read.
+    assert!(screen.contains("↻ ping_clickhouse waits for a ret"), "{screen}");
+    assert!(row("╭ test_clickhouse_connection · manual").contains("running 262d"), "the run under the cursor: {screen}");
     assert!(footer(&screen).contains("⏎ task log") && footer(&screen).contains("o in Airflow"), "{screen}");
 
     // The day's timeline, under hours of the clock on screen.
@@ -774,12 +780,14 @@ fn airflow_shows_what_runs_waits_and_failed_and_every_dag_s_day() {
         app.update(key(KeyCode::Down));
     }
     let screen = render(&app, 120, 36);
-    let header = screen.lines().find(|l| l.contains("SCHEDULE") && l.contains("RUNS")).unwrap_or_else(|| panic!("{screen}"));
+    let header = screen.lines().find(|l| l.contains("┃ now")).unwrap_or_else(|| panic!("{screen}"));
     assert!(header.contains("18") && header.contains("00") && header.contains("06") && header.contains("12"), "{header}");
     // Its schedule as Airflow words it (in the DAG's zone), its failure on its timeline.
     let kyc = screen.lines().find(|l| l.contains("kyc_onboarding_tables") && l.contains("05:30")).unwrap_or_else(|| panic!("{screen}"));
-    assert!(kyc.contains('✖') && kyc.contains("1 ✖1"), "{kyc}");
-    let fifteen = screen.lines().find(|l| l.contains("clickhouse_replication_check")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(kyc.contains('✖') && kyc.contains("✖1"), "{kyc}");
+    assert!(screen.contains("· ↑ 3 more"), "the threads above the window are counted: {screen}");
+    let tall = render(&app, 120, 60);
+    let fifteen = tall.lines().find(|l| l.contains("clickhouse_replication_check")).unwrap_or_else(|| panic!("{tall}"));
     assert!(fifteen.contains("every 15m") && fifteen.contains("▪▪▪▪"), "{fifteen}");
 
     for (w, h) in [(100, 30), (80, 24), (60, 16), (200, 50)] {
@@ -795,14 +803,15 @@ fn jira_shows_your_tickets_in_the_board_s_columns() {
     let screen = render(&app, 120, 36);
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
     assert!(row("jira.example.net").contains("Sam Example"), "{screen}");
-    let flow = row("In progress 4");
-    assert!(flow.contains("In Review 4") && flow.contains("Feedback 1") && flow.contains("Done 8"), "{flow}");
-    assert!(flow.contains("✖ 1 overdue") && flow.contains("▲ 1 due soon"), "{flow}");
-    assert!(row("─ IN REVIEW").contains("4"), "{screen}");
-    let overdue = row("DATA-2647");
-    assert!(overdue.contains("ASAP") && overdue.contains("overdue 2d") && overdue.contains("7h12m"), "{overdue}");
-    assert!(!overdue.contains("DE - "), "the team's tag is split off: {overdue}");
-    assert!(row("DATA-2850").contains("due tomorrow"), "{screen}");
+    // The lanes' titles: each column's count, and what is late in it.
+    let lanes = row("IN PROGRESS 4");
+    assert!(lanes.contains("IN REVIEW 4") && lanes.contains("FEEDBACK 1") && lanes.contains("DONE 8 in 7 days"), "{lanes}");
+    assert!(lanes.contains("✖ 1 overdue") && lanes.contains("▲ 1 due soon"), "{lanes}");
+    assert!(row("DATA-2647").contains("ASAP"), "{screen}");
+    assert!(screen.contains("4d · overdue 2d · 7h12m"), "{screen}");
+    let summary = screen.lines().find(|l| l.contains("Client account balances")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(!summary.contains("DE - "), "the team's tag is split off on the board: {summary}");
+    assert!(screen.contains("12h · due tomorrow"), "{screen}");
     // The cursor on the first ticket, and the drawer on it.
     assert!(row("▌").contains("DATA-2207"), "High before no priority, as the board ranks: {screen}");
     assert!(screen.contains("https://jira.example.net/browse/DATA-2207"), "{screen}");
@@ -881,7 +890,7 @@ fn enter_on_a_ticket_shows_it_in_full_here() {
     assert!(footer(&screen).contains("esc back"), "{screen}");
     app.update(key(KeyCode::Esc));
     assert!(app.page().is_none());
-    assert!(render(&app, 120, 36).contains("─ IN REVIEW"), "back on the board");
+    assert!(render(&app, 120, 36).contains("IN REVIEW 4"), "back on the board");
 }
 
 #[test]
@@ -942,7 +951,7 @@ fn jira_charts_the_hours_logged_this_month_day_by_day() {
     assert!(screen.lines().any(|l| inner(l).trim_start().starts_with("│██ ██")), "the bars' lower cells full: {screen}");
     let days = row("  1  2  3  4  5");
     assert!(days.contains("31"), "every day of the month: {days}");
-    let bars = screen.lines().filter(|l| inner(l).contains('│')).count();
+    let bars = screen.lines().filter(|l| inner(l).split('│').nth(1).and_then(|after| after.chars().next()).is_some_and(|c| "▁▂▃▄▅▆▇█".contains(c))).count();
     assert_eq!(bars, 2, "two rows of bars where the body is under 30 rows: {screen}");
 }
 
@@ -956,7 +965,8 @@ fn unconfigured_airflow_and_jira_say_how_to_set_them_up() {
     zoom(&mut app, 6);
     assert!(render(&app, 120, 36).contains("JIRA_URL and JIRA_TOKEN"));
     app.update(Event::Jira(Box::new(crate::jira::Board::unreachable("HTTP 401 · the token was refused"))));
-    assert!(render(&app, 120, 36).contains("Jira could not be read: HTTP 401"));
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("Jira could not be read") && screen.contains("HTTP 401"), "{screen}");
 }
 
 /// The real Airflow and Jira, each read once and drawn, with `AIRFLOW_URL`, `AIRFLOW_USER`,
@@ -1180,7 +1190,7 @@ fn five_sessions_open_still_leave_room_for_a_new_one() {
     }
     assert_eq!(app.claude.list.len(), 5);
     let screen = render(&app, 140, 40);
-    assert!(screen.contains("+  new session") && screen.contains("past conversations"), "{screen}");
+    assert!(screen.contains("+ new session") && screen.contains("past conversations"), "a free cell offers one: {screen}");
     assert!(!screen.contains("of 5"), "not full at five: {screen}");
     // A click on it, or ctrl+\ n, asks where the sixth should work.
     click_on(&mut app, crate::app::Hit::NewSession);
@@ -1199,12 +1209,15 @@ fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_
     assert_eq!(app.claude.list.len(), 50);
     let screen = render(&app, 140, 40);
     let row = |screen: &str, text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_default().to_string();
-    assert!(screen.contains("SESSIONS  50"), "{screen}");
-    // A line each, the one on screen — the last — lit, and how many are above it.
-    assert!(row(&screen, "▣  project49").contains('▎'), "{screen}");
+    let lit = |screen: &str, text: &str| screen.lines().any(|l| l.contains(text) && l.contains('▌'));
+    assert!(screen.contains("50 sessions"), "{screen}");
+    // A line each beside the chosen one's screen, the chosen — the last — lit, and how many are
+    // above it.
+    assert!(lit(&screen, "project49"), "{screen}");
+    assert!(screen.contains("╭ ▣ 56 · project49"), "the preview: {screen}");
     assert!(row(&screen, "↑ ").contains(" more"), "{screen}");
     assert!(!screen.contains("project01"), "the first are above, out of sight: {screen}");
-    assert!(screen.contains("50 of 50 · x closes one"), "{screen}");
+    assert!(screen.contains("50 of 50 · x x closes one"), "{screen}");
 
     // ↑ walks back through them on the zoomed list; the list follows.
     for _ in 0..30 {
@@ -1212,7 +1225,7 @@ fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_
     }
     assert_eq!(app.claude.active, 19);
     let screen = render(&app, 140, 40);
-    assert!(row(&screen, "▣  project19").contains('▎') && row(&screen, "↓ ").contains(" more"), "{screen}");
+    assert!(lit(&screen, "project19") && row(&screen, "↑ ").contains(" more"), "{screen}");
 
     // / finds one by what it is called; ⏎ puts it on screen.
     app.update(key(KeyCode::Char('/')));
@@ -1220,8 +1233,8 @@ fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_
         app.update(key(KeyCode::Char(c)));
     }
     let screen = render(&app, 140, 40);
-    assert!(row(&screen, "SESSIONS  ").contains("/ject07▏") && row(&screen, "SESSIONS  ").contains("1 of 1"), "{screen}");
-    assert!(row(&screen, "  project07 ").contains('▎'), "{screen}");
+    assert!(row(&screen, "⌕ /").contains("/ject07▏") && row(&screen, "⌕ /").contains("1 of 1"), "{screen}");
+    assert!(lit(&screen, "project07"), "{screen}");
     app.update(key(KeyCode::Enter));
     assert_eq!((app.claude.active, &app.claude.mode), (7, &crate::claude::Mode::Typing));
     // By its number too.
@@ -1235,7 +1248,9 @@ fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_
     prefix(&mut app, 'n');
     assert!(app.notice().is_some_and(|n| n.contains("50 sessions is as many as there can be")), "{:?}", app.notice());
 
-    // On a narrow terminal, the tabs round the one on screen, and how many either side.
+    // Opened full on a narrow terminal, the tabs round the one on screen, and how many either
+    // side.
+    app.shell.sessions_full = true;
     let narrow = render(&app, 90, 30);
     let bar = row(&narrow, " 40 ");
     assert!(bar.contains("‹ ") && bar.contains(" ›"), "{narrow}");
@@ -1301,8 +1316,8 @@ fn a_query_session_suggests_as_it_is_typed_and_shows_its_answer_as_a_table() {
     let screen = render(&app, 140, 40);
     assert!(screen.contains("✔ ") && screen.contains(" rows · 184 ms") && screen.contains("on clickhouse3"), "{screen}");
     assert!(screen.contains("user") && screen.contains("queries") && screen.contains("r_redash"), "{screen}");
-    // The list beside it says what it is on and how it went.
-    assert!(screen.contains("▦  clickhouse3"), "{screen}");
+    // The bar over it says what it is on.
+    assert!(screen.contains("▦ clickhouse3"), "{screen}");
 
     // A write is refused by the server, and the helper is offered to put it right.
     app.update(Event::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)));
@@ -1422,7 +1437,7 @@ fn a_query_session_is_opened_on_a_server_chosen_from_the_fleet() {
     let screen = render(&app, 140, 40);
     assert!(screen.contains("New query session") && screen.contains("which server should it run on?"), "{screen}");
     assert!(screen.contains("●  clickhouse3") && screen.contains("search the servers"), "{screen}");
-    assert!(screen.contains("choose its server →") && footer(&screen).contains("⏎ open it on that server"), "{screen}");
+    assert!(footer(&screen).contains("⏎ open it on that server"), "{screen}");
     type_into(&mut app, "bi");
     let screen = render(&app, 140, 40);
     assert!(screen.contains("1 server") && screen.contains("clickhouse-bi"), "{screen}");
@@ -1489,10 +1504,10 @@ fn this_machine_has_a_status_line_and_a_zoom() {
 fn wide_jira_is_a_board_of_lanes_and_the_arrows_cross_them() {
     let mut app = app_on('6');
     let screen = render(&app, 172, 48);
-    let titles = screen.lines().find(|l| l.contains("in progress 4")).unwrap_or_else(|| panic!("{screen}"));
-    assert!(titles.contains("in review 4  ✖ 1 overdue") && titles.contains("feedback 1") && titles.contains("done 8 in 7 days"), "{titles}");
+    let titles = screen.lines().find(|l| l.contains("IN PROGRESS 4")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(titles.contains("IN REVIEW 4 ✖ 1 overdue") && titles.contains("FEEDBACK 1") && titles.contains("DONE 8 in 7 days"), "{titles}");
     // The first ticket's block: its key and priority, its summary in two lines, its age.
-    let first = screen.lines().find(|l| l.contains("▌ DATA-2207")).unwrap_or_else(|| panic!("{screen}"));
+    let first = screen.lines().find(|l| l.contains("▌DATA-2207")).unwrap_or_else(|| panic!("{screen}"));
     assert!(first.contains("High") && first.contains("DATA-2647") && first.contains("ASAP"), "lane beside lane: {first}");
     assert!(screen.contains("4d · overdue 2d · 7h12m logged") && screen.contains("12h · due tomorrow"), "{screen}");
     assert!(screen.contains("✔ 2h"), "a finished one says when: {screen}");
@@ -1510,13 +1525,13 @@ fn wide_jira_is_a_board_of_lanes_and_the_arrows_cross_them() {
     assert_eq!(app.jira_selection(), Some("DATA-2207"));
     // A click on a block chooses it; ⏎ still opens it.
     let screen = render(&app, 172, 48);
-    assert!(screen.contains("▌ DATA-2207"), "{screen}");
+    assert!(screen.contains("▌DATA-2207"), "{screen}");
     let index = app.jira.rows().iter().position(|t| t.key == "DATA-2737").unwrap();
     click_on(&mut app, Hit::Ticket(index));
     assert_eq!(app.jira_selection(), Some("DATA-2737"));
-    // Narrow, the list as before: ← → do not cross lanes there.
+    // Narrower, still the lanes: ← → cross them at every width.
     let narrow = render(&app, 120, 36);
-    assert!(narrow.contains("─ IN REVIEW"), "{narrow}");
+    assert!(narrow.contains("IN REVIEW 4"), "{narrow}");
     for (w, h) in [(140, 30), (172, 20), (250, 60)] {
         assert_eq!(render(&app, w, h).lines().count(), h as usize);
     }
@@ -1526,17 +1541,17 @@ fn wide_jira_is_a_board_of_lanes_and_the_arrows_cross_them() {
 fn wide_airflow_tells_its_knots_and_weaves_the_day() {
     let mut app = app_on('5');
     let screen = render(&app, 172, 48);
-    let now = screen.lines().find(|l| l.contains(" now  ")).unwrap_or_else(|| panic!("{screen}"));
-    assert!(now.contains("2 running · 1 stuck · 1 waiting"), "{now}");
-    // The stuck run, told: how long, and what its task waits for — beside the running one.
-    let stuck = screen.lines().find(|l| l.contains("✖ test_clickhouse_connection")).unwrap_or_else(|| panic!("{screen}"));
-    assert!(inner(stuck).starts_with("▌") && stuck.contains("stuck 262d") && stuck.contains("statement_daily_agg_reload") && stuck.contains("4/7"), "{stuck}");
-    assert!(screen.contains("↻ ping_clickhouse to retry"), "{screen}");
-    let failed = screen.lines().find(|l| l.contains("failed today")).unwrap_or_else(|| panic!("{screen}"));
-    assert!(failed.contains('3'), "{failed}");
-    assert!(screen.contains("at check_consistency · 13:08") || screen.contains("at check_consistency ·"), "where it failed: {screen}");
+    let now = screen.lines().find(|l| l.contains("NOW ·")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(now.contains("2 running · 1 stuck · 1 queued · 3 failed today"), "{now}");
+    // Four cards a row: the stuck run, told — how long, what its task waits for — beside the
+    // running one and the queued one, and the first failure.
+    let titles = screen.lines().find(|l| l.contains("╭ ✖ test_clickhouse_connection")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(titles.contains("statement_daily_agg_reload") && titles.contains("gateway_transfers_backfill") && titles.contains("replication_app_consistency"), "{titles}");
+    let first = screen.lines().find(|l| l.contains("stuck · running 262d")).unwrap_or_else(|| panic!("{screen}"));
+    assert!(first.contains("4 of 7") && first.contains("failed at check_consistency"), "{first}");
+    assert!(screen.contains("↻ ping_clickhouse waits for a retry"), "{screen}");
     // The day: hours over the threads, each thread's rhythm after it.
-    let hours = screen.lines().find(|l| l.contains("now") && l.contains("00") && l.contains("12")).unwrap_or_else(|| panic!("{screen}"));
+    let hours = screen.lines().find(|l| l.contains("┃ now") && l.contains("00") && l.contains("12")).unwrap_or_else(|| panic!("{screen}"));
     assert!(!hours.contains("SCHEDULE"), "no table header: {hours}");
     let fifteen = screen.lines().find(|l| l.contains("clickhouse_replication_check")).unwrap_or_else(|| panic!("{screen}"));
     assert!(fifteen.contains("▪▪▪▪▪▪") && fifteen.contains("every 15m"), "{fifteen}");
@@ -1548,7 +1563,8 @@ fn wide_airflow_tells_its_knots_and_weaves_the_day() {
         app.update(key(KeyCode::Down));
     }
     let screen = render(&app, 172, 48);
-    assert!(screen.lines().any(|l| l.contains("▌✖ replication_app_consistency_check")), "{screen}");
+    assert_eq!(app.airflow_selection(), app.airflow.sections(app.now()).keys().get(3), "{screen}");
+    assert!(screen.contains("╭ replication_app_consistency_check · scheduled"), "the Gantt follows the cursor: {screen}");
     click_on(&mut app, Hit::AirflowRow(3));
     assert!(matches!(app.page().map(|p| &p.ask), Some(crate::detail::Ask::Tasks { .. })), "{:?}", app.page());
     app.update(key(KeyCode::Esc));
@@ -1580,19 +1596,19 @@ fn many_sessions_sit_by_project_a_line_each_with_the_way_to_find_one() {
     // The first, 7, opened with the view.
     app.claude.list[4].pane.attention = true;
     app.claude.select(6);
-    let screen = render(&app, 160, 48);
+    // Eight are more than 120×36 holds as cards: the list, beside the chosen one's screen.
+    let screen = render(&app, 120, 36);
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();
-    assert!(row("SESSIONS  ").contains("8") && screen.contains("⌕ find one  ctrl+\\ /"), "{screen}");
-    // Projects with more than one session are groups, their shared branch and who rang with them.
-    assert!(row("airflow-dags 3").contains("● 1  ⎇ docs"), "who rang, then the shared branch: {screen}");
+    assert!(screen.contains("8 sessions · 1 needs you") && screen.contains("/ find one"), "{screen}");
+    // Projects with more than one session are groups, who rang and their shared branch with them.
+    assert!(row("airflow-dags 3").contains("! 1  ⎇ docs-move"), "who rang, then the shared branch: {screen}");
     assert!(row("apitap-lib 3").contains("⎇ main"), "{screen}");
-    // The lone ones together at the end; the one on screen lit, where it works under it.
+    // The lone ones together at the end; the one on screen lit, where it works in its preview.
     assert!(!row("other 2").is_empty(), "{screen}");
-    let lit = row("integrate-jira-api");
-    assert!(lit.contains('▎'), "{lit}");
+    assert!(screen.lines().any(|l| l.contains("integrate-jira-api") && l.contains('▌')), "{screen}");
+    assert!(row("╭ ✻ 13 · integrate-jira-api").contains("○ idle") || row("╭ ✻ 13 · integrate-jira-api").contains("starting"), "{screen}");
+    assert!(screen.contains("~/code/cobserve  ⎇ main"), "{screen}");
     let lines: Vec<&str> = screen.lines().collect();
-    let at = lines.iter().position(|l| l.contains("integrate-jira-api")).unwrap();
-    assert!(lines[at + 1].contains("~/code/cobserve"), "{screen}");
     // A line each: the airflow ones sit together although opened apart.
     let dq = lines.iter().position(|l| l.contains("airflow-dq")).unwrap();
     let agent = lines.iter().position(|l| l.contains("airflow-agent")).unwrap();
@@ -1680,7 +1696,7 @@ fn the_session_list_says_what_each_session_used_today() {
     assert!(row("✻ 4.2M today").contains("≈ $") && row("✻ 4.2M today").contains("· 5h "), "{screen}");
     assert!(row("▣ 51k today").contains("$0.42"), "{screen}");
     // On the session's row: what it used, its own conversation only.
-    assert!(row("integrate-jira-api").contains("1.2M "), "{screen}");
+    assert!(row("~/work/cobserve").contains("1.2M today"), "{screen}");
 }
 
 #[test]
@@ -1712,4 +1728,100 @@ fn the_claude_plan_s_limits_show_where_its_usage_does() {
     stale.note = Some("Claude Code's login has run out until it next runs".into());
     app.update(Event::Limits(Box::new(stale)));
     assert!(render(&app, 172, 48).contains("as Claude Code last saw them, 4d00h ago"), "{}", render(&app, 172, 48));
+}
+
+#[test]
+fn the_run_under_the_cursor_has_its_tasks_read_once_for_the_gantt_without_a_page() {
+    let mut app = app_on('5');
+    // A tick reads the wall clock: put the moment back after it.
+    app.update(Event::Tick);
+    at_moment(&mut app, MOMENT);
+    let asks = app.take_detail_asks();
+    let [crate::detail::Ask::Tasks { dag, run }] = asks.as_slice() else { panic!("{asks:?}") };
+    assert_eq!(dag, "test_clickhouse_connection");
+    // Not asked again before the answer, however often the clock ticks.
+    app.update(Event::Tick);
+    at_moment(&mut app, MOMENT);
+    assert!(app.take_detail_asks().is_empty());
+    let ask = asks[0].clone();
+    let body = crate::fake::detail(&ask, app.now());
+    app.update(Event::Detail(ask, body));
+    assert!(app.page().is_none(), "no page opened");
+    assert!(app.airflow_tasks.contains_key(&(dag.clone(), run.clone())));
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("┃ running") || screen.contains("┃ done"), "the Gantt draws its tasks: {screen}");
+    // A DAG's thread asks nothing.
+    for _ in 0..12 {
+        app.update(key(KeyCode::Down));
+    }
+    assert!(matches!(app.airflow_selection(), Some(crate::airflow::RowKey::Dag(_))));
+    let asked = app.take_detail_asks();
+    assert!(asked.iter().all(|a| matches!(a, crate::detail::Ask::Tasks { .. })), "{asked:?}");
+    app.update(Event::Tick);
+    assert!(app.take_detail_asks().is_empty(), "nothing for a DAG");
+}
+
+#[test]
+fn twenty_sessions_are_a_list_with_a_preview_and_six_a_grid() {
+    use crate::ui2::views::claude::{cap, shape, Shape};
+    // What each size holds as cards (the inside of the zoom: two columns and two rows less).
+    for (w, h, want) in [(76, 20, 4), (96, 26, 4), (116, 32, 6), (136, 36, 6), (156, 44, 9), (196, 56, 12)] {
+        assert_eq!(cap(w, h), want, "{w}×{h}");
+    }
+    assert!(matches!(shape(116, 32, 6), Shape::Grid { cols: 2, rows: 3, .. }));
+    assert!(matches!(shape(116, 32, 7), Shape::List { list_w: 38, preview_w: Some(76) }));
+    assert!(matches!(shape(76, 20, 20), Shape::List { list_w: 76, preview_w: None }), "no room for a preview at 80 columns");
+
+    let mut app = app_after(5);
+    crate::ui2::tests::with_many_sessions(&mut app, 20);
+    zoom(&mut app, 8);
+    let screen = render(&app, 120, 36);
+    // Every one on screen at once, by project, the chosen one's screen beside them.
+    for name in ["billing export", "late partitions", "airflow-dq", "weekly notes", "clickhouse-bi"] {
+        assert!(screen.contains(name), "{name}: {screen}");
+    }
+    assert!(!screen.contains(" more"), "twenty fit without a window: {screen}");
+    assert!(screen.contains("airflow-dags 4  ⎇ docs-move") && screen.contains("pipelines 4  ! 1"), "{screen}");
+    assert!(screen.contains("20 sessions") && screen.contains("1 needs you"), "{screen}");
+    assert!(screen.contains("╭ ✻ 14 · airflow-dq"), "the preview of the chosen one: {screen}");
+    // ← → a project at a time; PgDn a page; r renames.
+    let name = |app: &App| app.claude.current().unwrap().label();
+    app.update(key(KeyCode::Right));
+    assert_eq!(name(&app), "apitap-opencode", "the next project's first");
+    app.update(key(KeyCode::Left));
+    assert_eq!(name(&app), "airflow-agent", "back to the start of the project before");
+    app.update(key(KeyCode::Left));
+    assert_eq!(name(&app), "clickhouse3");
+    app.update(key(KeyCode::PageDown));
+    assert_eq!(app.claude.order().last(), Some(&app.claude.active), "a page reaches the end");
+    app.update(key(KeyCode::Char('r')));
+    // Its name to edit: away with it, then the new one.
+    for _ in 0..20 {
+        app.update(key(KeyCode::Backspace));
+    }
+    for c in "notes".chars() {
+        app.update(key(KeyCode::Char(c)));
+    }
+    assert!(render(&app, 120, 36).contains("notes▏"));
+    app.update(key(KeyCode::Enter));
+    assert_eq!(name(&app), "notes");
+    // At 80 columns the list is the zoom, every line with the last thing it printed.
+    let narrow = render(&app, 80, 24);
+    assert!(!narrow.contains("╭ ✻ 14"), "{narrow}");
+
+    // Down to six, the grid — on the key that closed the seventh.
+    while app.claude.list.len() > 6 {
+        app.update(key(KeyCode::Char('x')));
+        app.update(key(KeyCode::Char('x')));
+    }
+    let grid = render(&app, 120, 36);
+    assert!(grid.lines().filter(|l| l.matches("╭ ").count() >= 2).count() >= 3, "three rows of two cards: {grid}");
+    // ← → in the grid: the card beside.
+    let order = app.claude.order();
+    app.claude.select(order[0]);
+    app.update(key(KeyCode::Right));
+    assert_eq!(app.claude.active, order[3], "a column of three along");
+    for (w, h) in [(40, 12), (80, 24), (250, 70)] {
+        render(&app, w, h);
+    }
 }

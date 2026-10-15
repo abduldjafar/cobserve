@@ -1,0 +1,24 @@
+ ❖ cobserve · prod    dashboard › sessions    esc back   ● live   15:52:07 WIB
+╭ 8 SESSIONS · 20 ───────────────────── n new · / find · x x close · esc back ─╮
+│                                        20 sessions · 1 working · 1 needs you │
+│ n new · ↻ resume · / find · x x close · \ float · ⏎ full · r rename          │
+│   billing 3                                                                  │
+│  ◌ ✻  7 billing export                                                       │
+│  ◌ ✻ 18 invoice tests                                                        │
+│  ◌ ❯ 19 shell                                                                │
+│   pipelines 4  ! 1                                                           │
+│  ! ▣  8 late partitions                                                      │
+│  ◌ ✻ 20 backfill 03:00                                                       │
+│  ◌ ✻ 21 dq checks                                                            │
+│  ◌ ❯ 22 shell                                                                │
+│   servers 2                                                                  │
+│  ○ ▦ 10 clickhouse3              read-only SQL                               │
+│  ○ ▦ 24 clickhouse-bi            read-only SQL                               │
+│   airflow-dags 4  ⎇ docs-move                                                │
+│  ◌ ▣ 11 airflow-agent                                                        │
+│  ◌ ✻ 12 MetricsAtomic                                                        │
+│ ▌◒ ✻ 14 airflow-dq               ✻ Running the tests… (esc to interrupt)     │
+│  ◌ ✻ 23 docs-move                                                            │
+│   ↓ 7 more                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ esc back   ↑↓ a session   ⏎ open it full         9/9 nodes · 1.1 s · read-only

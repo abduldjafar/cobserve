@@ -28,8 +28,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// The number of the first session: the views are 1 to 6, so the sessions go on from 7, and
 /// one number picks any tab, view or session — a digit the first three.
 pub const FIRST_NUMBER: usize = View::MONITOR as usize + 1;
-/// The sessions a digit picks, 7 to 9.
-pub const KEYED: usize = 10 - FIRST_NUMBER;
 /// The most sessions there can be. Those after the first three are reached from the list beside
 /// them, with the arrows after `ctrl+\`, or by what they are called (`ctrl+\ /`).
 pub const MAX_SESSIONS: usize = 50;
@@ -217,6 +215,8 @@ pub struct ClaudePane {
     pub attention: bool,
     /// What the program put in its terminal title: Claude Code writes what it is working on.
     pub title: Option<String>,
+    /// When it last printed, by the monitor's clock: within a few seconds it is working.
+    pub last_output: Option<std::time::SystemTime>,
 }
 
 impl Default for ClaudePane {
@@ -227,6 +227,7 @@ impl Default for ClaudePane {
             outbox: Vec::new(),
             attention: false,
             title: None,
+            last_output: None,
         }
     }
 }

@@ -898,11 +898,6 @@ impl QueueStatus {
         self.queues.iter().find(|q| q.name == name)
     }
 
-    /// The Redash instance, for the view 2 header (§2.8).
-    pub fn host(&self) -> Option<&str> {
-        self.host.as_deref()
-    }
-
     /// When this status was taken, so the drawer can say how old it is.
     pub fn age(&self, now: SystemTime) -> Option<std::time::Duration> {
         now.duration_since(self.taken_at).ok()

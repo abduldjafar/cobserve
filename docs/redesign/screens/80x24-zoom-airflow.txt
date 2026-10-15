@@ -1,24 +1,24 @@
  ❖ cobserve · prod    dashboard › airflow     esc back   ● live   15:52:07 WIB
-╭ 5 AIRFLOW · airflow.example.net  scheduler ● 2s · triggerer ● 4s · esc back ─╮
-│ last 24 h   217 runs  ✔ 211  ✖ 3     ▸ 2 running  ◌ 1 queued  ↻ 1 retrying
-│                                                                              │
-│ ─ RUNNING · 2 · 1 stuck ──────────────────────────────────────────────────── │
-│▌  ✖ test_clickhouse_connection         manual · Jan 15      262d04h  0/1 ━━━━━
-│   ▸ statement_daily_agg_reload         manual · 13:39         2h12m  4/7 ━━━━╸
-│ ─ QUEUED · 1 ─────────────────────────────────────────────────────────────── │
-│   ◌ gateway_transfers_backfill         manual · 15:47         4m12s          │
-│ ─ FAILED · 3 in the last 24 h ────────────────────────────────────────────── │
-│   ✖ replication_app_consistency_check  scheduled · 13:00      8m06s          │
-│   ✖ kyc_onboarding_tables              scheduled · 12:30     10m48s          │
-│   ✖ cbk_accounts_report                scheduled · 07:15      3m36s          │
-│ ─ ACTIVITY · 9 DAGs ran in the last 24 h ─────────────────────────────────── │
-│   DAG                               SCHEDULE         RUNS   18    00    06
-│   gateway_transfers_backfill        triggered           1   ··················
-│   clickhouse_replication_check      every 15m          96   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
-│   postgres_blacklist_etl            every 30m          48   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
-│   posthog_warehouse_refresh         :20 hourly         24   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
-│   cbk_accounts_report               :15 every 2h    12 ✖1   ·▪·▪·▪·▪·▪·▪·▪·✖·▪
-│   single_table_reconcile            :10 every 4h        6   ···▪···▪···▪···▪··
-│   redash_scheduler_monitoring       1h                 24   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
+╭ 5 AIRFLOW · airflow.example.net · 2.10.2 ─ scheduler ● 2s · triggerer ● 4s …─╮
+│ last 24 h  217 runs  ✔ 211  ✖ 3   ▸ 2  ◌ 1  ↻ 1   13 of 13 DAGs  read 0s ago │
+│ NOW · 2 running · 1 stuck · 1 queued · 3 failed today                        │
+│ ▌✖ test_clickhouse_connection    stuck · running 262d04h · ↻ ping_clickhous… │
+│  ▸ statement_daily_agg_reload    running 2h12m · 4 of 7 ━━━━╸━━━ · ◒ reload… │
+│  ◌ gateway_transfers_backfill    queued · waiting 4m12s · manual · 15:47 · … │
+│  ✖ replication_app_consistency…  failed at check_consistency · 2h ago · j.p… │
+│  ✖ kyc_onboarding_tables         failed at build_cohorts · 3h ago · ana.k    │
+│  ✖ cbk_accounts_report           failed at upload_report · 8h ago · ✔ 4 run… │
+│ THE DAY · 13 DAGs ran · a cell an hour · 10 shown · ↓ 3 more                 │
+│                                   18    00    06    12  ┃ now 15:52          │
+│   gateway_transfers_backfill    ·······················◌┃ triggered · queued │
+│   clickhouse_replication_check  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪┃ every 15m · in 7m  │
+│   postgres_blacklist_etl        ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪┃ every 30m · in 7m  │
+│   posthog_warehouse_refresh     ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪┃ :20 hourly · in 2… │
+│   cbk_accounts_report           ·▪·▪·▪·▪·▪·▪·▪·✖·▪·▪·▪·▪┃ ✖1 · :15 every 2h… │
+│   single_table_reconcile        ···▪···▪···▪···▪···▪···▪┃ :10 every 4h · in… │
+│   redash_scheduler_monitoring   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪┃ 1h · in 7m         │
+│   statement_daily_agg_reload    ·····················▸━━┃ triggered · runni… │
+│   replication_app_consistency…  ·····················✖··┃ ✖1 · 06:00 · in 2… │
+│   kyc_onboarding_tables         ····················✖···┃ ✖1 · 05:30 · in 2… │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- esc back   ↑↓ move   ⏎ task log   o in Airflow     airflow 15 s · read 0 s ago
+ esc back   ↑↓ move   ⏎ task log   y copy link    9/9 nodes · 1.1 s · read-only

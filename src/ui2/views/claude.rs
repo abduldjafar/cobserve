@@ -1,54 +1,675 @@
-//! View 5: the sessions — Claude Code, OpenCode, a shell — listed beside the screen of the one
-//! on it (a bar of tabs over it on a narrow terminal), drawn from its emulated terminal
-//! (`claude.rs`); and, while a new one is opened, the folder picker in the screen's place.
-//!
+//! SESSIONS zoomed (`docs/redesign/09-zooms.md` §4): *what are my sessions doing?* While they
+//! all fit at a size that can be read, a grid of live thumbnails — every session a card whose
+//! body is the bottom of its own screen, cropped from the same emulated terminal the full view
+//! draws (`claude.rs`); past that, every session a line grouped by project beside the chosen
+//! one's screen, large. A session opened full takes the inside under a bar of tabs; while a new
+//! one is opened, the folder picker does.
 
 use super::widgets::{fit, Cells};
 use crate::app::{App, Hit};
-use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, KEYED, MAX_SESSIONS};
+use crate::claude::{Kind, Mode, PaneState, PickRow, Picker, Session, Sessions, MAX_SESSIONS};
 use crate::fmt;
 use crate::folders::Folder;
 use crate::severity::Severity;
 use crate::theme::Theme;
+use crate::ui2::paint::Painter;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-/// From this width the sessions are a list beside the pane, like a terminal's tab list; below
-/// it, a bar of tabs over the pane.
-const SIDEBAR_FROM: u16 = 100;
-
-/// How wide the list of sessions is, its margin included; none when the terminal is too narrow
-/// for a list beside the pane.
-pub fn sidebar_width(width: u16) -> Option<u16> {
-    (width >= SIDEBAR_FROM).then(|| (width * 22 / 100).clamp(28, 38))
+/// How the zoomed sessions are laid out at a size: a grid of live thumbnails while they all fit
+/// at a size that can be read, the list beside a big preview past that (`09-zooms.md` §4.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    Grid { cols: u16, rows: u16, card_w: u16, card_h: u16 },
+    List { list_w: u16, preview_w: Option<u16> },
 }
 
-/// View 5 in the well under the shelf, `well` edge to edge: the list of sessions on the
-/// chrome's surface from the left edge, the pane in the dark beside it.
-pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, well: Rect, margin: u16) {
-    if well.height == 0 || well.width == 0 {
+/// The strip and the hint line over the body, when there is height for the hint line.
+fn body_height(height: u16) -> u16 {
+    height.saturating_sub(if height >= 16 { 2 } else { 1 })
+}
+
+fn grid_cols(width: u16) -> u16 {
+    if width < 76 { 1 } else { (width / 48).clamp(2, 4) }
+}
+
+/// How many cards the grid holds at a size: each at least 36 cells wide and 9 rows tall — a
+/// title, an info row, six screen rows and a bottom; none when not even one fits.
+pub fn cap(width: u16, height: u16) -> usize {
+    let body = body_height(height);
+    if width < 36 || body < 9 {
+        return 0;
+    }
+    usize::from(grid_cols(width)) * usize::from((body / 9).clamp(1, 3))
+}
+
+/// The layout for `n` sessions at a size: a pure function, so the same sessions at the same
+/// size always draw the same screen, and nothing flickers — `n` only changes by a key.
+pub fn shape(width: u16, height: u16, n: usize) -> Shape {
+    let body = body_height(height);
+    if n <= cap(width, height) {
+        let cols = grid_cols(width).min(n.max(1) as u16);
+        let rows = (n.div_ceil(cols as usize) as u16).clamp(1, (body / 9).clamp(1, 3));
+        let card_w = (width - 2 * (cols - 1)) / cols;
+        return Shape::Grid { cols, rows, card_w, card_h: body / rows };
+    }
+    let list_w = width.saturating_sub(78).clamp(32, 70).min(width);
+    let preview_w = width.saturating_sub(list_w + 2);
+    Shape::List { list_w: if preview_w >= 48 { list_w } else { width }, preview_w: (preview_w >= 48).then_some(preview_w) }
+}
+
+/// A session's state, as a word and a mark, the severity it is drawn in, and whether it spins:
+/// working (it printed within three seconds), needs you (it rang), idle, ended, kept, starting.
+pub fn state_word(session: &Session, clock: std::time::SystemTime) -> (&'static str, &'static str, Severity, bool) {
+    if session.waiting() {
+        return ("kept", "↻", Severity::None, false);
+    }
+    if let Some(console) = &session.console {
+        return match console.state {
+            crate::console::RunState::Running { .. } => ("working", "◐", Severity::Ok, true),
+            _ => ("ready", "○", Severity::None, false),
+        };
+    }
+    if session.pane.attention {
+        return ("needs you", "!", Severity::Warn, false);
+    }
+    match &session.pane.state {
+        PaneState::Exited(_) | PaneState::Failed(_) => ("ended", "✕", Severity::None, false),
+        PaneState::Idle | PaneState::Starting => ("starting", "◌", Severity::None, false),
+        PaneState::Running => {
+            let recent = session.pane.last_output.and_then(|at| clock.duration_since(at).ok()).is_some_and(|d| d.as_secs() < 3);
+            if recent { ("working", "◐", Severity::Ok, true) } else { ("idle", "○", Severity::None, false) }
+        }
+    }
+}
+
+/// The mark drawn for a state: the spinner's frame for one that works.
+fn state_mark(app: &App, session: &Session, theme: &Theme) -> (String, Style) {
+    let (_, mark, sev, spinning) = state_word(session, app.clock);
+    let style = match sev {
+        Severity::Warn => theme.sev(Severity::Warn).add_modifier(Modifier::BOLD),
+        Severity::Ok => theme.sev(Severity::Ok),
+        _ if mark == "↻" => theme.accent(),
+        _ => theme.muted(),
+    };
+    (if spinning { super::kit::spinner(app).to_string() } else { mark.to_string() }, style)
+}
+
+/// The zoomed sessions in `inside`: the folder picker while one is opened; a session opened full
+/// under a bar of tabs; else the strip, the hint line and the grid or the list.
+pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, inside: Rect) {
+    if inside.height == 0 || inside.width < 10 {
         return;
     }
-    let area = if let Some(side) = sidebar_width(well.width) {
-        frame.render_widget(ratatui::widgets::Block::new().style(theme.surface()), Rect::new(well.x, well.y, side, well.height));
-        sidebar(frame, app, theme, Rect::new(well.x + margin, well.y, side.saturating_sub(margin + 1), well.height));
-        if !theme.paints_background() {
-            let rule: Vec<Line<'static>> = (0..well.height).map(|_| Line::from(Span::styled("│", theme.rule()))).collect();
-            frame.render_widget(Paragraph::new(rule), Rect::new(well.x + side, well.y, 1, well.height));
+    if matches!(app.claude.mode, Mode::Opening(_)) {
+        pane(frame, app, theme, inside);
+        return;
+    }
+    if app.shell.sessions_full && !app.claude.list.is_empty() {
+        let bar = Rect::new(inside.x, inside.y, inside.width, 1);
+        frame.render_widget(Paragraph::new(session_bar(app, theme, bar)), bar);
+        pane(frame, app, theme, Rect::new(inside.x, inside.y + 1, inside.width, inside.height - 1));
+        return;
+    }
+    // Every PTY keeps the size it has opened full: a thumbnail is a crop, never a resize.
+    app.claude.want_size.set((inside.height.saturating_sub(1).max(1), inside.width));
+    let n = app.claude.list.len();
+    let shape = shape(inside.width, inside.height, n);
+    let mut p = Painter::new(frame.buffer_mut());
+    let clip = Rect::new(inside.x.saturating_sub(1), inside.y, inside.width + 2, inside.height);
+    p.within(clip, |p| {
+        strip(p, app, theme, inside);
+        let top = if inside.height >= 16 {
+            hints(p, app, theme, Rect::new(inside.x, inside.y + 1, inside.width, 1));
+            inside.y + 2
+        } else {
+            inside.y + 1
+        };
+        let body = Rect::new(inside.x, top, inside.width, inside.bottom().saturating_sub(top));
+        let mut hits = Vec::new();
+        match shape {
+            Shape::Grid { cols, rows, card_w, card_h } => {
+                app.shell.sessions_shape.set((rows, cols * rows));
+                grid(p, app, theme, body, cols, rows, card_w, card_h, &mut hits);
+            }
+            Shape::List { list_w, preview_w } => {
+                let page = list(p, app, theme, Rect::new(body.x, body.y, list_w, body.height), &mut hits);
+                app.shell.sessions_shape.set((0, page));
+                if let Some(w) = preview_w {
+                    let r = Rect::new(body.right() - w, body.y, w, body.height);
+                    preview(p, app, theme, r, &mut hits);
+                }
+            }
         }
-        let x = well.x + side + 2;
-        Rect::new(x, well.y + 1, (well.x + well.width).saturating_sub(x + margin), well.height.saturating_sub(1))
+        app.viewport.hits.borrow_mut().extend(hits);
+    });
+}
+
+/// `✻ 287.0M today · ≈ $191.17 · session 11% · week 70%   ▣ 53.9M today · $0.86` and, at the
+/// right, the counts across every session.
+fn strip(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect) {
+    let sessions = &app.claude;
+    let n = sessions.list.len();
+    let working = sessions.list.iter().filter(|s| state_word(s, app.clock).1 == "◐").count();
+    let calling = sessions.list.iter().filter(|s| s.pane.attention).count();
+    let mut counts = Cells::new();
+    counts.push(fmt::plural(n, "session", "sessions"), theme.text2());
+    if working > 0 {
+        counts.push(" · ", theme.faint());
+        counts.push(format!("{working} working"), theme.sev(Severity::Ok));
+    }
+    if calling > 0 {
+        counts.push(" · ", theme.faint());
+        counts.push(format!("{calling} {}", if calling == 1 { "needs you" } else { "need you" }), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+    }
+    let room = (i.width as usize).saturating_sub(counts.width() + 2);
+    let mut usage = Cells::new();
+    for (k, line) in super::usage::sidebar_lines(app, theme, 200).into_iter().enumerate() {
+        let spans: Vec<Span<'static>> = line.spans.into_iter().filter(|s| !s.content.trim().is_empty() || s.content.len() < 3).collect();
+        let mut piece = Cells::new();
+        piece.spans(spans);
+        let text_w = piece.width();
+        if usage.width() + if k > 0 { 3 } else { 0 } + text_w > room {
+            break;
+        }
+        if k > 0 {
+            usage.push("   ", Style::default());
+        }
+        usage.spans(piece.into_spans());
+    }
+    super::kit::put_cells(p, i.x, i.y, usage, room);
+    super::kit::put_spans_r(p, i.right(), i.y, counts.into_spans());
+}
+
+/// The keys that act here — or, while finding, the search field.
+fn hints(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect) {
+    let sessions = &app.claude;
+    let mut cells = Cells::new();
+    if let Mode::Finding { query, at } = &sessions.mode {
+        let found = sessions.matching(query);
+        cells.push("⌕ /", theme.accent());
+        cells.push(query.clone(), theme.strong());
+        cells.push("▏  ", theme.accent());
+        if found.is_empty() {
+            cells.push("none · no session is called that · esc back", theme.faint());
+        } else {
+            cells.push(format!("{} of {} · ↑↓ choose · ⏎ goes there · esc back", (at + 1).min(found.len()), found.len()), theme.faint());
+        }
+        super::kit::put_cells(p, r.x, r.y, cells, r.width as usize);
+        return;
+    }
+    let narrow = r.width < 100;
+    let full = sessions.list.len() >= MAX_SESSIONS;
+    let mut new_w = 0u16;
+    if full {
+        cells.push(format!("{MAX_SESSIONS} of {MAX_SESSIONS} · x x closes one"), theme.faint());
     } else {
-        let bar = Rect::new(well.x, well.y, well.width, 1);
-        frame.render_widget(ratatui::widgets::Block::new().style(theme.surface()), bar);
-        let inset = Rect::new(well.x + margin, well.y, well.width.saturating_sub(2 * margin), 1);
-        frame.render_widget(Paragraph::new(session_bar(app, theme, inset)), inset);
-        Rect::new(well.x + margin, well.y + 1, well.width.saturating_sub(2 * margin), well.height - 1)
+        cells.push("n ", theme.strong());
+        cells.push(if narrow { "new" } else { "new session" }, theme.muted());
+        new_w = cells.width() as u16;
+    }
+    cells.push(" · ", theme.faint());
+    let resume_x = cells.width() as u16;
+    cells.push("↻ ", theme.accent());
+    cells.push(if narrow { "resume" } else { "past conversations" }, theme.muted());
+    let resume_w = cells.width() as u16 - resume_x;
+    let rest: [(&str, &str); 5] = if narrow {
+        [("/", "find"), ("x x", "close"), ("\\", "float"), ("⏎", "full"), ("r", "rename")]
+    } else {
+        [("/", "find one"), ("x x", "close"), ("\\", "float it"), ("⏎", "open it full"), ("r", "rename it")]
     };
-    pane(frame, app, theme, area);
+    for (key, word) in rest.into_iter().filter(|(key, _)| !(full && *key == "x x")) {
+        cells.push(" · ", theme.faint());
+        cells.push(format!("{key} "), theme.strong());
+        cells.push(word, theme.muted());
+    }
+    super::kit::put_cells(p, r.x, r.y, cells, r.width as usize);
+    let mut hits = app.viewport.hits.borrow_mut();
+    if new_w > 0 {
+        hits.push((Rect::new(r.x, r.y, new_w, 1), Hit::NewSession));
+    }
+    hits.push((Rect::new(r.x + resume_x, r.y, resume_w, 1), Hit::Resume));
+}
+
+/// The sessions shown: every one, or those a search names.
+fn shown(app: &App) -> Vec<usize> {
+    match &app.claude.mode {
+        Mode::Finding { query, .. } => app.claude.matching(query),
+        _ => app.claude.order(),
+    }
+}
+
+/// The chosen one: the active session, or the match a search is on.
+fn chosen(app: &App) -> Option<usize> {
+    match &app.claude.mode {
+        Mode::Finding { query, at } => app.claude.matching(query).get(*at).copied(),
+        _ => (!app.claude.list.is_empty()).then_some(app.claude.active),
+    }
+}
+
+/// `~/work/billing ⎇ main · 2.1M today · claude`, or what a second `x` does.
+fn info_row(app: &App, session: &Session, index: usize, used: &std::collections::HashMap<String, u64>, theme: &Theme, room: usize) -> Cells {
+    let mut cells = Cells::new();
+    if index == app.claude.active && app.claude.closing {
+        cells.push("x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+        return cells;
+    }
+    if let Some(console) = &session.console {
+        cells.push(format!("SQL on {} · read-only", console.node.as_deref().unwrap_or("no server")), theme.muted());
+        return cells;
+    }
+    let mut tail = Cells::new();
+    if let Some(n) = session.conversation.as_ref().and_then(|c| used.get(c)).filter(|n| **n > 0) {
+        tail.push(" · ", theme.faint());
+        tail.push(format!("{} today", crate::usage::tokens(*n)), theme.muted());
+    }
+    tail.push(" · ", theme.faint());
+    tail.push(session.kind.title().to_lowercase(), theme.faint());
+    place(&mut cells, &session.dir, session.branch.as_deref(), room.saturating_sub(tail.width()), theme);
+    cells.spans(tail.into_spans());
+    cells
+}
+
+/// A card's title: ` ✻ 7 · billing export `, or the name being typed.
+fn card_title(app: &App, session: &Session, index: usize, lit: bool, theme: &Theme) -> Vec<Span<'static>> {
+    let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
+    let number = Sessions::number_of(index);
+    let name = match &app.claude.mode {
+        Mode::Naming(name) if index == app.claude.active => return vec![
+            Span::styled(format!("{} {number} · ", session.kind.glyph()), kind_style(session.kind, theme)),
+            Span::styled(format!("{name}▏"), theme.keycap()),
+        ],
+        _ => session.label(),
+    };
+    if lit {
+        return vec![Span::styled(format!("{} {number} · {name}", session.kind.glyph()), theme.tab_active())];
+    }
+    vec![
+        Span::styled(session.kind.glyph().to_string(), if ended { theme.faint() } else { kind_style(session.kind, theme) }),
+        Span::styled(format!(" {number} · "), theme.muted()),
+        Span::styled(name, if ended || session.waiting() { theme.muted() } else { theme.strong() }),
+    ]
+}
+
+fn state_spans(app: &App, session: &Session, theme: &Theme) -> Vec<Span<'static>> {
+    let (word, _, _, _) = state_word(session, app.clock);
+    let (mark, style) = state_mark(app, session, theme);
+    vec![Span::styled(format!("{mark} {word}"), style)]
+}
+
+/// A card of the grid, or the preview: the frame in the cursor's accent (or amber when it rang),
+/// the title and the state, the info row, the bottom of its screen.
+#[allow(clippy::too_many_arguments)]
+fn session_card(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, index: usize, lit: bool, live: bool, used: &std::collections::HashMap<String, u64>) {
+    let session = &app.claude.list[index];
+    let frame_style = if lit {
+        theme.accent()
+    } else if session.pane.attention {
+        theme.sev(Severity::Warn)
+    } else {
+        theme.border()
+    };
+    let mut card = super::kit::Card::new(frame_style).title(card_title(app, session, index, lit, theme)).right(state_spans(app, session, theme));
+    if lit {
+        card = card.bottom(vec![Span::styled("⏎ opens it full · \\ floats it · r renames it", theme.muted())]);
+    }
+    let inner = card.draw(p, r);
+    if inner.height == 0 {
+        return;
+    }
+    let mut y = inner.y;
+    if inner.height >= 5 || r.height >= 8 {
+        super::kit::put_cells(p, inner.x, y, info_row(app, session, index, used, theme, inner.width as usize), inner.width as usize);
+        y += 1;
+    }
+    let screen_r = Rect::new(inner.x, y, inner.width + 1, inner.bottom().saturating_sub(y));
+    thumbnail(p, app, theme, session, screen_r, lit || live);
+}
+
+/// The bottom of a session's screen, cropped to `r` — never resized: the rows that end at its
+/// cursor (or its last line with something on it), the columns from the left. Another program's
+/// colours, dimmed unless `bright`; a query session's SQL and answer; a pane not started yet says
+/// so.
+fn thumbnail(p: &mut Painter<'_>, app: &App, theme: &Theme, session: &Session, r: Rect, bright: bool) {
+    if r.height == 0 || r.width == 0 {
+        return;
+    }
+    if let Some(console) = &session.console {
+        console_thumbnail(p, theme, console, r, bright);
+        return;
+    }
+    let program = app.claude.command_of(session.kind).first().cloned().unwrap_or_default();
+    let note = |p: &mut Painter<'_>, lines: Vec<(String, Style)>| {
+        for (k, (text, style)) in lines.into_iter().enumerate() {
+            let y = r.y + (r.height / 3).min(r.height.saturating_sub(1)) + k as u16;
+            if y < r.bottom() {
+                p.put(r.x + 1, y, &fmt::truncate(&text, r.width.saturating_sub(2) as usize), style);
+            }
+        }
+    };
+    match &session.pane.state {
+        PaneState::Idle if session.waiting() => note(p, vec![(format!("↻ kept from the last run · ⏎ takes {} up again", session.kind.title()), theme.muted())]),
+        PaneState::Idle | PaneState::Starting => note(p, vec![(format!("starting {program} in {} …", session.dir), theme.muted())]),
+        PaneState::Failed(why) => {
+            let mut lines = vec![(why.clone(), theme.sev(Severity::Warn))];
+            lines.extend(how_to_get(session.kind, &program).into_iter().map(|t| (t, theme.muted())));
+            note(p, lines);
+        }
+        PaneState::Running | PaneState::Exited(_) => {
+            let live = matches!(session.pane.state, PaneState::Running);
+            let screen = session.pane.screen();
+            let (rows, cols) = screen.size();
+            let mut last = screen.cursor_position().0.min(rows.saturating_sub(1));
+            for row in (0..rows).rev() {
+                if (0..cols).any(|c| screen.cell(row, c).is_some_and(|cell| cell.has_contents() && cell.contents() != " ")) {
+                    last = last.max(row);
+                    break;
+                }
+            }
+            let first = (last + 1).saturating_sub(r.height);
+            for (k, row) in (first..=last).enumerate() {
+                let y = r.y + k as u16;
+                let mut x = r.x;
+                for col in 0..cols.min(r.width) {
+                    let Some(cell) = screen.cell(row, col) else { break };
+                    if cell.is_wide_continuation() {
+                        continue;
+                    }
+                    let mut style = style_of(cell, live);
+                    if !bright {
+                        style = style.add_modifier(Modifier::DIM);
+                    }
+                    let text = if cell.has_contents() { cell.contents().to_string() } else { " ".to_string() };
+                    x = p.put(x, y, &text, theme.text().patch(style));
+                }
+            }
+            if let PaneState::Exited(how) = &session.pane.state
+                && bright
+            {
+                let y = r.bottom() - 1;
+                p.band(Rect::new(r.x, y, r.width, 1), theme.selected());
+                super::kit::put_spans(
+                    p,
+                    r.x,
+                    y,
+                    vec![Span::styled(format!(" {program} — {how} "), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)), Span::styled(" ⏎ start it again", theme.muted())],
+                    r.width as usize,
+                );
+            }
+        }
+    }
+}
+
+/// A query session in a card: its SQL, how the last run went, the answer's first rows.
+fn console_thumbnail(p: &mut Painter<'_>, theme: &Theme, console: &crate::console::Console, r: Rect, bright: bool) {
+    let dim = |s: Style| if bright { s } else { s.add_modifier(Modifier::DIM) };
+    let w = r.width.saturating_sub(1) as usize;
+    let mut y = r.y;
+    let bottom = r.bottom();
+    for line in console.lines.iter().filter(|l| !l.trim().is_empty()) {
+        if y >= bottom {
+            return;
+        }
+        p.put(r.x, y, &fmt::truncate(line, w), dim(theme.text()));
+        y += 1;
+    }
+    if y + 1 >= bottom {
+        return;
+    }
+    y += 1;
+    let mut status = Cells::new();
+    console_line(&mut status, console, theme);
+    super::kit::put_cells(p, r.x, y, status, w);
+    y += 1;
+    let Some(answer) = console.answer.as_ref().filter(|a| !a.columns.is_empty()) else { return };
+    let widths: Vec<usize> = answer
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(c, (name, _))| answer.rows.iter().take(20).filter_map(|row| row.get(c).and_then(|v| v.as_deref()).map(fmt::width)).chain([fmt::width(name)]).max().unwrap_or(4).min(18))
+        .collect();
+    let row_text = |cells: Vec<String>| -> String { cells.iter().zip(&widths).map(|(t, w)| fmt::pad(&fmt::truncate(t, *w), *w)).collect::<Vec<_>>().join("  ") };
+    if y < bottom {
+        p.put(r.x, y, &fmt::truncate(&row_text(answer.columns.iter().map(|(n, _)| n.clone()).collect()), w), dim(theme.section()));
+        y += 1;
+    }
+    for row in &answer.rows {
+        if y >= bottom {
+            break;
+        }
+        let text = row_text(row.iter().map(|v| v.clone().unwrap_or_else(|| "NULL".into())).collect());
+        p.put(r.x, y, &fmt::truncate(&text, w), dim(theme.text2()));
+        y += 1;
+    }
+}
+
+/// The grid: the sessions column by column in the list's order, so `↓` is the card below and
+/// the next one at once; a free cell offers a new session, the next one a past conversation.
+#[allow(clippy::too_many_arguments)]
+fn grid(p: &mut Painter<'_>, app: &App, theme: &Theme, body: Rect, cols: u16, rows: u16, card_w: u16, card_h: u16, hits: &mut Vec<(Rect, Hit)>) {
+    let order = shown(app);
+    let lit = chosen(app);
+    let used = super::usage::by_session(app);
+    let cell = |k: usize| -> Rect {
+        let (col, row) = ((k / rows as usize) as u16, (k % rows as usize) as u16);
+        Rect::new(body.x + col * (card_w + 2), body.y + row * card_h, card_w, card_h)
+    };
+    for (k, &index) in order.iter().enumerate() {
+        if k >= usize::from(cols * rows) {
+            break;
+        }
+        let r = cell(k);
+        session_card(p, app, theme, r, index, lit == Some(index), false, &used);
+        hits.push((r, Hit::Session(index)));
+    }
+    if matches!(app.claude.mode, Mode::Finding { .. }) {
+        return;
+    }
+    // The free cells: a new session, then a past conversation.
+    let free = usize::from(cols * rows).saturating_sub(order.len());
+    let ghosts: [(&str, &str, Hit); 2] = [
+        ("+ new session", "n · Claude, OpenCode, a terminal or a query session", Hit::NewSession),
+        ("↻ past conversations", "a conversation had elsewhere, taken up here", Hit::Resume),
+    ];
+    if order.is_empty() {
+        let w = body.width.saturating_sub(2) / 2;
+        for (k, (title, text, hit)) in ghosts.into_iter().enumerate() {
+            let r = Rect::new(body.x + k as u16 * (w + 2), body.y, w, 5.min(body.height));
+            ghost(p, theme, r, title, text);
+            hits.push((r, hit));
+        }
+        return;
+    }
+    for (k, (title, text, hit)) in ghosts.into_iter().enumerate().take(free) {
+        if app.claude.list.len() >= MAX_SESSIONS && hit == Hit::NewSession {
+            continue;
+        }
+        let r = cell(order.len() + k);
+        ghost(p, theme, r, title, text);
+        hits.push((r, hit));
+    }
+}
+
+fn ghost(p: &mut Painter<'_>, theme: &Theme, r: Rect, title: &str, text: &str) {
+    let inner = super::kit::Card::new(theme.faint()).title(vec![Span::styled(title.to_string(), theme.muted())]).draw(p, r);
+    if inner.height > 0 {
+        p.put(inner.x, inner.y + inner.height / 2, &fmt::truncate(text, inner.width as usize), theme.faint());
+    }
+}
+
+/// The last line a session's program printed, for the list's tails.
+fn last_line(session: &Session) -> String {
+    if let Some(console) = &session.console {
+        let mut cells = Cells::new();
+        console_line(&mut cells, console, crate::theme::current());
+        return cells.into_spans().into_iter().map(|s| s.content.into_owned()).collect();
+    }
+    if !matches!(session.pane.state, PaneState::Running | PaneState::Exited(_)) {
+        return String::new();
+    }
+    let screen = session.pane.screen();
+    let (rows, cols) = screen.size();
+    let cursor = screen.cursor_position().0;
+    // The last line that says something: not a rule, a box's side or an empty prompt.
+    let says = |t: &str| !t.chars().all(|c| c.is_whitespace() || "─━│┃╭╮╰╯┌┐└┘❯›>".contains(c));
+    (0..=cursor.min(rows.saturating_sub(1))).rev().map(|row| screen.contents_between(row, 0, row, cols).trim().to_string()).find(|t| says(t)).unwrap_or_default()
+}
+
+/// A line of the list: what is listed, and which session a click on it chooses.
+enum Row {
+    Header(String, usize, usize, Option<String>, usize),
+    Session(usize),
+}
+
+/// The list: a header a project and a line a session, in the order `↑↓` walk — or, while
+/// finding, the matches a line each; a window that follows the chosen line when they do not all
+/// fit, a line at each end for how many sessions are past it. Returns the session lines a page
+/// holds.
+fn list(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, hits: &mut Vec<(Rect, Hit)>) -> u16 {
+    let sessions = &app.claude;
+    let finding = matches!(sessions.mode, Mode::Finding { .. });
+    let lit = chosen(app);
+    let used = super::usage::by_session(app);
+    let mut rows: Vec<Row> = Vec::new();
+    if finding {
+        rows.extend(shown(app).into_iter().map(Row::Session));
+    } else {
+        for (project, members) in sessions.groups() {
+            let calling = members.iter().filter(|&&i| sessions.list[i].pane.attention).count();
+            let branch = members.first().and_then(|&i| sessions.list[i].branch.clone()).filter(|b| members.iter().all(|&i| sessions.list[i].branch.as_deref() == Some(b.as_str())));
+            rows.push(Row::Header(project, members.len(), calling, branch, members[0]));
+            rows.extend(members.into_iter().map(Row::Session));
+        }
+    }
+    let height = r.height as usize;
+    let at = rows.iter().position(|row| matches!(row, Row::Session(i) if Some(*i) == lit));
+    // A window that follows the chosen line when they do not all fit; a line at an end only
+    // when something is past it.
+    let (first, window) = if rows.len() <= height {
+        (0, rows.len())
+    } else {
+        let window = height.saturating_sub(2).max(1);
+        let first = crate::app::scroll_into_view(sessions.list_scroll.get(), at, window, rows.len());
+        if first == 0 { (0, height.saturating_sub(1).max(1)) } else { (first, window) }
+    };
+    sessions.list_scroll.set(first);
+    let w = r.width as usize;
+    let tails = w >= 60;
+    let count_sessions = |rs: &[Row]| rs.iter().filter(|row| matches!(row, Row::Session(_))).count();
+    let mut y = r.y;
+    if first > 0 {
+        let above = count_sessions(&rows[..first]);
+        let mut cells = Cells::new();
+        if above > 0 {
+            cells.push(format!("  ↑ {above} more"), theme.faint());
+        }
+        // The cut group's header, so the lines under it keep their project.
+        if let Some(Row::Session(_)) = rows.get(first)
+            && let Some(Row::Header(project, n, calling, branch, _)) = rows[..first].iter().rev().find(|row| matches!(row, Row::Header(..)))
+        {
+            let header = group_header(project, *n, *calling, branch.as_deref(), theme);
+            cells.pad_to(w.saturating_sub(header.width() + 1));
+            cells.spans(header.into_spans());
+        }
+        if above > 0
+            && let Some(i) = rows[..first].iter().rev().find_map(|row| if let Row::Session(i) = row { Some(*i) } else { None })
+        {
+            hits.push((Rect::new(r.x, y, r.width, 1), Hit::Session(i)));
+        }
+        super::kit::put_cells(p, r.x, y, cells, w);
+        y += 1;
+    }
+    for row in rows.iter().skip(first).take(window) {
+        match row {
+            Row::Header(project, n, calling, branch, first_member) => {
+                let mut cells = Cells::new();
+                cells.push("  ", Style::default());
+                cells.spans(group_header(project, *n, *calling, branch.as_deref(), theme).into_spans());
+                super::kit::put_cells(p, r.x, y, cells, w);
+                hits.push((Rect::new(r.x, y, r.width, 1), Hit::Session(*first_member)));
+            }
+            Row::Session(index) => {
+                let session = &sessions.list[*index];
+                let on = lit == Some(*index);
+                if on {
+                    p.band(Rect::new(r.x.saturating_sub(1), y, r.width + 1, 1), theme.selected());
+                }
+                let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
+                let (mark, mark_style) = state_mark(app, session, theme);
+                let mut cells = Cells::new();
+                cells.push(if on { "▌" } else { " " }, theme.accent());
+                cells.push(mark, mark_style);
+                cells.push(" ", Style::default());
+                cells.push(session.kind.glyph().to_string(), if ended { theme.faint() } else { kind_style(session.kind, theme) });
+                cells.push(format!(" {:>2} ", Sessions::number_of(*index)), theme.muted());
+                let mut right = Cells::new();
+                if finding {
+                    right.push(session.project(), theme.faint());
+                } else if let Some(n) = session.conversation.as_ref().and_then(|c| used.get(c)).filter(|n| **n > 0) {
+                    right.push(crate::usage::tokens(*n), theme.faint());
+                }
+                let name_style = if on { theme.strong() } else if ended || session.waiting() { theme.muted() } else { theme.text() };
+                let name = match &sessions.mode {
+                    Mode::Naming(name) if *index == sessions.active => {
+                        cells.push(format!("{name}▏"), theme.keycap());
+                        None
+                    }
+                    _ => Some(session.label()),
+                };
+                if let Some(name) = name {
+                    let name_w = if tails { 24 } else { w.saturating_sub(cells.width() + right.width() + 2) };
+                    cells.push(fmt::pad(&fmt::truncate(&name, name_w), name_w.min(fmt::width(&name).max(if tails { name_w } else { 0 }))), name_style);
+                }
+                if tails {
+                    let room = w.saturating_sub(cells.width() + right.width() + 3);
+                    let tail = if *index == sessions.active && sessions.closing { "x again closes it".to_string() } else { last_line(session) };
+                    let style = if *index == sessions.active && sessions.closing { theme.sev(Severity::Warn).add_modifier(Modifier::BOLD) } else { theme.faint() };
+                    cells.push(" ", Style::default());
+                    cells.push(fmt::truncate(&tail, room), style);
+                }
+                cells.pad_to(w.saturating_sub(right.width() + 1));
+                cells.spans(right.into_spans());
+                super::kit::put_cells(p, r.x, y, cells, w);
+                hits.push((Rect::new(r.x, y, r.width, 1), Hit::Session(*index)));
+            }
+        }
+        y += 1;
+    }
+    if rows.len() > height {
+        let below = count_sessions(&rows[(first + window).min(rows.len())..]);
+        if below > 0 {
+            super::kit::put_spans(p, r.x, y, vec![Span::styled(format!("  ↓ {below} more"), theme.faint())], w);
+            if let Some(i) = rows[first + window..].iter().find_map(|row| if let Row::Session(i) = row { Some(*i) } else { None }) {
+                hits.push((Rect::new(r.x, y, r.width, 1), Hit::Session(i)));
+            }
+        }
+    }
+    count_sessions(&rows[first..(first + window).min(rows.len())]).max(1) as u16
+}
+
+/// `billing 3  ! 1  ⎇ main`.
+fn group_header(project: &str, n: usize, calling: usize, branch: Option<&str>, theme: &Theme) -> Cells {
+    let mut cells = Cells::new();
+    cells.push(project.to_string(), theme.section());
+    cells.push(format!(" {n}"), theme.faint());
+    if calling > 0 {
+        cells.push(format!("  ! {calling}"), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
+    }
+    if let Some(branch) = branch {
+        cells.push(format!("  ⎇ {branch}"), theme.faint());
+    }
+    cells
+}
+
+/// The chosen session beside the list, large: its card in the cursor's accent, its screen.
+fn preview(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, hits: &mut Vec<(Rect, Hit)>) {
+    let Some(index) = chosen(app) else { return };
+    let used = super::usage::by_session(app);
+    session_card(p, app, theme, r, index, true, true, &used);
+    hits.push((r, Hit::Session(index)));
 }
 
 /// The session on screen in `area`: the folder picker while one is opened, a query session's
@@ -159,386 +780,6 @@ fn kind_style(kind: Kind, theme: &Theme) -> Style {
     }
 }
 
-/// A session's state at a glance: `●` it rang while not on screen, `✕` its program ended, `↻`
-/// kept from the last run, waiting to take its conversation up.
-fn mark(session: &Session) -> &'static str {
-    if session.waiting() {
-        "↻"
-    } else if session.pane.attention {
-        "●"
-    } else if matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_)) {
-        "✕"
-    } else {
-        ""
-    }
-}
-
-/// How much of each card the list has room for: two lines and a gap, two lines, or one — the lit
-/// card keeping its second.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Density {
-    Full,
-    Close,
-    Line,
-}
-
-/// The sessions as cards, like a terminal's tab list: the mark of what it runs (Claude, OpenCode,
-/// a shell, SQL), the name — the user's, what the program says it is on, or the folder — and the
-/// number; under it the folder and its branch, or a query session's last run. The card on
-/// screen is lit, and so is a new one while its folder is chosen, or the one a search is on.
-/// The more there are the closer they sit — fifty make a line each — and the list follows the
-/// lit card, saying how many are above and below it.
-fn sidebar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    let sessions = &app.claude;
-    let width = area.width as usize;
-    // The bar at the left of a card, and the card's own margin either side.
-    let inner = width.saturating_sub(4);
-    let picking = matches!(sessions.mode, Mode::Opening(_));
-    let lit = sessions.mode == Mode::Bar;
-    let finding = match &sessions.mode {
-        Mode::Finding { query, at } => Some((query.clone(), *at)),
-        _ => None,
-    };
-    // Those listed: every one, or those the search names.
-    let listed: Vec<usize> = match &finding {
-        Some((query, _)) => sessions.matching(query),
-        None => (0..sessions.list.len()).collect(),
-    };
-    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
-    let mut clickable: Vec<(Rect, Hit)> = Vec::new();
-
-    let mut title = Cells::new();
-    title.push("SESSIONS", theme.section());
-    match &finding {
-        Some((query, at)) => {
-            title.push("  /", theme.accent());
-            title.push(query.clone(), theme.strong());
-            title.push("▏", theme.accent());
-            let count = if listed.is_empty() { "none".to_string() } else { format!("{} of {}", (at + 1).min(listed.len()), listed.len()) };
-            title.pad_to(width.saturating_sub(fmt::width(&count)));
-            title.push(count, theme.faint());
-        }
-        None if lit => {
-            title.push("  which one?", theme.strong());
-        }
-        None if !sessions.list.is_empty() => {
-            title.push(format!("  {}", sessions.list.len()), theme.faint());
-        }
-        None => {}
-    }
-    lines.push(title.line(width, Style::default()));
-    // What Claude Code and OpenCode used today, over the sessions that used it.
-    if finding.is_none() {
-        lines.extend(super::usage::sidebar_lines(app, theme, width));
-    }
-    let used = super::usage::by_session(app);
-    // Many sessions on several projects: grouped by project, a line each (`grouped_rows`).
-    let grouped = finding.is_none() && sessions.list.len() >= GROUPED_FROM && sessions.groups().len() >= 2;
-    if grouped {
-        let mut find = Cells::new();
-        find.push("⌕ ", theme.accent());
-        find.push("find one", theme.muted());
-        find.push("  ctrl+\\ /", theme.faint());
-        lines.push(find.line(width, Style::default()));
-    }
-    lines.push(Line::from(""));
-
-    // The card that is lit: the one a search is on, the new one being opened, the one on screen.
-    let lit_card = match &finding {
-        Some((_, at)) => listed.get(*at).copied(),
-        None if picking => None,
-        None => (!sessions.list.is_empty()).then_some(sessions.active),
-    };
-    // What is under the cards: the way to a new session and to past conversations.
-    let foot = match () {
-        _ if finding.is_some() => 1,
-        _ if picking || sessions.list.len() < MAX_SESSIONS => 2,
-        _ => 1,
-    };
-    let room = (area.height as usize).saturating_sub(lines.len() + foot + 1);
-    let count = listed.len();
-    let density = if 3 * count <= room {
-        Density::Full
-    } else if 2 * count <= room {
-        Density::Close
-    } else {
-        Density::Line
-    };
-    // A line each, and still more than fit: a window that follows the lit card, a line at each
-    // end for what is past it.
-    let lit_at = lit_card.and_then(|card| listed.iter().position(|&i| i == card));
-    let extra = usize::from(lit_at.is_some());
-    let (first, shown) = if density == Density::Line && count + extra > room {
-        let window = room.saturating_sub(extra + 2).max(1);
-        let first = crate::app::scroll_into_view(sessions.list_scroll.get(), lit_at, window, count);
-        (first, window)
-    } else {
-        (0, count)
-    };
-    sessions.list_scroll.set(first);
-
-    if grouped {
-        let top = area.y + lines.len() as u16;
-        let (rows, hits) = grouped_rows(app, theme, area, top, room, lit_card, lit);
-        lines.extend(rows);
-        clickable.extend(hits);
-        lines.push(Line::from(""));
-    }
-    if !grouped && first > 0 {
-        let y = area.y + lines.len() as u16;
-        lines.push(Line::from(Span::styled(format!("   ↑ {} more", first), theme.faint())));
-        clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Session(listed[first - 1])));
-    }
-    for &index in listed.iter().skip(first).take(if grouped { 0 } else { shown }) {
-        let session = &sessions.list[index];
-        let y = area.y + lines.len() as u16;
-        let on_screen = lit_card == Some(index);
-        let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
-
-        // Its mark and name; at the right, what it rang for and its number — a key to press
-        // once ctrl+\ asks which, for the five a digit picks.
-        let mut right = Cells::new();
-        // What it used today, quietly, before its mark.
-        if let Some(n) = session.conversation.as_ref().and_then(|c| used.get(c)).filter(|n| **n > 0) {
-            right.push(format!("{} ", crate::usage::tokens(*n)), theme.faint());
-        }
-        match mark(session) {
-            "●" => right.push("● ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
-            "✕" => right.push("✕ ", theme.faint()),
-            "↻" => right.push("↻ ", theme.accent()),
-            _ => &mut right,
-        };
-        let number = Sessions::number_of(index);
-        if lit && index < KEYED {
-            right.push(format!(" {number} "), theme.keycap());
-        } else {
-            right.push(number.to_string(), theme.faint());
-        }
-        let mut first_line = Cells::new();
-        first_line.push(format!("{}  ", session.kind.glyph()), if ended { theme.faint() } else { kind_style(session.kind, theme) });
-        let name_room = inner.saturating_sub(first_line.width() + right.width() + 1);
-        match &sessions.mode {
-            Mode::Naming(name) if index == sessions.active => {
-                first_line.push(format!("{}▏", fmt::truncate(name, name_room)), theme.keycap());
-            }
-            _ => {
-                let style = if on_screen { theme.strong() } else if ended || session.waiting() { theme.muted() } else { theme.text() };
-                first_line.push(fmt::truncate(&session.label(), name_room), style);
-            }
-        }
-        first_line.pad_to(inner.saturating_sub(right.width()));
-        first_line.spans(right.into_spans());
-        lines.push(card_row(first_line, width, on_screen, theme));
-
-        // Where it works — or, after one x, what a second does.
-        let two_lines = density != Density::Line || on_screen;
-        if two_lines {
-            let mut second = Cells::new();
-            second.push("   ", Style::default());
-            if index == sessions.active && sessions.closing {
-                second.push("x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
-            } else if let Some(console) = &session.console {
-                console_line(&mut second, console, theme);
-            } else {
-                place(&mut second, &session.dir, session.branch.as_deref(), inner, theme);
-            }
-            lines.push(card_row(second, width, on_screen, theme));
-        }
-        if density == Density::Full {
-            lines.push(Line::from(""));
-        }
-        clickable.push((Rect::new(area.x, y, area.width, 1 + u16::from(two_lines)), Hit::Session(index)));
-    }
-    if !grouped && first + shown < count {
-        let y = area.y + lines.len() as u16;
-        lines.push(Line::from(Span::styled(format!("   ↓ {} more", count - first - shown), theme.faint())));
-        clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Session(listed[first + shown])));
-    }
-    if !grouped && density != Density::Full && count > 0 {
-        lines.push(Line::from(""));
-    }
-
-    if finding.is_some() {
-        let mut note = Cells::new();
-        note.push(
-            if listed.is_empty() { "   no session is called that" } else { "   ⏎ goes there · esc back" },
-            theme.faint(),
-        );
-        lines.push(note.line(width, Style::default()));
-    } else if picking || sessions.list.len() < MAX_SESSIONS {
-        // A new session, and one that takes a conversation up again, at the end of the list.
-        let y = area.y + lines.len() as u16;
-        let mut first_line = Cells::new();
-        first_line.push("+  ", theme.accent().add_modifier(Modifier::BOLD));
-        first_line.push("new session", if picking { theme.strong() } else { theme.text2() });
-        lines.push(card_row(first_line, width, picking, theme));
-        if picking {
-            let mut second = Cells::new();
-            let query = matches!(&sessions.mode, Mode::Opening(p) if p.kind == Kind::Query);
-            second.push(if query { "   choose its server →" } else { "   choose its folder →" }, theme.faint());
-            lines.push(card_row(second, width, true, theme));
-        }
-        clickable.push((Rect::new(area.x, y, area.width, if picking { 2 } else { 1 }), Hit::NewSession));
-        if !picking {
-            let y = area.y + lines.len() as u16;
-            let mut resume = Cells::new();
-            resume.push("↻  ", theme.accent());
-            resume.push("past conversations", theme.muted());
-            lines.push(card_row(resume, width, false, theme));
-            clickable.push((Rect::new(area.x, y, area.width, 1), Hit::Resume));
-        }
-    } else {
-        let mut full = Cells::new();
-        full.push(format!("   {MAX_SESSIONS} of {MAX_SESSIONS} · x closes one"), theme.faint());
-        lines.push(full.line(width, Style::default()));
-    }
-
-    let bottom = area.y + area.height;
-    app.viewport.hits.borrow_mut().extend(clickable.into_iter().filter(|(rect, _)| rect.y < bottom));
-    frame.render_widget(Paragraph::new(lines), area);
-}
-
-/// From this many sessions, on more than one project, the list groups them.
-const GROUPED_FROM: usize = 6;
-
-/// The sessions grouped by project: a project's name over its sessions — its branch with it when
-/// they share one, and how many rang — then a line a session: what it runs, its name, its mark and
-/// its number; the one on screen also says where it works. More than fit: a window that follows
-/// the lit one, a line at each end for how many are past it.
-#[allow(clippy::too_many_arguments)]
-fn grouped_rows(app: &App, theme: &Theme, area: Rect, top: u16, room: usize, lit_card: Option<usize>, asking: bool) -> (Vec<Line<'static>>, Vec<(Rect, Hit)>) {
-    let sessions = &app.claude;
-    let width = area.width as usize;
-    let inner = width.saturating_sub(4);
-    let used = super::usage::by_session(app);
-    // Every line, and the session it is of, before the window is cut.
-    let mut all: Vec<(Line<'static>, Option<usize>)> = Vec::new();
-    for (g, (project, members)) in sessions.groups().into_iter().enumerate() {
-        if g > 0 {
-            all.push((Line::from(""), None));
-        }
-        let mut head = Cells::new();
-        head.push("  ", Style::default());
-        head.push(project, theme.section());
-        head.push(format!(" {}", members.len()), theme.faint());
-        // Who rang first — the branch is the first to go when the list is narrow.
-        let calling = members.iter().filter(|&&i| sessions.list[i].pane.attention).count();
-        if calling > 0 {
-            head.push(format!("  ● {calling}"), theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
-        }
-        let branches: Vec<Option<&str>> = members.iter().map(|&i| sessions.list[i].branch.as_deref()).collect();
-        let shared = branches.first().copied().flatten().filter(|b| branches.iter().all(|x| *x == Some(*b)));
-        if let Some(branch) = shared {
-            head.push(format!("  ⎇ {branch}"), theme.faint());
-        }
-        all.push((head.line(width, Style::default()), None));
-        for index in members {
-            let session = &sessions.list[index];
-            let on_screen = lit_card == Some(index);
-            let ended = matches!(session.pane.state, PaneState::Exited(_) | PaneState::Failed(_));
-            let mut right = Cells::new();
-            if let Some(n) = session.conversation.as_ref().and_then(|c| used.get(c)).filter(|n| **n > 0) {
-                right.push(format!("{} ", crate::usage::tokens(*n)), theme.faint());
-            }
-            match mark(session) {
-                "●" => right.push("● ", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD)),
-                "✕" => right.push("✕ ", theme.faint()),
-                "↻" => right.push("↻ ", theme.accent()),
-                _ => &mut right,
-            };
-            let number = Sessions::number_of(index);
-            if asking && index < KEYED {
-                right.push(format!(" {number} "), theme.keycap());
-            } else {
-                right.push(number.to_string(), theme.faint());
-            }
-            let mut line = Cells::new();
-            line.push(format!("{}  ", session.kind.glyph()), if ended { theme.faint() } else { kind_style(session.kind, theme) });
-            let name_room = inner.saturating_sub(line.width() + right.width() + 1);
-            match &sessions.mode {
-                Mode::Naming(name) if index == sessions.active => {
-                    line.push(format!("{}▏", fmt::truncate(name, name_room)), theme.keycap());
-                }
-                _ => {
-                    let style = if on_screen { theme.strong() } else if ended || session.waiting() { theme.muted() } else { theme.text() };
-                    line.push(fmt::truncate(&session.label(), name_room), style);
-                }
-            }
-            line.pad_to(inner.saturating_sub(right.width()));
-            line.spans(right.into_spans());
-            all.push((card_row(line, width, on_screen, theme), Some(index)));
-            if on_screen {
-                let mut second = Cells::new();
-                second.push("  ", Style::default());
-                if index == sessions.active && sessions.closing {
-                    second.push("x again closes it", theme.sev(Severity::Warn).add_modifier(Modifier::BOLD));
-                } else if let Some(console) = &session.console {
-                    console_line(&mut second, console, theme);
-                } else {
-                    place(&mut second, &session.dir, session.branch.as_deref(), inner, theme);
-                }
-                all.push((card_row(second, width, true, theme), Some(index)));
-            }
-        }
-    }
-
-    // The window: everything when it fits, else what follows the lit session.
-    let lit_at = lit_card.and_then(|card| all.iter().rposition(|(_, i)| *i == Some(card)));
-    let (first, shown) = if all.len() > room {
-        let window = room.saturating_sub(2).max(1);
-        (crate::app::scroll_into_view(sessions.list_scroll.get(), lit_at, window, all.len()), window)
-    } else {
-        (0, all.len())
-    };
-    sessions.list_scroll.set(first);
-    let count = |range: &[(Line<'static>, Option<usize>)]| range.iter().filter_map(|(_, i)| *i).collect::<std::collections::BTreeSet<usize>>().len();
-    let mut lines = Vec::new();
-    let mut hits = Vec::new();
-    let mut y = top;
-    if first > 0 {
-        lines.push(Line::from(Span::styled(format!("   ↑ {} more", count(&all[..first])), theme.faint())));
-        if let Some(index) = all[..first].iter().rev().find_map(|(_, i)| *i) {
-            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Session(index)));
-        }
-        y += 1;
-    }
-    let end = (first + shown).min(all.len());
-    for (line, index) in all[first..end].iter().cloned() {
-        if let Some(index) = index {
-            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Session(index)));
-        }
-        lines.push(line);
-        y += 1;
-    }
-    if end < all.len() {
-        lines.push(Line::from(Span::styled(format!("   ↓ {} more", count(&all[end..])), theme.faint())));
-        if let Some(index) = all[end..].iter().find_map(|(_, i)| *i) {
-            hits.push((Rect::new(area.x, y, area.width, 1), Hit::Session(index)));
-        }
-    }
-    (lines, hits)
-}
-
-/// A line of a card: on a raised surface with a bar of the accent at its left, for the card on
-/// screen; set in by as much for the others, so nothing moves when the light does.
-fn card_row(inner: Cells, width: usize, lit: bool, theme: &Theme) -> Line<'static> {
-    let body = width.saturating_sub(4);
-    if !lit {
-        let mut cells = Cells::new();
-        cells.push("  ", Style::default());
-        cells.spans(fit(inner.into_spans(), body, false));
-        return cells.line(width, Style::default());
-    }
-    let fill = theme.raised();
-    let mut spans = vec![Span::styled("▎", theme.accent().patch(fill)), Span::styled(" ", fill)];
-    spans.extend(fit(inner.into_spans(), body, true).into_iter().map(|span| {
-        let style = fill.patch(span.style);
-        Span::styled(span.content, style)
-    }));
-    spans.push(Span::styled("  ", fill));
-    Line::from(spans)
-}
-
 /// A query session's second line: its run or its helper under way, how the last went, else what
 /// its SQL is.
 fn console_line(cells: &mut Cells, console: &crate::console::Console, theme: &Theme) {
@@ -631,7 +872,10 @@ fn session_bar(app: &App, theme: &Theme, area: Rect) -> Line<'static> {
                 cells.push(format!("{name}▏"), theme.keycap());
                 cells.push(" ", theme.tab_active());
             } else {
-                let mark = mark(session);
+                let mark = match state_word(session, app.clock).1 {
+                    "◐" | "○" | "◌" => "",
+                    other => other,
+                };
                 let glyph = session.kind.glyph();
                 let label = format!(" {number} {glyph} {}{}{mark} ", fmt::truncate(&session.label(), 18), if mark.is_empty() { "" } else { " " });
                 let style = if on_screen {

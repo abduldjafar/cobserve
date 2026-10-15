@@ -17,6 +17,7 @@ it is written for an implementer with no prior context, like `DESIGN.md` was for
 | [06-build-order.md](06-build-order.md) | Phases, each with its acceptance screens and tests; the definition of done |
 | [07-features.md](07-features.md) | The feature waves after the shell (history, fingerprints, health row, …), from the report |
 | [08-simulation.md](08-simulation.md) | The browser simulation: what it is, how to regenerate the screens, what it fakes |
+| [09-zooms.md](09-zooms.md) | The four zooms redrawn from zero — QUEUE, AIRFLOW, JIRA, SESSIONS: design, mockups, what moves, colour, layout, keys |
 | [screens/](screens/) | 47 screens as text, generated from the simulation: the acceptance targets |
 
 ## Where this came from

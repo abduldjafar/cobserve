@@ -189,7 +189,13 @@ pub fn to_program(app: &mut App, key: KeyEvent) {
 pub fn zoom_key(app: &mut App, key: KeyEvent) -> bool {
     let picking = !matches!(app.claude.mode, Mode::Typing | Mode::Bar);
     if picking {
+        let opening = matches!(app.claude.mode, Mode::Opening(_));
+        let before = app.claude.list.len();
         app.on_key_passthrough(key);
+        // A session just opened from the picker is the one to work in: full, at once.
+        if opening && app.claude.list.len() > before && matches!(app.claude.mode, Mode::Typing) {
+            app.shell.sessions_full = true;
+        }
         return true;
     }
     if app.shell.sessions_full {

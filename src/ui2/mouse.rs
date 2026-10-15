@@ -22,6 +22,24 @@ pub fn on_mouse(app: &mut App, event: MouseEvent) {
         }
         return;
     }
+    // The zoomed sessions, browsing: the wheel walks them, a click on the chosen one opens it.
+    if app.shell.zoom == Some(PanelId::Sessions)
+        && !app.shell.sessions_full
+        && matches!(app.claude.mode, crate::claude::Mode::Typing | crate::claude::Mode::Bar)
+        && row > top
+        && row + 1 < h
+    {
+        let hit = app.viewport.hits.borrow().iter().find(|(r, _)| inside(*r, col, row)).map(|(_, hit)| *hit);
+        match (event.kind, hit) {
+            (MouseEventKind::ScrollUp, _) => return nav::choose(app, "Up"),
+            (MouseEventKind::ScrollDown, _) => return nav::choose(app, "Down"),
+            (MouseEventKind::Down(MouseButton::Left), Some(crate::app::Hit::Session(i))) if i == app.claude.active && !app.claude.list.is_empty() => {
+                crate::ui2::sessions::open_full(app);
+                return;
+            }
+            _ => {}
+        }
+    }
     if let Some(zoom) = app.shell.zoom
         && views::is_view(zoom)
         && row > top

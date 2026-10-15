@@ -116,6 +116,9 @@ pub struct ShellState {
     /// How many tiles the last frame fit a row, on the grid and zoomed: what `↑↓` step by.
     pub tiles_per_row: std::cell::Cell<u16>,
     pub zoom_tiles_per_row: std::cell::Cell<u16>,
+    /// The zoomed sessions as last drawn: the rows of a grid column (0 for the list), and the
+    /// sessions a page holds — what `← →` and `PgUp PgDn` move by.
+    pub sessions_shape: std::cell::Cell<(u16, u16)>,
 }
 
 impl Default for ShellState {
@@ -149,6 +152,7 @@ impl Default for ShellState {
             prayer_place: None,
             tiles_per_row: std::cell::Cell::new(1),
             zoom_tiles_per_row: std::cell::Cell::new(1),
+            sessions_shape: std::cell::Cell::new((1, 1)),
         }
     }
 }

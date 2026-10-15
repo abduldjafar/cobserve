@@ -237,6 +237,10 @@ mod tests {
         let mut app = App::new();
         app.update(crate::app::Event::Snapshot(Box::new(fake.snapshot())));
         app.update(crate::app::Event::Queue(Box::new(fake.queue())));
+        // A fixed moment: the fake day's runs depend on the hour, so the wall clock would make
+        // the counts below change through the day.
+        app.time.pinned = chrono::FixedOffset::east_opt(7 * 3600);
+        app.tick_at(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_791_103_927));
         let now = app.now();
         app.update(crate::app::Event::Airflow(Box::new(crate::fake::airflow(now))));
         app.update(crate::app::Event::Jira(Box::new(crate::fake::jira(now))));
