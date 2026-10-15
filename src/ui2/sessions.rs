@@ -194,7 +194,7 @@ pub fn zoom_key(app: &mut App, key: KeyEvent) -> bool {
         app.on_key_passthrough(key);
         // A session just opened from the picker is the one to work in: full, at once.
         if opening && app.claude.list.len() > before && matches!(app.claude.mode, Mode::Typing) {
-            app.shell.sessions_full = true;
+            open_full(app);
         }
         return true;
     }
@@ -209,8 +209,28 @@ pub fn zoom_key(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
-/// `⏎` on the zoomed list: the session full; its program takes every key.
+/// `⏎` on the zoomed sessions: the chosen one opened, its program taking every key — in the
+/// preview beside the list when there is one, so the others stay in sight; edge to edge on the
+/// grid.
 pub fn open_full(app: &mut App) {
+    // The zoom's inside at the terminal's size: the frame and the bars take two rows and four
+    // columns each way.
+    let (w, h) = app.shell.last_size.get();
+    let preview = if w > 0 && h > 0 {
+        let shape = crate::ui2::views::claude::shape(w.saturating_sub(4), h.saturating_sub(4), app.claude.list.len());
+        matches!(shape, crate::ui2::views::claude::Shape::List { preview_w: Some(_), .. })
+    } else {
+        app.shell.sessions_preview.get()
+    };
+    open_as(app, !preview);
+}
+
+/// `f`: the chosen one opened edge to edge, wherever it is.
+pub fn open_spread(app: &mut App) {
+    open_as(app, true);
+}
+
+fn open_as(app: &mut App, spread: bool) {
     if app.claude.list.is_empty() {
         app.ask_new_session(Some(Kind::Claude));
         return;
@@ -218,6 +238,7 @@ pub fn open_full(app: &mut App) {
     let active = app.claude.active;
     app.claude.select(active);
     app.shell.sessions_full = true;
+    app.shell.sessions_spread = spread;
 }
 
 /// `x x` on the zoomed list.

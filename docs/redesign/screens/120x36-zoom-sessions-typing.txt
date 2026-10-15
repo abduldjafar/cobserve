@@ -1,0 +1,36 @@
+ ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB
+╭ 8 SESSIONS · 20 ───────────────────────────────────────────────────────────── n new · / find · x x close · esc back ─╮
+│                                                                                20 sessions · 1 working · 1 needs you │
+│ ⌨ keys go to airflow-dq · ctrl+\ the list                                                                            │
+│   billing 3                             ╭ ✻ 14 · airflow-dq ─────────────────────────────────────────── ◒ working ─╮ │
+│  ◌ ✻  7 billing export                  │ ✻ Claude Code  ~/work/billing                                            │ │
+│  ◌ ✻ 18 invoice tests                   │                                                                          │ │
+│  ◌ ❯ 19 shell                           │ > make the invoice export stream its rows instead of building one big Vec│ │
+│   pipelines 4  ! 1                      │                                                                          │ │
+│  ! ▣  8 late partitions                 │ ● I'll read the exporter first.                                          │ │
+│  ◌ ✻ 20 backfill 03:00                  │                                                                          │ │
+│  ◌ ✻ 21 dq checks                       │ ● Read(src/export/invoice.rs)                                            │ │
+│  ◌ ❯ 22 shell                           │   └  214 lines                                                           │ │
+│   servers 2                             │                                                                          │ │
+│  ○ ▦ 10 clickhouse3                     │ ● Update(src/export/invoice.rs)                                          │ │
+│  ○ ▦ 24 clickhouse-bi                   │   └  18 lines added, 31 removed                                          │ │
+│   airflow-dags 4  ⎇ docs-move           │                                                                          │ │
+│  ◌ ▣ 11 airflow-agent                   │ ✻ Running the tests… (esc to interrupt)                                  │ │
+│  ◌ ✻ 12 MetricsAtomic                   │                                                                          │ │
+│ ▌◒ ✻ 14 airflow-dq                      │ ─────────────────────────────────────────────────────────────────────────│ │
+│  ◌ ✻ 23 docs-move                       │ ❯                                                                        │ │
+│   apitap-lib 3                          │ ─────────────────────────────────────────────────────────────────────────│ │
+│  ◌ ▣ 13 apitap-opencode                 │                                                                          │ │
+│  ◌ ✻ 15 apitap-lib-qa                   │                                                                          │ │
+│  ◌ ❯ 17 shell                           │                                                                          │ │
+│   cobserve 2                            │                                                                          │ │
+│  ◌ ✻ 16 integrate-jira-api              │                                                                          │ │
+│  ◌ ✻ 25 zoom redesign                   │                                                                          │ │
+│   other 2                               │                                                                          │ │
+│  ◌ ❯  9 make totals                     │                                                                          │ │
+│  ◌ ✻ 26 weekly notes                    │                                                                          │ │
+│                                         │                                                                          │ │
+│                                         │                                                                          │ │
+│                                         ╰────────────────────────────────────────── typing here · ctrl+\ the list ─╯ │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ctrl+\ the list · every other key goes to Claude                                         9/9 nodes · 1.1 s · read-only

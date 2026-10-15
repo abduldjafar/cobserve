@@ -1,7 +1,7 @@
  ❖ cobserve · prod    dashboard › sessions    esc back   ● live   15:52:07 WIB
 ╭ 8 SESSIONS · 20 ───────────────────── n new · / find · x x close · esc back ─╮
 │                                        20 sessions · 1 working · 1 needs you │
-│ n new · ↻ resume · / find · x x close · \ float · ⏎ full · r rename          │
+│ n new · ↻ resume · / find · x x close · \ float · ⏎ open · f full            │
 │   billing 3                                                                  │
 │  ◌ ✻  7 billing export                                                       │
 │  ◌ ✻ 18 invoice tests                                                        │
@@ -21,4 +21,4 @@
 │  ◌ ✻ 23 docs-move                                                            │
 │   ↓ 7 more                                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- esc back   ↑↓ a session   ⏎ open it full         9/9 nodes · 1.1 s · read-only
+ esc back   ↑↓ a session   ⏎ open it   n new      9/9 nodes · 1.1 s · read-only

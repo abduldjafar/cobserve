@@ -846,6 +846,7 @@ fn theme_and_prayer_from_the_palette() {
 fn dump() {
     let (w, h) = std::env::var("SIZE").ok().and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))).unwrap_or((120, 36));
     let mut app = app_after(30);
+    app.shell.last_size.set((w, h));
     match std::env::var("SESSIONS").ok().and_then(|n| n.parse::<usize>().ok()) {
         Some(4) => with_running_sessions(&mut app),
         Some(n) => with_many_sessions(&mut app, n),

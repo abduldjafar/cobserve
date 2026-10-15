@@ -1372,7 +1372,12 @@ lose it.
 - **JIRA.** A block that is overdue or due soon carries a `▎` down its left edge in that severity
   (the cursor's `▌` wins). The ticket card's third line is the link alone: its keys are in its
   title.
-- **SESSIONS.** A session opened from the picker opens full at once — it is the one to work in.
+- **SESSIONS.** With the list and the preview on screen, `⏎` opens the chosen session *in the
+  preview*: its program takes every key (its PTY sized to the preview) while the list stays in
+  sight, the hint line saying where the keys go; `ctrl+\` comes back to the list. `f` opens it
+  edge to edge under the bar of tabs, as `⏎` does on the grid (which has no preview to type in).
+  The owner asked for it: working beside the list, not only full. A session opened from the
+  picker opens the same way at once — it is the one to work in.
   The dashboard's panel 8 and the floating pane's title say a session's state in the zoom's words
   (`◐ working`, `! needs you`, `○ idle`, `✕ ended`, `↻ kept`, `◌ starting`).
 - **Tests.** `src/ui2/tests.rs::the_zooms_render_at_every_size_without_a_panic` renders the four

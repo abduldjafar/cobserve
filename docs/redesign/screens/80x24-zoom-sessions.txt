@@ -1,7 +1,7 @@
  ❖ cobserve · prod    dashboard › sessions    esc back   ● live   15:52:07 WIB
 ╭ 8 SESSIONS · 4 ────────────────────── n new · / find · x x close · esc back ─╮
 │                                         4 sessions · 1 working · 1 needs you │
-│ n new · ↻ resume · / find · x x close · \ float · ⏎ full · r rename          │
+│ n new · ↻ resume · / find · x x close · \ float · ⏎ open · f full            │
 │ ╭ ✻ 7 · billing export ─ ◒ working ─╮  ╭ ❯ 9 · make totals ─────── ○ idle ─╮ │
 │ │ ~/work/billing  ⎇ main · claude   │  │ ~/work/reports  ⎇ main · terminal │ │
 │ │ ✻ Running the tests… (esc to inter│  │ python3 totals.py --month 2026-10 │ │
@@ -21,4 +21,4 @@
 │ │                                   │  │                                   │ │
 │ ╰───────────────────────────────────╯  ╰───────────────────────────────────╯ │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- esc back   ↑↓ a session   ⏎ open it full         9/9 nodes · 1.1 s · read-only
+ esc back   ↑↓ a session   ⏎ open it   n new      9/9 nodes · 1.1 s · read-only

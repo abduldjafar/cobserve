@@ -127,8 +127,8 @@ number, name, folder ⎇ branch, state (`● working` green, `! approval` amber,
 
 Zoomed (`09-zooms.md` §4): while the sessions fit as cards, a grid of live thumbnails — each the
 bottom of its own screen — and past that every session a line, grouped by project, beside the
-chosen one's screen; `⏎` opens it full: the PTY takes the body and every key goes to the program,
-`ctrl+\` as today.
+chosen one's screen; `⏎` opens it — in that preview, beside the list, or edge to edge on the grid
+(`f` edge to edge anywhere): every key goes to the program, `ctrl+\` comes back to the list.
 
 ## Overlays (drawn over whichever screen is under them)
 
