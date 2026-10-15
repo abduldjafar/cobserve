@@ -279,7 +279,7 @@ fn sessions_are_a_list_beside_claude_and_can_be_renamed() {
     assert!(screen.contains("n new session") && screen.contains("↻ past conversations"), "{screen}");
     // The zoom's keys are on the status bar.
     let keys = footer(&screen);
-    assert!(keys.contains("↑↓ a session") && keys.contains("⏎ open it full") && keys.contains("\\ float it"), "{keys}");
+    assert!(keys.contains("↑↓ a session") && keys.contains("⏎ open it") && keys.contains("\\ float it"), "{keys}");
     // x twice closes the session on screen.
     app.update(key(KeyCode::Char('x')));
     assert!(render(&app, 140, 40).contains("x again closes the session"));
@@ -1251,6 +1251,7 @@ fn fifty_sessions_fit_the_list_which_follows_the_one_on_screen_and_finds_one_by_
     // Opened full on a narrow terminal, the tabs round the one on screen, and how many either
     // side.
     app.shell.sessions_full = true;
+    app.shell.sessions_spread = true;
     let narrow = render(&app, 90, 30);
     let bar = row(&narrow, " 40 ");
     assert!(bar.contains("‹ ") && bar.contains(" ›"), "{narrow}");
@@ -1824,4 +1825,40 @@ fn twenty_sessions_are_a_list_with_a_preview_and_six_a_grid() {
     for (w, h) in [(40, 12), (80, 24), (250, 70)] {
         render(&app, w, h);
     }
+}
+
+#[test]
+fn enter_types_in_the_preview_beside_the_list_and_f_opens_it_edge_to_edge() {
+    let mut app = app_after(5);
+    crate::ui2::tests::with_many_sessions(&mut app, 20);
+    zoom(&mut app, 8);
+    app.shell.last_size.set((120, 36));
+    render(&app, 120, 36);
+    // ⏎: the program has the keys, the list stays in sight beside it.
+    app.update(key(KeyCode::Enter));
+    assert!(app.shell.sessions_full && !app.shell.sessions_spread);
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("keys go to airflow-dq") && screen.contains("weekly notes"), "the list beside it: {screen}");
+    assert!(screen.contains("typing here · ctrl+\\ the list"), "{screen}");
+    assert!(app.viewport.hits.borrow().iter().any(|(_, h)| *h == crate::app::Hit::Pane), "the preview takes the mouse");
+    let (rows, cols) = app.claude.want_size.get();
+    assert!(cols < 80 && rows > 20, "the program sized to the preview: {rows}×{cols}");
+    // A key is the program's: `f` does not leave.
+    app.update(key(KeyCode::Char('f')));
+    assert!(app.shell.sessions_full && !app.shell.sessions_spread);
+    // ctrl+\ back to the list; `f` there opens it edge to edge.
+    app.update(ctrl('\\'));
+    assert!(!app.shell.sessions_full);
+    app.update(key(KeyCode::Char('f')));
+    assert!(app.shell.sessions_full && app.shell.sessions_spread);
+    let screen = render(&app, 120, 36);
+    assert!(!screen.contains("weekly notes ") || screen.contains("‹"), "edge to edge, the others on a bar: {screen}");
+    // On the grid there is no preview: ⏎ opens it edge to edge.
+    app.update(ctrl('\\'));
+    let mut few = app_after(5);
+    crate::ui2::tests::with_many_sessions(&mut few, 3);
+    zoom(&mut few, 8);
+    few.shell.last_size.set((120, 36));
+    few.update(key(KeyCode::Enter));
+    assert!(few.shell.sessions_full && few.shell.sessions_spread);
 }

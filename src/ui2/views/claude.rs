@@ -108,6 +108,45 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, inside: Rect) {
         pane(frame, app, theme, inside);
         return;
     }
+    let n = app.claude.list.len();
+    let shape = shape(inside.width, inside.height, n);
+    app.shell.sessions_preview.set(matches!(shape, Shape::List { preview_w: Some(_), .. }));
+    // Opened in the preview: the list stays, the program has the keys.
+    if app.shell.sessions_full
+        && !app.shell.sessions_spread
+        && let Shape::List { list_w, preview_w: Some(w) } = shape
+        && n > 0
+    {
+        let pane_r = {
+            let mut p = Painter::new(frame.buffer_mut());
+            let clip = Rect::new(inside.x.saturating_sub(1), inside.y, inside.width + 2, inside.height);
+            p.within(clip, |p| {
+                strip(p, app, theme, inside);
+                let top = if inside.height >= 16 {
+                    typing_hints(p, app, theme, Rect::new(inside.x, inside.y + 1, inside.width, 1));
+                    inside.y + 2
+                } else {
+                    inside.y + 1
+                };
+                let body = Rect::new(inside.x, top, inside.width, inside.bottom().saturating_sub(top));
+                let mut hits = Vec::new();
+                let page = list(p, app, theme, Rect::new(body.x, body.y, list_w, body.height), &mut hits);
+                app.shell.sessions_shape.set((0, page));
+                app.viewport.hits.borrow_mut().extend(hits);
+                let r = Rect::new(body.right() - w, body.y, w, body.height);
+                let index = app.claude.active;
+                let session = &app.claude.list[index];
+                let card = super::kit::Card::new(theme.accent())
+                    .title(card_title(app, session, index, true, theme))
+                    .right(state_spans(app, session, theme))
+                    .bottom(vec![Span::styled("typing here · ctrl+\\ the list", theme.muted())]);
+                let inner = card.draw(p, r);
+                Rect::new(inner.x, inner.y, inner.width + 1, inner.height)
+            })
+        };
+        pane(frame, app, theme, pane_r);
+        return;
+    }
     if app.shell.sessions_full && !app.claude.list.is_empty() {
         let bar = Rect::new(inside.x, inside.y, inside.width, 1);
         frame.render_widget(Paragraph::new(session_bar(app, theme, bar)), bar);
@@ -116,8 +155,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, inside: Rect) {
     }
     // Every PTY keeps the size it has opened full: a thumbnail is a crop, never a resize.
     app.claude.want_size.set((inside.height.saturating_sub(1).max(1), inside.width));
-    let n = app.claude.list.len();
-    let shape = shape(inside.width, inside.height, n);
     let mut p = Painter::new(frame.buffer_mut());
     let clip = Rect::new(inside.x.saturating_sub(1), inside.y, inside.width + 2, inside.height);
     p.within(clip, |p| {
@@ -184,6 +221,18 @@ fn strip(p: &mut Painter<'_>, app: &App, theme: &Theme, i: Rect) {
     super::kit::put_spans_r(p, i.right(), i.y, counts.into_spans());
 }
 
+/// While typing in the preview: where the keys go, and the way back.
+fn typing_hints(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect) {
+    let mut cells = Cells::new();
+    let who = app.claude.current().map(|s| s.label()).unwrap_or_default();
+    cells.push("⌨ ", theme.accent());
+    cells.push(format!("keys go to {who}"), theme.text2());
+    cells.push(" · ", theme.faint());
+    cells.push("ctrl+\\ ", theme.strong());
+    cells.push("the list", theme.muted());
+    super::kit::put_cells(p, r.x, r.y, cells, r.width as usize);
+}
+
 /// The keys that act here — or, while finding, the search field.
 fn hints(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect) {
     let sessions = &app.claude;
@@ -217,9 +266,9 @@ fn hints(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect) {
     cells.push(if narrow { "resume" } else { "past conversations" }, theme.muted());
     let resume_w = cells.width() as u16 - resume_x;
     let rest: [(&str, &str); 5] = if narrow {
-        [("/", "find"), ("x x", "close"), ("\\", "float"), ("⏎", "full"), ("r", "rename")]
+        [("/", "find"), ("x x", "close"), ("\\", "float"), ("⏎", "open"), ("f", "full")]
     } else {
-        [("/", "find one"), ("x x", "close"), ("\\", "float it"), ("⏎", "open it full"), ("r", "rename it")]
+        [("/", "find one"), ("x x", "close"), ("\\", "float it"), ("⏎", "type in it"), ("f", "full")]
     };
     for (key, word) in rest.into_iter().filter(|(key, _)| !(full && *key == "x x")) {
         cells.push(" · ", theme.faint());
@@ -314,7 +363,8 @@ fn session_card(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, index: u
     };
     let mut card = super::kit::Card::new(frame_style).title(card_title(app, session, index, lit, theme)).right(state_spans(app, session, theme));
     if lit {
-        card = card.bottom(vec![Span::styled("⏎ opens it full · \\ floats it · r renames it", theme.muted())]);
+        let open = if app.shell.sessions_preview.get() { "⏎ type in it here · f full" } else { "⏎ opens it full" };
+        card = card.bottom(vec![Span::styled(format!("{open} · \\ floats it · r renames it"), theme.muted())]);
     }
     let inner = card.draw(p, r);
     if inner.height == 0 {

@@ -1,7 +1,7 @@
  ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB
 ╭ 8 SESSIONS · 20 ───────────────────────────────────────────────────────────── n new · / find · x x close · esc back ─╮
 │                                                                                20 sessions · 1 working · 1 needs you │
-│ n new session · ↻ past conversations · / find one · x x close · \ float it · ⏎ open it full · r rename it            │
+│ n new session · ↻ past conversations · / find one · x x close · \ float it · ⏎ type in it · f full                   │
 │   billing 3                             ╭ ✻ 14 · airflow-dq ─────────────────────────────────────────── ◒ working ─╮ │
 │  ◌ ✻  7 billing export                  │ ~/work/airflow-dags  ⎇ docs-move · claude                                │ │
 │  ◌ ✻ 18 invoice tests                   │ ✻ Claude Code  ~/work/billing                                            │ │
@@ -31,6 +31,6 @@
 │  ◌ ✻ 26 weekly notes                    │                                                                          │ │
 │                                         │                                                                          │ │
 │                                         │                                                                          │ │
-│                                         ╰─────────────────────────── ⏎ opens it full · \ floats it · r renames it ─╯ │
+│                                         ╰──────────────── ⏎ type in it here · f full · \ floats it · r renames it ─╯ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- esc back   ↑↓ a session   ⏎ open it full   \ float it   n new   / find one   r rename    9/9 nodes · 1.0 s · read-only
+ esc back   ↑↓ a session   ⏎ open it   \ float it   n new   / find one   x x close        9/9 nodes · 1.0 s · read-only

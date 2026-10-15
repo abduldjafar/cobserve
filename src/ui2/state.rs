@@ -90,8 +90,10 @@ pub struct ShellState {
     /// `n`: the note being written.
     pub note: Option<String>,
     pub float: Option<Float>,
-    /// The sessions zoom with the session opened full: every key is the program's.
+    /// The sessions zoom with the session opened: every key is the program's.
     pub sessions_full: bool,
+    /// Opened edge to edge rather than in the preview beside the list.
+    pub sessions_spread: bool,
     /// A prompt for a Claude session that is still starting: its id, the text, and when asked.
     pub pending_prompt: Option<(u64, String, SystemTime)>,
     /// The F-key fallback has been told once.
@@ -119,6 +121,8 @@ pub struct ShellState {
     /// The zoomed sessions as last drawn: the rows of a grid column (0 for the list), and the
     /// sessions a page holds — what `← →` and `PgUp PgDn` move by.
     pub sessions_shape: std::cell::Cell<(u16, u16)>,
+    /// Whether the zoomed sessions, as last drawn, had a preview beside the list to type in.
+    pub sessions_preview: std::cell::Cell<bool>,
 }
 
 impl Default for ShellState {
@@ -139,6 +143,7 @@ impl Default for ShellState {
             note: None,
             float: None,
             sessions_full: false,
+            sessions_spread: false,
             pending_prompt: None,
             fkeys_told: false,
             wake: false,
@@ -153,6 +158,7 @@ impl Default for ShellState {
             tiles_per_row: std::cell::Cell::new(1),
             zoom_tiles_per_row: std::cell::Cell::new(1),
             sessions_shape: std::cell::Cell::new((1, 1)),
+            sessions_preview: std::cell::Cell::new(false),
         }
     }
 }

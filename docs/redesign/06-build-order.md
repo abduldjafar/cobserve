@@ -133,7 +133,7 @@ touches are the Airflow tasks read for the Gantt without a page (`App::airflow_t
 `ClaudePane::last_output`, and the fake's tasks spread over their run.
 
 Acceptance: `*-zoom-queue.txt`, `120x36-cancel-dialog.txt`, `*-zoom-airflow.txt`,
-`*-zoom-jira.txt`, `*-zoom-sessions.txt`, `*-zoom-sessions-list.txt`; the zooms' resize fuzz.
+`*-zoom-jira.txt`, `*-zoom-sessions.txt`, `*-zoom-sessions-list.txt`, `120x36-zoom-sessions-typing.txt`; the zooms' resize fuzz.
 
 ## Phase 7 — feature wave 1 · Phase 8 — wave 2
 
