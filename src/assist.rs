@@ -56,9 +56,10 @@ const COLUMNS_EACH: usize = 120;
 const OTHERS_NAMED: usize = 5000;
 const NEEDED_MAX: usize = 8;
 
-/// The command that asks `assistant`, after `program` (its command as the sessions run it): the
-/// question goes on its standard input.
-pub fn command(assistant: Assistant, program: &[String], dir: &str) -> Vec<String> {
+/// The command that asks `assistant`, after `program` (its command as the sessions run it), told
+/// `rules` (OpenCode, which has no system prompt here, is told them in the prompt): the question
+/// goes on its standard input.
+pub fn command(assistant: Assistant, program: &[String], dir: &str, rules: &str) -> Vec<String> {
     let mut command = program.to_vec();
     match assistant {
         // Printed, not a conversation: no tools, no servers of the user's, nothing kept. The
@@ -75,7 +76,7 @@ pub fn command(assistant: Assistant, program: &[String], dir: &str) -> Vec<Strin
                 "--no-session-persistence",
                 "--disable-slash-commands",
                 "--append-system-prompt",
-                RULES,
+                rules,
             ]
             .map(str::to_string),
         ),
@@ -497,14 +498,14 @@ mod tests {
 
     #[test]
     fn the_commands_ask_without_tools_and_the_answer_is_made_sql() {
-        let claude = command(Assistant::Claude, &["claude".to_string()], "/tmp/x");
+        let claude = command(Assistant::Claude, &["claude".to_string()], "/tmp/x", RULES);
         assert_eq!(&claude[..4], ["claude", "-p", "--output-format", "text"]);
         let tools = claude.iter().position(|a| a == "--tools").unwrap();
         assert_eq!(claude[tools + 1], "", "no tools at all");
         assert!(claude.contains(&"--no-session-persistence".to_string()) && claude.contains(&"--strict-mcp-config".to_string()));
         assert!(!claude.contains(&"--bare".to_string()), "--bare would not read the Pro or Max login");
         assert!(claude.contains(&"--append-system-prompt".to_string()) && !claude.contains(&"--system-prompt".to_string()));
-        assert_eq!(command(Assistant::OpenCode, &["opencode".to_string()], "/tmp/x"), ["opencode", "run", "--dir", "/tmp/x"]);
+        assert_eq!(command(Assistant::OpenCode, &["opencode".to_string()], "/tmp/x", RULES), ["opencode", "run", "--dir", "/tmp/x"]);
         assert!(serde_json::from_str::<serde_json::Value>(OPENCODE_PERMISSION).unwrap()["bash"] == "deny");
 
         assert_eq!(clean("```sql\nSELECT 1\n```\nThis counts.", true).unwrap(), "SELECT 1;");

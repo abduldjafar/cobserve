@@ -22,7 +22,7 @@ pub mod views;
 pub mod wizard;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use layout::PanelId;
 pub use state::ShellState;

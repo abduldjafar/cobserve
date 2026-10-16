@@ -634,6 +634,8 @@ over what it keeps.
 |---|---|---|
 | `CLAUDE_CMD` · `OPENCODE_CMD` · `SHELL_CMD` | what a Claude, OpenCode or terminal session runs | `claude` · `opencode` · `$SHELL` |
 | `ASSISTANT` | `opencode` to have OpenCode answer `ctrl+k` | Claude |
+| `TELEGRAM_BOT_TOKEN` · `TELEGRAM_TOKEN_FILE` | the Telegram bot's token, or a file it is in | no bot |
+| `TELEGRAM_CHAT_ID` | the chats the bot answers | unset — it answers only with the chat's id |
 
 **The day, the clock and alerts**
 

@@ -39,6 +39,7 @@ mod severity;
 mod sources;
 mod sqltext;
 mod tape;
+mod telegram;
 mod theme;
 mod tree;
 mod ui2;
@@ -126,28 +127,57 @@ async fn run_plain(config: Config) -> color_eyre::Result<()> {
     let zone_table = clock::zone_table();
     let zone = clock::zone_now();
     app.update(Event::Zone(zone.clone(), prayer_place(&config, zone.as_deref(), zone_table.as_deref())));
-    let (_cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
+    let (cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
     let (_airflow_tx, airflow_rx) = mpsc::unbounded_channel::<()>();
     let (_jira_tx, jira_rx) = mpsc::unbounded_channel::<()>();
     let asks = Asks { cancels: cancel_rx, airflow: airflow_rx, jira: jira_rx };
     let targets = Arc::new(std::sync::Mutex::new(HashMap::new()));
-    let _details = spawn_sources(&config, tx.clone(), targets, asks);
+    let _details = spawn_sources(&config, tx.clone(), Arc::clone(&targets), asks);
     spawn_signal_watch(tx.clone());
     for warning in &config.warnings {
         eprintln!("cobserve: {warning}");
     }
-    while let Some(event) = rx.recv().await {
-        let poll = matches!(event, Event::Snapshot(_));
-        if let Event::Notice(text) = &event {
-            eprintln!("cobserve: {text}");
+    // The bot runs here too: `--plain` is how it keeps going with no screen.
+    let (bot_tx, mut bot_rx) = mpsc::unbounded_channel::<telegram::BotEvent>();
+    let (mut bot, said) = start_bot(&config, &bot_tx);
+    if let Some(said) = said {
+        eprintln!("cobserve: {said}");
+    }
+    let hands = BotHands { program: config.claude_command.clone(), dir: assist::dir(), targets, client: reqwest::Client::new(), fake: config.fake };
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            event = rx.recv() => {
+                let Some(event) = event else { break };
+                let poll = matches!(event, Event::Snapshot(_));
+                if let Event::Notice(text) = &event {
+                    eprintln!("cobserve: {text}");
+                }
+                if matches!(event, Event::Quit) {
+                    break;
+                }
+                take_in(&mut app, bot.as_mut().map(|(b, _)| b), event);
+                if poll {
+                    app.tick_at(std::time::SystemTime::now());
+                    println!("{}", plain::summary(&app));
+                }
+            }
+            Some(event) = bot_rx.recv() => {
+                if let Some((bot, _)) = bot.as_mut() {
+                    bot.on_event(&mut app, event, wall_now());
+                }
+            }
+            _ = tick.tick() => {}
         }
-        if matches!(event, Event::Quit) {
-            break;
-        }
-        app.update(event);
-        if poll {
-            app.tick_at(std::time::SystemTime::now());
-            println!("{}", plain::summary(&app));
+        if let Some((bot, out)) = bot.as_mut() {
+            bot.tick(&app, wall_now());
+            for text in &bot.notices {
+                eprintln!("cobserve: {text}");
+            }
+            drive_bot(bot, out, &mut app, &hands, &bot_tx);
+            for id in app.take_cancels() {
+                let _ = cancel_tx.send(id);
+            }
         }
     }
     Ok(())
@@ -267,6 +297,20 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     if let Some(config_error) = startup_problem(&config) {
         app.update(Event::Notice(config_error));
     }
+    // The Telegram bot, when it has a token: Telegram's updates, Claude's answers and the kills'
+    // results come in on a channel of their own; what it says goes out through `bot_out`.
+    let (bot_tx, mut bot_rx) = mpsc::unbounded_channel::<telegram::BotEvent>();
+    let (mut bot, said) = start_bot(&config, &bot_tx);
+    if let Some(said) = said {
+        app.update(Event::Notice(said));
+    }
+    let hands = BotHands {
+        program: config.claude_command.clone(),
+        dir: consoles.assist_dir.clone(),
+        targets: Arc::clone(&consoles.targets),
+        client: consoles.client.clone(),
+        fake: config.fake,
+    };
 
     // crossterm's blocking read lives on its own thread and sends into the same channel: the
     // loop stays a plain select over two sources, and no extra dependency is needed.
@@ -341,12 +385,12 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         tokio::select! {
             event = rx.recv() => match event {
                 Some(event) => {
-                    app.update(event);
+                    take_in(&mut app, bot.as_mut().map(|(b, _)| b), event);
                     // Whatever else is already waiting goes in before the next frame: Claude's
                     // output comes in many small pieces, and a frame for each is wasted work.
                     for _ in 0..512 {
                         match rx.try_recv() {
-                            Ok(event) => app.update(event),
+                            Ok(event) => take_in(&mut app, bot.as_mut().map(|(b, _)| b), event),
                             Err(_) => break,
                         }
                     }
@@ -354,7 +398,16 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
                 // Every source is gone; nothing left to wait for.
                 None => app.update(Event::Quit),
             },
+            Some(event) = bot_rx.recv() => {
+                if let Some((bot, _)) = bot.as_mut() {
+                    bot.on_event(&mut app, event, wall_now());
+                }
+            }
             _ = tick.tick() => app.update(Event::Tick),
+        }
+        if let Some((bot, out)) = bot.as_mut() {
+            bot.tick(&app, wall_now());
+            drive_bot(bot, out, &mut app, &hands, &bot_tx);
         }
         // The which-key box is due a moment after the prefix: a tick then, not at the next second.
         if ui2::sessions::wake(&mut app) {
@@ -412,6 +465,83 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     }
     let _ = saved::store(&app.claude.to_saved());
     Ok(())
+}
+
+/// An event for the screen — and, for a Redash cancel a Telegram card asked for, for the bot too.
+fn take_in(app: &mut App, bot: Option<&mut telegram::Bot>, event: Event) {
+    if let (Some(bot), Event::Cancelled(id, result)) = (bot, &event) {
+        bot.on_cancelled(app, id, result);
+    }
+    app.update(event);
+}
+
+fn wall_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
+/// What the bot works with: Claude Code's command and its empty folder, and the fleet's servers.
+struct BotHands {
+    program: Vec<String>,
+    dir: std::path::PathBuf,
+    targets: Arc<std::sync::Mutex<HashMap<String, sources::clickhouse::ConsoleTarget>>>,
+    client: reqwest::Client,
+    fake: bool,
+}
+
+type Running = Option<(telegram::Bot, mpsc::UnboundedSender<telegram::Out>)>;
+
+/// The bot, started when the config has a token, with the line that says so.
+fn start_bot(config: &Config, tx: &mpsc::UnboundedSender<telegram::BotEvent>) -> (Running, Option<String>) {
+    let Some(token) = config.telegram.token.clone() else {
+        return (None, None);
+    };
+    let out = sources::telegram::spawn(token, tx.clone());
+    let said = match config.telegram.chats.len() {
+        0 => "Telegram bot on — no TELEGRAM_CHAT_ID yet: send it /start and it tells you yours".to_string(),
+        n => format!("Telegram bot on — answers {}", fmt::plural(n, "chat", "chats")),
+    };
+    (Some((telegram::Bot::new(config.telegram.chats.clone(), wall_now()), out)), Some(said))
+}
+
+/// What the bot owes: its messages sent, its notices on the screen, Claude asked and queries
+/// killed — each a task of its own, whose result comes back on `tx`.
+fn drive_bot(
+    bot: &mut telegram::Bot,
+    out: &mpsc::UnboundedSender<telegram::Out>,
+    app: &mut App,
+    hands: &BotHands,
+    tx: &mpsc::UnboundedSender<telegram::BotEvent>,
+) {
+    for text in std::mem::take(&mut bot.notices) {
+        app.update(Event::Notice(text));
+    }
+    for message in std::mem::take(&mut bot.out) {
+        let _ = out.send(message);
+    }
+    for work in std::mem::take(&mut bot.work) {
+        let tx = tx.clone();
+        match work {
+            telegram::Work::Ask { chat, question, prompt } => {
+                let (program, dir) = (hands.program.clone(), hands.dir.clone());
+                tokio::spawn(async move {
+                    let result = run_assistant(console::Assistant::Claude, &program, prompt, &dir, telegram::RULES).await;
+                    let _ = tx.send(telegram::BotEvent::Answered { chat, question, result });
+                });
+            }
+            telegram::Work::Kill { chat, message, node, query_id } => {
+                let target = hands.targets.lock().ok().and_then(|t| t.get(&node).cloned());
+                let (client, fake) = (hands.client.clone(), hands.fake);
+                tokio::spawn(async move {
+                    let result = match target {
+                        _ if fake => Ok("FAKE=1 — nothing was sent".to_string()),
+                        Some(target) => sources::clickhouse::kill_query(&client, &target, &node, &query_id).await,
+                        None => Err(format!("no address for {node} — it is not among the servers discovery found")),
+                    };
+                    let _ = tx.send(telegram::BotEvent::Killed { chat, message, result });
+                });
+            }
+        }
+    }
 }
 
 /// Query sessions' work: each query, each server's tables and each helper's answer a task of its
@@ -557,11 +687,11 @@ async fn ask_helper(
 ) -> Result<String, String> {
     let whole = ask.selected.is_none();
     let first = assist::prompt(ask, schema, version, today, None);
-    let said = run_assistant(ask.assistant, program, first, dir).await?;
+    let said = run_assistant(ask.assistant, program, first, dir, assist::RULES).await?;
     match (schema, assist::needed(&said)) {
         (Some(schema), Some(names)) => {
             let second = assist::prompt(ask, Some(schema), version, today, Some(&names));
-            let said = run_assistant(ask.assistant, program, second, dir).await?;
+            let said = run_assistant(ask.assistant, program, second, dir, assist::RULES).await?;
             if assist::needed(&said).is_some() {
                 return Ok(format!("-- {} could not tell which tables answer it: looked at {}", ask.assistant.name(), names.join(", ")));
             }
@@ -575,10 +705,10 @@ async fn ask_helper(
 /// standard output — in a folder of its own, without the monitor's secrets (Claude Code then
 /// signs in with the Pro or Max plan, as in a terminal), for at most `assist::TIME_LIMIT_S`.
 /// Dropped — `ctrl+c` — the program is killed.
-async fn run_assistant(assistant: console::Assistant, program: &[String], prompt: String, dir: &std::path::Path) -> Result<String, String> {
+async fn run_assistant(assistant: console::Assistant, program: &[String], prompt: String, dir: &std::path::Path, rules: &str) -> Result<String, String> {
     use tokio::io::AsyncWriteExt;
     let name = assistant.name();
-    let argv = assist::command(assistant, program, &dir.to_string_lossy());
+    let argv = assist::command(assistant, program, &dir.to_string_lossy(), rules);
     let Some(executable) = argv.first() else {
         return Err(format!("no command for {name}"));
     };

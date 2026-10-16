@@ -9,6 +9,7 @@ pub mod local;
 pub mod usage;
 pub mod redash;
 pub mod setup_check;
+pub mod telegram;
 
 use std::time::{Duration, UNIX_EPOCH};
 

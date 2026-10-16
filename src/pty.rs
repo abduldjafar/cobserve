@@ -25,6 +25,7 @@ pub const NOT_PASSED_ON: &[&str] = &[
     "REDIS_URL",
     "AIRFLOW_PASSWORD",
     "JIRA_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
 ];
 
 pub struct PtyProcess {
