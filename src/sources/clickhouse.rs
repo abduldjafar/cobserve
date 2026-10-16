@@ -1144,6 +1144,39 @@ fn console_error(body: &str, login: &Credentials) -> String {
     text.chars().take(600).collect()
 }
 
+/// `KILL QUERY` from a Telegram card: not read-only — the one thing cobserve writes to a server —
+/// and asynchronous, so the answer says the server was asked, not that the query is gone.
+const KILL_SETTINGS: &str = "log_comment=cobserve%20telegram%20kill";
+
+/// `KILL QUERY` of `query_id` on the server `target` is, with the monitor's login for it. The
+/// login needs the KILL QUERY grant for another user's query (a read-only one may stop only its
+/// own); ClickHouse's refusal comes back as it said it.
+pub async fn kill_query(client: &reqwest::Client, target: &ConsoleTarget, node: &str, query_id: &str) -> Result<String, String> {
+    if query_id.is_empty() || !query_id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':')) {
+        return Err(format!("{query_id:?} is not a query id"));
+    }
+    let login = target.login.as_ref().ok_or_else(|| "no login for this server".to_string())?;
+    let sql = format!("KILL QUERY WHERE query_id = '{query_id}' ASYNC FORMAT TabSeparated");
+    let response = console_send(client, &target.url, login, &sql, KILL_SETTINGS).await?;
+    let ok = response.status().is_success();
+    let body = response.text().await.unwrap_or_default();
+    if !ok {
+        return Err(console_error(&body, login));
+    }
+    kill_answer(&body, node, query_id)
+}
+
+/// What `KILL QUERY … ASYNC` answered: a row for the query, its first column the status.
+pub fn kill_answer(body: &str, node: &str, query_id: &str) -> Result<String, String> {
+    let status = body.lines().find_map(|line| line.split('\t').next().filter(|s| !s.is_empty()));
+    match status {
+        None => Err(format!("{query_id} was not running on {node} — it had already ended")),
+        Some("cant_cancel") => Err(format!("{node} says {query_id} cannot be cancelled")),
+        Some("finished") => Ok("stopped".to_string()),
+        Some(_) => Ok("the server is stopping it".to_string()),
+    }
+}
+
 /// What a server's tables are read with, for suggestions: read-only, and short.
 const SCHEMA_SETTINGS: &str = "readonly=1&max_execution_time=20&max_result_rows=250000&result_overflow_mode=break\
 &log_comment=cobserve%20suggestions";
@@ -2113,5 +2146,13 @@ mod tests {
         assert!(CAPACITY_SQL.contains("CGroupMemoryTotal"));
         assert!(CAPACITY_SQL.contains("OSCPUVirtualTimeMicroseconds"));
         assert!(CLUSTERS_SQL.contains("system.clusters"));
+    }
+
+    #[test]
+    fn a_kill_says_whether_the_server_had_the_query() {
+        assert_eq!(kill_answer("waiting\tabc-1\tr_redash\tSELECT 1\n", "ch-1", "abc-1").unwrap(), "the server is stopping it");
+        assert!(kill_answer("finished\tabc-1\tr_redash\tSELECT 1\n", "ch-1", "abc-1").unwrap().contains("stopped"));
+        assert!(kill_answer("", "ch-1", "abc-1").unwrap_err().contains("already ended"));
+        assert!(kill_answer("cant_cancel\tabc-1\n", "ch-1", "abc-1").is_err());
     }
 }

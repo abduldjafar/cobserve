@@ -33,7 +33,7 @@ fn ch(c: char) -> Event {
 
 /// The fake fleet after `polls` polls, the clock at the simulation's instant in
 /// Jakarta, and block graphs — the tier the screens were drawn in.
-fn app_after(polls: usize) -> App {
+pub(crate) fn app_after(polls: usize) -> App {
     // The polls end at the simulation's instant, so the history and the tape are of its hour.
     let start = std::time::UNIX_EPOCH + std::time::Duration::from_secs(MOMENT - 2 * polls.max(1) as u64);
     let mut fake = FakeSource::starting_at(start);

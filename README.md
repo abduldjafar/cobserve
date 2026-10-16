@@ -448,6 +448,8 @@ have a user the other one does not know.
 | `CLAUDE_CMD` | what a Claude session runs, with its arguments | `claude` |
 | `OPENCODE_CMD` | what an OpenCode session runs | `opencode` |
 | `SHELL_CMD` | what a terminal session runs | `$SHELL`, else `/bin/sh` |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_TOKEN_FILE` | the Telegram bot's token, or a file it is in (BotFather's message as it came will do) | optional — no bot |
+| `TELEGRAM_CHAT_ID` | the chats the bot answers, comma-separated; without it, it answers anyone with their chat's id only | unset |
 | `MOUSE` | `0` leaves the mouse to the terminal: no clicks, but selection without a modifier | on |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `CH_TIMEOUT_MS` | how long a node has to answer one request before it reads `↯ unreachable` — over a VPN, `5000` | `1500` |
@@ -495,6 +497,24 @@ own profile carries its caps otherwise). A query session's queries are `readonly
 30 seconds and 1000 rows when the server allows them; a write is refused by the server itself.
 The only request that changes anything goes to Redash, and only after `x` and `y` in the queue:
 the cancel of that one job.
+
+## On Telegram
+
+With a bot token, cobserve — the screen, the desktop app or `--plain` — is a Telegram bot as
+well, for the chats `TELEGRAM_CHAT_ID` names (`src/telegram/`):
+
+- **Ask anything**, in any language: Claude Code (`claude -p`, signed in as for the sessions, no
+  tools) answers from a snapshot of what the screen knows — the nodes, the queries running, the
+  Redash queue, Airflow, Jira, the tape — and remembers the conversation (`/forget`). The SQL of
+  queries never goes to Claude.
+- **Stop something**: asked to, it sends a card — a query's node, person, time, memory against
+  its limit and its node, the first words of its SQL — and `KILL QUERY` (or a Redash cancel)
+  runs only when its button is pressed, within five minutes. The card then says what happened,
+  and when the query has left the node. `/kill <node> <query_id>` and `/cancel <job>` make a
+  card without Claude. Another user's query needs the KILL QUERY grant on cobserve's login.
+- **`/status`**: an overview and a tab a panel — Fleet, Redash, Airflow, Jira — in one message.
+- **Unasked**, it tells what went red on the tape and every Airflow run that failed, gathered
+  every 30 s, with **Explain** (`/alerts red | all | off`).
 
 ## The desktop app
 

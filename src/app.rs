@@ -1990,6 +1990,12 @@ impl App {
         self.notice = Some((message, SystemTime::now()));
     }
 
+    /// A Redash job cancelled from off the screen — a Telegram card's button — as `y` would:
+    /// it goes out with the screen's own cancels, and Redash's answer shows on the screen too.
+    pub fn cancel_from_elsewhere(&mut self, id: &str) {
+        self.cancel_job(id);
+    }
+
     /// The cancels for `main.rs` to send, once.
     pub fn take_cancels(&mut self) -> Vec<String> {
         std::mem::take(&mut self.cancels)

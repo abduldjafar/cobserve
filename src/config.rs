@@ -109,6 +109,60 @@ impl std::fmt::Debug for AirflowConfig {
     }
 }
 
+/// The Telegram bot (`telegram.rs`): its token — `TELEGRAM_BOT_TOKEN`, or read out of the file
+/// `TELEGRAM_TOKEN_FILE` names (BotFather's message, kept as it came, will do) — and the chats it
+/// answers, `TELEGRAM_CHAT_ID` (a list). With no chat, it answers anyone only with their chat's id.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct TelegramConfig {
+    pub token: Option<String>,
+    pub chats: Vec<i64>,
+}
+
+impl std::fmt::Debug for TelegramConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelegramConfig").field("token", &self.token.as_ref().map(|_| "…")).field("chats", &self.chats).finish()
+    }
+}
+
+/// A bot token in `text`: `123456789:` and the secret after it, wherever it stands in the text.
+pub fn token_in(text: &str) -> Option<String> {
+    let pattern = regex::Regex::new(r"\b\d{6,12}:[A-Za-z0-9_-]{30,}\b").ok()?;
+    pattern.find(text).map(|m| m.as_str().to_string())
+}
+
+fn telegram_config(env: &Env<'_>, warnings: &mut Vec<String>) -> Result<TelegramConfig, ConfigError> {
+    let token = match env.get("TELEGRAM_BOT_TOKEN").filter(|t| !t.trim().is_empty()) {
+        Some(token) => Some(token.trim().to_string()),
+        None => match env.get("TELEGRAM_TOKEN_FILE").filter(|p| !p.trim().is_empty()) {
+            None => None,
+            Some(path) => {
+                let path = match (path.trim().strip_prefix("~/"), env.get("HOME")) {
+                    (Some(rest), Some(home)) => std::path::Path::new(&home).join(rest),
+                    _ => std::path::PathBuf::from(path.trim()),
+                };
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => {
+                        let token = token_in(&text);
+                        if token.is_none() {
+                            warnings.push(format!("TELEGRAM_TOKEN_FILE: no bot token in {}", path.display()));
+                        }
+                        token
+                    }
+                    Err(e) => {
+                        warnings.push(format!("TELEGRAM_TOKEN_FILE: cannot read {} ({e})", path.display()));
+                        None
+                    }
+                }
+            }
+        },
+    };
+    let mut chats = Vec::new();
+    for item in env.get("TELEGRAM_CHAT_ID").map(|line| split_list(&line)).unwrap_or_default() {
+        chats.push(item.parse().map_err(|_| ConfigError::Bad("TELEGRAM_CHAT_ID", format!("{item:?} is not a chat id")))?);
+    }
+    Ok(TelegramConfig { token, chats })
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub clickhouse: ClickHouseConfig,
@@ -140,6 +194,7 @@ pub struct Config {
     pub notify: Notify,
     /// Who writes a query session's SQL when asked (`ASSISTANT=opencode`; Claude by default).
     pub assistant: crate::console::Assistant,
+    pub telegram: TelegramConfig,
 }
 
 /// Where and whether: `PRAYER_CITY` (a city by name) or `PRAYER_AT` (`lat,lon`), else the city
@@ -765,6 +820,7 @@ impl Config {
                 Some("opencode") => crate::console::Assistant::OpenCode,
                 Some(other) => return Err(ConfigError::Bad("ASSISTANT", format!("{other:?} is not claude or opencode"))),
             },
+            telegram: telegram_config(env, &mut warnings)?,
             warnings,
         })
     }

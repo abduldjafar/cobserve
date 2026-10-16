@@ -1,0 +1,1047 @@
+//! The Telegram bot: cobserve on the phone, both ways. Asked anything, Claude Code answers from
+//! a snapshot of what the screen knows — the fleet, the queries running, the Redash queue,
+//! Airflow, Jira, the tape — and the conversation so far; asked to stop something, it proposes,
+//! and a card with a button does it: `KILL QUERY` on a node, a Redash job cancelled. Unasked, the
+//! bot says when something goes red.
+//!
+//! Pure, as `App` is: what comes in (`Incoming`, answers, results) goes through [`Bot`], and what
+//! is to be done comes out as [`Out`] (messages for Telegram) and [`Work`] (Claude asked, a query
+//! killed) for `main.rs` to send and run. `sources/telegram.rs` speaks to Telegram; `look.rs` is
+//! what the messages look like, `html.rs` how text becomes Telegram's HTML.
+//!
+//! What leaves the machine: numbers, names of nodes, users, people, DAGs and tickets — never a
+//! query's SQL to Claude; a card about to kill a query shows the first words of its SQL, in
+//! Telegram only. Only the chats `TELEGRAM_CHAT_ID` names are answered, and nothing is killed or
+//! cancelled without a press on the card's button, within a few minutes of the card.
+
+pub mod html;
+pub mod look;
+
+use crate::app::App;
+use crate::fmt;
+use crate::model::JobState;
+use crate::severity::Severity;
+use html::esc;
+use std::collections::{HashMap, VecDeque};
+
+/// What Claude is told it is for, after Claude Code's own system prompt.
+pub const RULES: &str = "You are cobserve's assistant on Telegram. cobserve watches Paysera's \
+ClickHouse fleet, its Redash queue, Airflow and Jira for its owner, a data engineer, and you answer \
+them from the snapshot of cobserve's screen given with every message — never from memory, never \
+made up. When the snapshot does not say, say so, and say what would tell.
+- Reply in the language of the person's own messages (often Indonesian); for a button's request \
+(an alert to explain), in the language of their last question, else Indonesian.
+- It is read on a phone, so short. Shape: line 1 is the answer in one short sentence (under 90 \
+characters) with the number that decides it. Then two to four lines starting with \"• \", ONE fact \
+each, under 80 characters, with its number and what it is of (memory 58.2/64 GiB · 91%) — split a \
+long fact in two or drop it; no parentheses packed with numbers, no clauses chained with commas. \
+Then, if there is something to do, one line starting with \"→ \", under 100 characters. Nothing \
+else: no greeting, no heading, no closing line, no paragraph.
+- Markup, only these: **bold** around the one name or number a line is about; `code` around query \
+ids, job ids, DAG ids and ticket keys, never around prose; \"• \" and \"→ \" at line starts; \"> \" \
+at a line start to quote a line of the snapshot. No Markdown headings, tables, links, code fences \
+or italics.
+- Severity marks, right after \"• \": 🔴 where the snapshot marks it ✖, 🟠 where ▲, 🟢 when it \
+has recovered, nothing otherwise. No other emoji.
+- Numbers as the snapshot gives them, every percentage with what it is of. Name nodes, people and \
+DAGs exactly as the snapshot does.
+- You run nothing yourself. When the person asks to stop something — or a runaway query is the \
+plain answer to what they ask about — propose it, each on a line of its own at the very end, \
+exactly:
+ACTION kill <node> <query_id>
+ACTION cancel <redash_job_id>
+copying node, query_id and job id from the snapshot. `kill` is KILL QUERY on that ClickHouse node; \
+`cancel` cancels a Redash job. The person gets a card with a button for each and nothing happens \
+until they press it, so say what each would do — never that it is done. A Redash job that runs on \
+ClickHouse goes on running there after a cancel: when the snapshot names its node and query_id, \
+propose that kill too, or instead. Propose nothing the person did not ask for.
+- The SQL of queries is left out of the snapshot on purpose; do not ask for it.";
+
+/// A card's button works this long.
+pub const CARD_S: i64 = 300;
+/// A message older than this when cobserve starts came while it was not running: answering it
+/// now could act on what was asked about something long gone.
+const LATE_S: i64 = 120;
+/// Exchanges remembered, and how much of an answer.
+const REMEMBERED: usize = 8;
+const ANSWER_KEPT: usize = 1200;
+/// Telegram's limit is 4096 characters a message; the markup grows a little into HTML.
+const MESSAGE_MAX: usize = 3500;
+/// Alerts wait this long after the last, gathering what comes meanwhile into one message.
+const ALERT_GAP_S: i64 = 30;
+/// A red line followed by its recovery within this long gets the recovery told too.
+const RECOVERY_S: i64 = 600;
+/// How long after a kill its query is watched for, to say it is gone.
+const CONFIRM_S: i64 = 60;
+const ACTIONS_MAX: usize = 5;
+
+/// What comes from Telegram.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Incoming {
+    Message { chat: i64, text: String, at: i64 },
+    /// A card's button: the message it is on, the callback to answer, what the button carries.
+    Button { chat: i64, message: i64, callback: String, data: String },
+}
+
+pub type Buttons = Vec<(String, String)>;
+
+/// What goes to Telegram: HTML, built with `html::esc`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Out {
+    Send { chat: i64, text: String, buttons: Buttons },
+    /// The message's new text; its buttons go unless given again.
+    Edit { chat: i64, message: i64, text: String, buttons: Buttons },
+    /// The toast a button press gets: plain text.
+    Answer { callback: String, text: String },
+    Typing { chat: i64 },
+}
+
+/// What reaches the bot: Telegram's updates, Claude's answers, the results of what it ran.
+#[derive(Debug, Clone)]
+pub enum BotEvent {
+    Incoming(Incoming),
+    Answered { chat: i64, question: String, result: Result<String, String> },
+    Killed { chat: i64, message: i64, result: Result<String, String> },
+    /// Telegram could not be reached, or refused: for the screen's notice line.
+    Trouble(String),
+}
+
+/// What `main.rs` runs for the bot.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Work {
+    /// Claude Code asked `prompt`, under [`RULES`].
+    Ask { chat: i64, question: String, prompt: String },
+    /// `KILL QUERY` of `query_id` on `node`; the card's `message` gets the result.
+    Kill { chat: i64, message: i64, node: String, query_id: String },
+}
+
+/// What a card does when its button is pressed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    Kill { node: String, query_id: String },
+    Cancel { job: String },
+}
+
+/// How much the bot says unasked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alerts {
+    Off,
+    /// Red only — the default.
+    Red,
+    /// Amber and red.
+    All,
+}
+
+#[derive(Debug, Clone)]
+struct Card {
+    action: Action,
+    chat: i64,
+    made: i64,
+    facts: look::Facts,
+}
+
+/// A killed query watched until it leaves the list.
+#[derive(Debug, Clone)]
+struct Confirm {
+    killing: look::Killing,
+    text: String,
+    made: i64,
+    since: i64,
+}
+
+
+pub struct Bot {
+    chats: Vec<i64>,
+    started: i64,
+    next: u64,
+    cards: HashMap<u64, Card>,
+    /// `Kill it on … too`, offered after a cancel: the chat, the kill and when.
+    follows: HashMap<u64, (i64, Action, i64)>,
+    /// Kills sent, by their card's message, for the result to be written under.
+    kills: HashMap<(i64, i64), (look::Facts, i64)>,
+    confirming: HashMap<(i64, i64), Confirm>,
+    /// Redash jobs being cancelled from a card, and the card.
+    cancelling: HashMap<String, (i64, i64, look::Facts)>,
+    /// Alerts kept for their `explain` button, as Claude reads them.
+    explains: HashMap<u64, String>,
+    history: VecDeque<(String, String)>,
+    /// The chat Claude is answering, since when, and what.
+    asking: Option<(i64, i64, String)>,
+    typed: i64,
+    pub alerts: Alerts,
+    primed: bool,
+    told_tape: f64,
+    told_runs: std::collections::HashSet<(String, String)>,
+    /// What was alerted, by subject, and when: its recovery is news too.
+    recently: HashMap<String, i64>,
+    owed: Vec<look::Line>,
+    alerted: i64,
+    pub out: Vec<Out>,
+    pub work: Vec<Work>,
+    /// For the screen's notice line.
+    pub notices: Vec<String>,
+}
+
+impl Bot {
+    pub fn new(chats: Vec<i64>, now: i64) -> Bot {
+        Bot {
+            chats,
+            started: now,
+            next: 1,
+            cards: HashMap::new(),
+            follows: HashMap::new(),
+            kills: HashMap::new(),
+            confirming: HashMap::new(),
+            cancelling: HashMap::new(),
+            explains: HashMap::new(),
+            history: VecDeque::new(),
+            asking: None,
+            typed: 0,
+            alerts: Alerts::Red,
+            primed: false,
+            told_tape: 0.0,
+            told_runs: Default::default(),
+            recently: HashMap::new(),
+            owed: Vec::new(),
+            alerted: 0,
+            out: Vec::new(),
+            work: Vec::new(),
+            notices: Vec::new(),
+        }
+    }
+
+    fn allowed(&self, chat: i64) -> bool {
+        self.chats.contains(&chat)
+    }
+
+    fn send(&mut self, chat: i64, html: impl Into<String>) {
+        self.out.push(Out::Send { chat, text: html.into(), buttons: Vec::new() });
+    }
+
+    fn edit(&mut self, chat: i64, message: i64, html: String) {
+        self.out.push(Out::Edit { chat, message, text: html, buttons: Vec::new() });
+    }
+
+    fn toast(&mut self, callback: String, text: &str) {
+        self.out.push(Out::Answer { callback, text: text.to_string() });
+    }
+
+    fn token(&mut self) -> u64 {
+        self.next += 1;
+        self.next
+    }
+
+    pub fn on_event(&mut self, app: &mut App, event: BotEvent, now: i64) {
+        match event {
+            BotEvent::Incoming(Incoming::Message { chat, text, at }) => self.on_message(app, chat, text.trim(), at, now),
+            BotEvent::Incoming(Incoming::Button { chat, message, callback, data }) => self.on_button(app, chat, message, callback, &data, now),
+            BotEvent::Answered { chat, question, result } => self.on_answer(app, chat, question, result, now),
+            BotEvent::Killed { chat, message, result } => self.on_killed(app, chat, message, result, now),
+            BotEvent::Trouble(text) => self.notices.push(format!("Telegram: {text}")),
+        }
+    }
+
+    fn on_message(&mut self, app: &mut App, chat: i64, text: &str, at: i64, now: i64) {
+        if !self.allowed(chat) {
+            if self.chats.is_empty() {
+                self.send(chat, look::stranger(chat));
+            }
+            self.notices.push(format!("Telegram: a message from chat {chat}, which TELEGRAM_CHAT_ID does not name — not answered"));
+            return;
+        }
+        if at < self.started - LATE_S {
+            self.send(chat, look::late(text, now - at));
+            return;
+        }
+        let (command, rest) = text.split_once(char::is_whitespace).map_or((text, ""), |(c, r)| (c, r.trim()));
+        // `/status@cobserve_bot` in a group.
+        let command = command.split('@').next().unwrap_or(command).to_ascii_lowercase();
+        match command.as_str() {
+            "/start" | "/help" => self.send(chat, look::HELP),
+            "/status" => self.out.push(Out::Send { chat, text: look::status(app, now, look::Tab::Home), buttons: look::tabs(app, look::Tab::Home) }),
+            "/forget" => {
+                self.history.clear();
+                self.send(chat, look::FORGOTTEN);
+            }
+            "/alerts" => {
+                self.alerts = match rest.to_ascii_lowercase().as_str() {
+                    "off" => Alerts::Off,
+                    "all" => Alerts::All,
+                    _ => Alerts::Red,
+                };
+                self.send(chat, look::alerts_set(self.alerts));
+            }
+            "/kill" => match rest.split_whitespace().collect::<Vec<_>>()[..] {
+                [node, query_id] => self.propose(app, chat, Action::Kill { node: node.to_string(), query_id: query_id.to_string() }, now),
+                _ => self.send(chat, look::KILL_USAGE),
+            },
+            "/cancel" => match rest.split_whitespace().collect::<Vec<_>>()[..] {
+                [job] => self.propose(app, chat, Action::Cancel { job: job.to_string() }, now),
+                _ => self.send(chat, look::CANCEL_USAGE),
+            },
+            _ if command.starts_with('/') => self.send(chat, look::HELP),
+            _ => self.ask(app, chat, text.to_string(), text.to_string(), now),
+        }
+    }
+
+    /// Claude asked `question`; `shown` is how the bot speaks of it while it waits — what the
+    /// person typed, or what the button they pressed is called.
+    fn ask(&mut self, app: &App, chat: i64, question: String, shown: String, now: i64) {
+        if let Some((_, since, asked)) = &self.asking {
+            let line = look::thinking(asked, now - since);
+            self.send(chat, line);
+            return;
+        }
+        let prompt = prompt(app, &self.history, &question, now);
+        self.asking = Some((chat, now, shown));
+        self.typed = now;
+        self.out.push(Out::Typing { chat });
+        self.work.push(Work::Ask { chat, question, prompt });
+    }
+
+    fn on_answer(&mut self, app: &App, chat: i64, question: String, result: Result<String, String>, now: i64) {
+        self.asking = None;
+        match result {
+            Ok(said) => {
+                let (reply, actions) = parse_answer(&said);
+                if reply.is_empty() && actions.is_empty() {
+                    self.send(chat, look::SAID_NOTHING);
+                    return;
+                }
+                for part in split(&reply) {
+                    self.send(chat, html::answer(&part));
+                }
+                self.history.push_back((question, fmt::truncate(&reply, ANSWER_KEPT)));
+                while self.history.len() > REMEMBERED {
+                    self.history.pop_front();
+                }
+                for action in actions {
+                    self.propose(app, chat, action, now);
+                }
+            }
+            Err(why) => self.send(chat, look::claude_failed(&why)),
+        }
+    }
+
+    /// A card for `action`, if what it is about is still there.
+    fn propose(&mut self, app: &App, chat: i64, action: Action, now: i64) {
+        let facts = match &action {
+            Action::Kill { node, query_id } => {
+                if !query_id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':')) {
+                    self.send(chat, format!("❌ <b>No card</b> · “{}” is not a query id I would send to a server", esc(query_id)));
+                    return;
+                }
+                look::kill_card(app, node, query_id)
+            }
+            Action::Cancel { job } => look::cancel_card(app, job),
+        };
+        match facts {
+            Ok(facts) => {
+                // The node as the screen names it, whatever the card was asked with.
+                let action = match (&action, &facts.killing) {
+                    (Action::Kill { .. }, Some(k)) => Action::Kill { node: k.node.clone(), query_id: k.query_id.clone() },
+                    _ => action,
+                };
+                let token = self.token();
+                let yes = match action {
+                    Action::Kill { .. } => "🛑 Kill it",
+                    Action::Cancel { .. } => "🛑 Cancel job",
+                };
+                self.out.push(Out::Send {
+                    chat,
+                    text: format!("{}\n\n{}", facts.html, look::HINT),
+                    buttons: vec![(yes.to_string(), format!("y:{token}")), ("Leave it".to_string(), format!("n:{token}"))],
+                });
+                self.cards.insert(token, Card { action, chat, made: now, facts });
+            }
+            Err(why) => self.send(chat, why),
+        }
+    }
+
+    fn on_button(&mut self, app: &mut App, chat: i64, message: i64, callback: String, data: &str, now: i64) {
+        if !self.allowed(chat) {
+            self.toast(callback, "Not for this chat");
+            return;
+        }
+        // /status's tabs and Refresh, in place; an alert's Status, a new one.
+        let tab = look::Tab::of(data).or_else(|| data.strip_prefix("r:").and_then(look::Tab::of));
+        if let Some(tab) = tab {
+            self.toast(callback, if data.starts_with("r:") { "Refreshed" } else { "" });
+            self.out.push(Out::Edit { chat, message, text: look::status(app, now, tab), buttons: look::tabs(app, tab) });
+            return;
+        }
+        if data == "S" {
+            self.toast(callback, "");
+            self.out.push(Out::Send { chat, text: look::status(app, now, look::Tab::Home), buttons: look::tabs(app, look::Tab::Home) });
+            return;
+        }
+        let Some((kind, token)) = data.split_once(':').and_then(|(k, t)| Some((k, t.parse::<u64>().ok()?))) else {
+            self.toast(callback, "");
+            return;
+        };
+        match kind {
+            "e" => {
+                if self.asking.is_some() {
+                    self.toast(callback, "Still thinking — a moment");
+                    return;
+                }
+                self.toast(callback, "");
+                match self.explains.get(&token).cloned() {
+                    Some(text) => {
+                        let question = format!("Explain these alerts: what happened, how bad it is, what to do.\n{text}");
+                        self.ask(app, chat, question, "explaining the alert".to_string(), now);
+                    }
+                    None => self.send(chat, look::EXPLAIN_GONE),
+                }
+                return;
+            }
+            "k" => {
+                match self.follows.remove(&token) {
+                    Some((owner, action, _)) if owner == chat => {
+                        self.toast(callback, "On it");
+                        self.propose(app, chat, action, now);
+                    }
+                    _ => self.toast(callback, "Already used"),
+                }
+                return;
+            }
+            _ => {}
+        }
+        let Some(card) = self.cards.remove(&token) else {
+            self.toast(callback, "Already used");
+            return;
+        };
+        if card.chat != chat {
+            self.toast(callback, "Not for this chat");
+            return;
+        }
+        let facts = card.facts.html.clone();
+        let again = esc(&card.facts.again);
+        if now - card.made > CARD_S {
+            self.toast(callback, "Too old — ask again");
+            let line = format!(
+                "⌛ <b>Not done</b> · this card is {} minutes old, buttons work for {} · <i>{again} makes a fresh one</i>",
+                (now - card.made) / 60,
+                CARD_S / 60
+            );
+            self.edit(chat, message, format!("{facts}\n\n{line}"));
+            return;
+        }
+        if kind != "y" {
+            self.toast(callback, "Left alone");
+            let still = match &card.action {
+                Action::Kill { node, query_id } => app
+                    .with_view(|v| v.nodes.iter().find(|n| n.name() == node)?.node.queries.iter().find(|q| q.query_id == *query_id).map(|q| format!(" · still running {}", fmt::dur(q.elapsed_s))))
+                    .flatten()
+                    .unwrap_or_default(),
+                Action::Cancel { .. } => String::new(),
+            };
+            self.edit(chat, message, format!("{facts}\n\n— <b>Left alone</b>{still} · <i>{again} if you change your mind</i>"));
+            return;
+        }
+        // Checked again: the screen may have moved on since the card was made.
+        let gone = match &card.action {
+            Action::Kill { node, query_id } => look::kill_card(app, node, query_id)
+                .err()
+                .map(|_| format!("✅ <b>Already gone</b> · <code>{}</code> is not running on {} any more — nothing to kill", esc(query_id), esc(&look::short(app, node)))),
+            Action::Cancel { job } => look::cancel_card(app, job)
+                .err()
+                .map(|_| format!("✅ <b>Already gone</b> · Redash job <code>{}</code> is not in the queue any more — nothing to cancel", esc(job))),
+        };
+        if let Some(line) = gone {
+            self.toast(callback, "It is gone already");
+            self.edit(chat, message, format!("{facts}\n\n{line}"));
+            return;
+        }
+        self.toast(callback, "On it");
+        match card.action {
+            Action::Kill { node, query_id } => {
+                self.edit(chat, message, format!("{facts}\n\n⏳ KILL QUERY sent to {} …", esc(&look::short(app, &node))));
+                self.notices.push(format!("Telegram: KILL QUERY {query_id} on {node}, pressed on the phone"));
+                self.kills.insert((chat, message), (card.facts, now));
+                self.work.push(Work::Kill { chat, message, node, query_id });
+            }
+            Action::Cancel { job } => {
+                self.edit(chat, message, format!("{facts}\n\n⏳ Asking Redash to cancel it …"));
+                app.cancel_from_elsewhere(&job);
+                self.cancelling.insert(job, (chat, message, card.facts));
+            }
+        }
+    }
+
+    fn on_killed(&mut self, app: &App, chat: i64, message: i64, result: Result<String, String>, now: i64) {
+        let Some((facts, _)) = self.kills.remove(&(chat, message)) else {
+            return;
+        };
+        match result {
+            Ok(how) => {
+                self.notices.push(format!("Telegram: ✔ {how}"));
+                let Some(killing) = facts.killing else {
+                    return;
+                };
+                let text = format!("{}\n\n{}", facts.html, look::killed(app, &how, &killing));
+                self.edit(chat, message, text.clone());
+                self.confirming.insert((chat, message), Confirm { killing, text, made: now, since: now });
+            }
+            Err(why) => {
+                self.notices.push(format!("Telegram: ✖ not killed: {why}"));
+                let line = format!("❌ <b>Not killed</b> — {}\n<i>{} asks again</i>", esc(&why), esc(&facts.again));
+                self.edit(chat, message, format!("{}\n\n{line}", facts.html));
+            }
+        }
+    }
+
+    /// Redash's answer to a cancel a card asked for.
+    pub fn on_cancelled(&mut self, app: &App, job: &str, result: &Result<(), String>) {
+        let Some((chat, message, facts)) = self.cancelling.remove(job) else {
+            return;
+        };
+        match result {
+            Ok(()) => match facts.follow.clone() {
+                Some((node, query_id, memory)) => {
+                    let name = look::short(app, &node);
+                    let mem = if memory > 0 { format!(" ({})", fmt::bytes(memory)) } else { String::new() };
+                    let token = self.token();
+                    self.follows.insert(token, (chat, Action::Kill { node, query_id: query_id.clone() }, app.now()));
+                    self.out.push(Out::Edit {
+                        chat,
+                        message,
+                        text: format!("{}\n\n✅ <b>Cancelled</b> in Redash · its query <code>{}</code> goes on on <b>{}</b>{mem}", facts.html, esc(&query_id), esc(&name)),
+                        buttons: vec![(format!("🛑 Kill it on {name} too"), format!("k:{token}"))],
+                    });
+                }
+                None => self.edit(chat, message, format!("{}\n\n✅ <b>Cancelled</b> in Redash", facts.html)),
+            },
+            Err(why) => self.edit(chat, message, format!("{}\n\n❌ <b>Not cancelled</b> — Redash said: {}", facts.html, esc(why))),
+        }
+    }
+
+    /// Every second or so: the typing mark while Claude thinks, killed queries watched until
+    /// they are gone, old cards let go, and alerts.
+    pub fn tick(&mut self, app: &App, now: i64) {
+        if let Some((chat, ..)) = self.asking
+            && now - self.typed >= 5
+        {
+            self.typed = now;
+            self.out.push(Out::Typing { chat });
+        }
+        let mut done = Vec::new();
+        for (key, c) in &self.confirming {
+            let running = app
+                .with_view(|v| v.nodes.iter().any(|n| n.name() == c.killing.node && n.node.queries.iter().any(|q| q.query_id == c.killing.query_id)))
+                .unwrap_or(true);
+            if !running {
+                let ran = c.killing.elapsed_s + (now - c.since) as f64;
+                done.push((*key, Some(format!("{}\n{}", c.text, look::gone(app, &c.killing, ran)))));
+            } else if now - c.made > CONFIRM_S {
+                done.push((*key, None));
+            }
+        }
+        for ((chat, message), text) in done {
+            self.confirming.remove(&(chat, message));
+            if let Some(text) = text {
+                self.edit(chat, message, text);
+            }
+        }
+        self.cards.retain(|_, card| now - card.made <= CARD_S * 4);
+        self.follows.retain(|_, (_, _, made)| now - *made <= CARD_S * 4);
+        self.watch(app, now);
+    }
+
+    /// What went wrong since the last look: new red (or amber) lines of the tape, and Airflow
+    /// runs that failed — with what recovered soon after. What was already there when the bot
+    /// started is not news.
+    fn watch(&mut self, app: &App, now: i64) {
+        let fresh_tape: Vec<&crate::tape::Event> = app.tape.newest_first().take_while(|e| e.at > self.told_tape).collect();
+        let failed: Vec<&crate::airflow::Run> = if app.airflow.day_read {
+            app.airflow.runs.iter().filter(|r| r.state == crate::airflow::RunState::Failed).collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(newest) = fresh_tape.first() {
+            self.told_tape = newest.at;
+        }
+        if !self.primed {
+            // Nothing is news until the fleet has been read once.
+            if app.with_view(|_| ()).is_some() {
+                self.primed = true;
+                self.told_runs.extend(failed.iter().map(|r| (r.dag.clone(), r.id.clone())));
+                for chat in self.chats.clone() {
+                    self.send(chat, look::up(app, self.alerts));
+                }
+            }
+            return;
+        }
+        let threshold = match self.alerts {
+            Alerts::Off => None,
+            Alerts::Red => Some(Severity::Crit),
+            Alerts::All => Some(Severity::Warn),
+        };
+        for event in fresh_tape.iter().rev() {
+            if event.kind == crate::tape::Kind::Note {
+                continue;
+            }
+            let key = event.subject.as_ref().map(|s| format!("{s:?}"));
+            if threshold.is_some_and(|t| event.level >= t) {
+                self.owed.push(look::tape_line(app, event, event.level));
+                if let Some(key) = key {
+                    self.recently.insert(key, now);
+                }
+            } else if event.level == Severity::Ok
+                && let Some(key) = key
+                && self.recently.get(&key).is_some_and(|at| now - at <= RECOVERY_S)
+            {
+                self.recently.remove(&key);
+                self.owed.push(look::tape_line(app, event, Severity::Ok));
+            }
+        }
+        self.recently.retain(|_, at| now - *at <= RECOVERY_S);
+        if app.airflow.day_read {
+            for run in failed {
+                if self.told_runs.insert((run.dag.clone(), run.id.clone())) && threshold.is_some() {
+                    self.owed.push(look::airflow_line(app, run, now));
+                }
+            }
+        }
+        if self.owed.is_empty() || now - self.alerted < ALERT_GAP_S {
+            return;
+        }
+        self.alerted = now;
+        let lines: Vec<look::Line> = std::mem::take(&mut self.owed);
+        let text = look::alerts(app, &lines, now);
+        let token = self.token();
+        self.explains.insert(token, lines.iter().map(|l| l.plain.clone()).collect::<Vec<_>>().join("\n"));
+        if self.explains.len() > 30
+            && let Some(oldest) = self.explains.keys().min().copied()
+        {
+            self.explains.remove(&oldest);
+        }
+        for chat in self.chats.clone() {
+            self.out.push(Out::Send {
+                chat,
+                text: text.clone(),
+                buttons: vec![("🧠 Explain".to_string(), format!("e:{token}")), ("Status".to_string(), "S".to_string())],
+            });
+        }
+    }
+}
+
+fn mark(sev: Severity) -> &'static str {
+    match sev {
+        Severity::Crit => "✖",
+        Severity::Warn => "▲",
+        _ => "·",
+    }
+}
+
+/// A long text in Telegram-sized pieces, cut at lines where it can be.
+pub fn split(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut part = String::new();
+    for line in text.lines() {
+        let mut line = line.to_string();
+        while line.chars().count() > MESSAGE_MAX {
+            let head: String = line.chars().take(MESSAGE_MAX).collect();
+            line = line.chars().skip(MESSAGE_MAX).collect();
+            if !part.is_empty() {
+                parts.push(std::mem::take(&mut part));
+            }
+            parts.push(head);
+        }
+        if part.chars().count() + line.chars().count() + 1 > MESSAGE_MAX {
+            parts.push(std::mem::take(&mut part));
+        }
+        if !part.is_empty() {
+            part.push('\n');
+        }
+        part.push_str(&line);
+    }
+    if !part.trim().is_empty() {
+        parts.push(part);
+    }
+    parts
+}
+
+/// Claude's answer without its `ACTION` lines, and the actions they propose.
+pub fn parse_answer(said: &str) -> (String, Vec<Action>) {
+    let mut actions = Vec::new();
+    let mut kept = Vec::new();
+    for line in said.lines() {
+        let words: Vec<&str> = line.trim().trim_matches('`').split_whitespace().collect();
+        match words[..] {
+            [first, "kill", node, query_id] if first.eq_ignore_ascii_case("ACTION") => {
+                actions.push(Action::Kill { node: node.to_string(), query_id: query_id.to_string() });
+            }
+            [first, "cancel", job] if first.eq_ignore_ascii_case("ACTION") => actions.push(Action::Cancel { job: job.to_string() }),
+            _ => kept.push(line),
+        }
+    }
+    actions.dedup();
+    actions.truncate(ACTIONS_MAX);
+    (kept.join("\n").trim().to_string(), actions)
+}
+
+/// What Claude is asked: the moment, the snapshot, the conversation so far, the question.
+pub fn prompt(app: &App, history: &VecDeque<(String, String)>, question: &str, now: i64) -> String {
+    let mut out = format!("Now: {}, {}.\n\n<snapshot>\n", app.time.format(now, "%A %Y-%m-%d %H:%M:%S"), app.time.label(now));
+    out.push_str(&context(app, now));
+    out.push_str("</snapshot>\n\n");
+    if !history.is_empty() {
+        out.push_str("The conversation so far:\n");
+        for (asked, said) in history {
+            out.push_str(&format!("Person: {asked}\nYou: {said}\n"));
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!("Person: {question}\n"));
+    out
+}
+
+/// What the screen knows, as text for Claude: every panel, the queries and the jobs without
+/// their SQL.
+pub fn context(app: &App, now: i64) -> String {
+    let mut out = String::new();
+    out.push_str("== Panels (✖ red, ▲ amber)\n");
+    out.push_str(&crate::plain::summary(app));
+    out.push('\n');
+
+    let fleet = app.with_view(|view| {
+        let mut s = String::from("== ClickHouse nodes\n");
+        for n in &view.nodes {
+            let node = n.node;
+            if !node.reachable {
+                s.push_str(&format!("{} · unreachable: {}\n", node.name, node.unreachable_reason.as_deref().unwrap_or("no answer")));
+                continue;
+            }
+            let mem = match node.mem_total {
+                Some(total) => format!("{} of {} · {}", fmt::bytes(node.mem_used), fmt::bytes(total), fmt::pct(n.mem_pct)),
+                None => format!("{} of unknown", fmt::bytes(node.mem_used)),
+            };
+            let cpu = match (n.busy_cores, node.cores) {
+                (Some(busy), Some(cores)) => format!("{busy:.1} of {cores:.0} cores · {}", fmt::pct(n.cpu_pct)),
+                _ => "unknown".to_string(),
+            };
+            s.push_str(&format!(
+                "{} · shard {} replica {} · ClickHouse {} · memory {mem} · cpu {cpu} · {} queries · replication lag {} s · {} active parts · up {} · memory limit a query {}{}\n",
+                node.name,
+                node.shard,
+                node.replica,
+                node.version,
+                node.running,
+                node.lag_s,
+                node.active_parts,
+                fmt::opt_dur(node.uptime_s),
+                fmt::bytes(n.mem_limit),
+                if n.runaways > 0 { format!(" · {} RUNAWAY", n.runaways) } else { String::new() }
+            ));
+        }
+        let mut queries: Vec<(&str, &crate::model::QueryStat<'_>)> =
+            view.nodes.iter().flat_map(|n| n.users.iter().flat_map(move |u| u.queries.iter().map(move |q| (n.name(), q)))).collect();
+        queries.sort_by_key(|q| std::cmp::Reverse(q.1.query.memory_bytes));
+        s.push_str(&format!("\n== Queries running ({} in all; the 40 using most memory) — node · query_id · user → person · what · time · memory · cores\n", queries.len()));
+        for (node, q) in queries.iter().take(40) {
+            let row = q.query;
+            let who = crate::attrib::user_label(&row.user, row.person.as_deref());
+            let redash = row.redash_query_id.map(|id| format!(" · Redash #{id}")).unwrap_or_default();
+            let progress = q.progress.map(|p| format!(" · {:.0}% read", p * 100.0)).unwrap_or_default();
+            s.push_str(&format!(
+                "{node} · {} · {who}{redash} · {} · {} · {} of {} · {:.1} cores · read {} rows{progress}{}\n",
+                row.query_id,
+                row.kind.as_deref().unwrap_or("query"),
+                fmt::dur(row.elapsed_s),
+                fmt::bytes(row.memory_bytes),
+                fmt::bytes(q.limit),
+                q.cores,
+                fmt::rows(row.read_rows),
+                if q.runaway { " · RUNAWAY" } else { "" }
+            ));
+        }
+        s
+    });
+    match fleet {
+        Some(s) => out.push_str(&s),
+        None => out.push_str("== ClickHouse: not read yet\n"),
+    }
+
+    let q = &app.queue;
+    out.push_str("\n== Redash queue\n");
+    if !q.reachable {
+        out.push_str(&format!("unreachable: {}\n", q.error.as_deref().unwrap_or("no answer")));
+    } else {
+        out.push_str(&format!("workers {} busy of {}\n", q.workers_busy, q.workers_total));
+        for row in &q.queues {
+            out.push_str(&format!(
+                "queue {} · {} running · {} waiting{} · {} stale · workers {} of {}\n",
+                row.name,
+                row.running,
+                row.waiting,
+                row.oldest_wait_s.map(|s| format!(" (oldest {})", fmt::dur(s as f64))).unwrap_or_default(),
+                row.stale,
+                row.workers_busy,
+                row.workers_total
+            ));
+        }
+        if !q.jobs.is_empty() {
+            out.push_str("jobs — job id · state · queue · person · query · data source · age · where it runs on ClickHouse\n");
+        }
+        for j in q.jobs.iter().take(50) {
+            let state = match j.state {
+                JobState::Queued => "waiting".to_string(),
+                JobState::Started => "running".to_string(),
+                JobState::Stale(why) => format!("stale ({})", why.reason()),
+            };
+            let on = j.clickhouse_target().map(|(n, id)| format!(" · on {n} as {id}")).unwrap_or_default();
+            let by = if j.scheduled { " (scheduled)" } else { "" };
+            out.push_str(&format!(
+                "{} · {state} · {} · {}{by} · {} · {} · {}{on}\n",
+                j.id,
+                j.queue,
+                j.label(),
+                j.query_label(),
+                j.data_source.as_deref().unwrap_or("—"),
+                fmt::dur(j.age_s as f64)
+            ));
+        }
+    }
+
+    let a = &app.airflow;
+    out.push_str("\n== Airflow\n");
+    if !a.reachable {
+        out.push_str(&format!("not read: {}\n", a.error.as_deref().unwrap_or("no answer")));
+    } else {
+        let beat = |name: &str, b: &crate::airflow::Beat| b.status.as_ref().map(|s| format!("{name} {s}"));
+        let health: Vec<String> = [beat("scheduler", &a.health.scheduler), beat("triggerer", &a.health.triggerer), beat("dag processor", &a.health.dag_processor)]
+            .into_iter()
+            .flatten()
+            .chain(a.health.metadatabase.as_ref().map(|m| format!("metadatabase {m}")))
+            .collect();
+        out.push_str(&format!("health: {}\n", if health.is_empty() { "—".to_string() } else { health.join(" · ") }));
+        if let Some(errors) = a.import_errors.filter(|e| *e > 0) {
+            out.push_str(&format!("{errors} DAG import errors\n"));
+        }
+        let c = a.counts(now);
+        out.push_str(&format!("last 24 h: {} runs · {} ok · {} failed · {} running · {} queued · {} DAGs ({} paused)\n", c.runs, c.ok, c.failed, c.running, c.queued, c.dags, c.paused));
+        let mut runs: Vec<&crate::airflow::Run> = a.runs.iter().filter(|r| r.state != crate::airflow::RunState::Success).collect();
+        runs.sort_by_key(|r| std::cmp::Reverse(r.at()));
+        for r in runs.iter().take(40) {
+            let when = r.at().map(|t| format!("{} ago", fmt::dur((now - t).max(0) as f64))).unwrap_or_default();
+            let took = r.took(now).map(|s| format!(" · took {}", fmt::dur(s as f64))).unwrap_or_default();
+            let mut line = format!("{} · {} · run {} ({}) · {when}{took}", r.dag, r.state.word(), r.id, r.kind);
+            if let Some(p) = a.progress.get(&(r.dag.clone(), r.id.clone())) {
+                line.push_str(&format!(" · tasks {} done of {}", p.done, p.total));
+                if !p.failed.is_empty() {
+                    line.push_str(&format!(" · failed tasks: {}", p.failed.join(", ")));
+                }
+                if !p.running.is_empty() {
+                    line.push_str(&format!(" · running tasks: {}", p.running.join(", ")));
+                }
+            }
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+
+    let b = &app.jira;
+    out.push_str("\n== Jira (the owner's board)\n");
+    if !b.reachable {
+        out.push_str(&format!("not read: {}\n", b.error.as_deref().unwrap_or("no answer")));
+    } else {
+        for column in b.columns() {
+            out.push_str(&format!("{} ({}):\n", column.status, column.tickets.len()));
+            for t in column.tickets.iter().take(25) {
+                let due = t.due.as_ref().map(|d| format!(" · due {d}")).unwrap_or_default();
+                let since = t.in_status(now).map(|s| format!(" · in {} for {}", column.status, fmt::dur(s as f64))).unwrap_or_default();
+                out.push_str(&format!("  {} · {} · {}{due}{since}\n", t.key, t.summary, t.priority.as_deref().unwrap_or("no priority")));
+            }
+        }
+    }
+
+    out.push_str("\n== Tape (what changed, newest first)\n");
+    for e in app.tape.newest_first().take(25) {
+        let text: String = e.parts.iter().map(|(t, _)| t.as_str()).collect();
+        out.push_str(&format!("{} {} {} {text}\n", app.time.hms(e.at as i64), mark(e.level), e.kind.label()));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        crate::ui2::tests::app_after(10)
+    }
+
+    fn sent(bot: &Bot) -> Vec<(String, Buttons)> {
+        bot.out.iter().filter_map(|o| if let Out::Send { text, buttons, .. } = o { Some((text.clone(), buttons.clone())) } else { None }).collect()
+    }
+
+    fn button(bot: &Bot) -> String {
+        bot.out.iter().rev().find_map(|o| if let Out::Send { buttons, .. } = o { buttons.first().map(|b| b.1.clone()) } else { None }).expect("a card")
+    }
+
+    fn press(bot: &mut Bot, app: &mut App, chat: i64, message: i64, data: &str, now: i64) {
+        bot.on_event(app, BotEvent::Incoming(Incoming::Button { chat, message, callback: "c".into(), data: data.to_string() }), now);
+    }
+
+    fn running(app: &App) -> (String, String) {
+        app.with_view(|v| {
+            let node = v.nodes.iter().find(|n| !n.node.queries.is_empty()).unwrap();
+            (node.node.name.clone(), node.node.queries[0].query_id.clone())
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn actions_are_taken_out_of_the_answer() {
+        let said = "Node 3 is full: one query holds 7.9 GiB of 9.0 GiB.\nI'd kill it.\nACTION kill ch-3 abc-123\n`ACTION cancel 9f1e`";
+        let (reply, actions) = parse_answer(said);
+        assert_eq!(reply, "Node 3 is full: one query holds 7.9 GiB of 9.0 GiB.\nI'd kill it.");
+        assert_eq!(actions, [Action::Kill { node: "ch-3".into(), query_id: "abc-123".into() }, Action::Cancel { job: "9f1e".into() }]);
+        assert_eq!(parse_answer("no action here").1, []);
+    }
+
+    #[test]
+    fn long_answers_are_cut_for_telegram_at_lines() {
+        let text = (0..400).map(|i| format!("line {i} of a long answer")).collect::<Vec<_>>().join("\n");
+        let parts = split(&text);
+        assert!(parts.len() >= 2 && parts.iter().all(|p| p.chars().count() <= MESSAGE_MAX), "{}", parts.len());
+        assert_eq!(parts.join("\n"), text);
+        assert_eq!(split("").len(), 0);
+    }
+
+    #[test]
+    fn a_stranger_is_told_only_their_chat_id() {
+        let mut app = app();
+        let now = app.now();
+        let mut bot = Bot::new(Vec::new(), now);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 42, text: "which node is full?".into(), at: now }), now);
+        assert!(bot.work.is_empty());
+        assert!(matches!(&sent(&bot)[..], [(text, _)] if text.contains("TELEGRAM_CHAT_ID=42")), "{:?}", bot.out);
+
+        let mut bot = Bot::new(vec![7], now);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 42, text: "/status".into(), at: now }), now);
+        assert!(bot.out.is_empty() && bot.work.is_empty());
+    }
+
+    #[test]
+    fn a_question_goes_to_claude_with_the_snapshot_and_without_sql_and_the_answer_comes_back_as_html() {
+        let mut app = app();
+        let now = app.now();
+        let mut bot = Bot::new(vec![7], now);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 7, text: "node mana yang paling penuh?".into(), at: now }), now);
+        let Some(Work::Ask { prompt, question, .. }) = bot.work.first().cloned() else { panic!("{:?}", bot.work) };
+        assert!(prompt.contains("== ClickHouse nodes") && prompt.contains("== Redash queue") && prompt.ends_with("Person: node mana yang paling penuh?\n"));
+        let sqls: Vec<String> = app.with_view(|v| v.nodes.iter().flat_map(|n| n.node.queries.iter().map(|q| q.sql.clone())).filter(|s| s.len() > 20).collect()).unwrap();
+        assert!(!sqls.is_empty());
+        for sql in sqls {
+            assert!(!prompt.contains(&sql), "{sql}");
+        }
+        // A second question while the first is answered waits its turn, and says for what.
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 7, text: "and now?".into(), at: now }), now + 4);
+        assert_eq!(bot.work.len(), 1);
+        assert!(sent(&bot).last().unwrap().0.contains("still on <i>node mana yang paling penuh?</i> · 4 s"));
+        bot.out.clear();
+        bot.on_event(&mut app, BotEvent::Answered { chat: 7, question, result: Ok("**clickhouse3** is full <3\n• 🔴 memory 91%".into()) }, now + 9);
+        assert_eq!(sent(&bot)[0].0, "<b>clickhouse3 is full &lt;3</b>\n\n• 🔴 memory 91%");
+    }
+
+    #[test]
+    fn a_kill_needs_the_press_of_a_button_and_a_query_still_running() {
+        let mut app = app();
+        let now = app.now();
+        let (node, query_id) = running(&app);
+        let mut bot = Bot::new(vec![7], now);
+        bot.on_event(&mut app, BotEvent::Answered { chat: 7, question: "kill it".into(), result: Ok(format!("It's the heaviest.\nACTION kill {node} {query_id}")) }, now);
+        assert!(bot.work.is_empty(), "nothing is run before the button");
+        let (card, buttons) = sent(&bot).pop().unwrap();
+        assert!(card.starts_with("🛑 <b>Kill this query?</b>") && card.contains(&format!("<code>{query_id}</code>")) && card.contains("<pre>"), "{card}");
+        assert!(card.contains("<b>who</b>") && card.contains("<b>memory</b>") && card.contains("this query "), "{card}");
+        assert_eq!(buttons[0].0, "🛑 Kill it");
+        let token = buttons[0].1.clone();
+        // Another chat's press does nothing.
+        press(&mut bot, &mut app, 8, 1, &token, now);
+        assert!(bot.work.is_empty());
+        press(&mut bot, &mut app, 7, 1, &token, now + 5);
+        assert_eq!(bot.work.last(), Some(&Work::Kill { chat: 7, message: 1, node: node.clone(), query_id: query_id.clone() }));
+        // The result goes under the card's facts.
+        bot.out.clear();
+        bot.on_event(&mut app, BotEvent::Killed { chat: 7, message: 1, result: Ok("asked".into()) }, now + 6);
+        assert!(matches!(&bot.out[..], [Out::Edit { message: 1, text, .. }] if text.starts_with("🛑 <b>Kill this query?</b>") && text.contains("✅ <b>Killed</b>")), "{:?}", bot.out);
+        // A card works once.
+        bot.work.clear();
+        press(&mut bot, &mut app, 7, 1, &token, now + 7);
+        assert!(bot.work.is_empty());
+
+        // A query that is not running gets no card; an old card does nothing.
+        bot.out.clear();
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 7, text: format!("/kill {node} no-such-query"), at: now }), now);
+        assert!(matches!(&sent(&bot)[..], [(text, buttons)] if buttons.is_empty() && text.contains("not running")), "{:?}", bot.out);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 7, text: format!("/kill {node} {query_id}"), at: now }), now);
+        let token = button(&bot);
+        bot.out.clear();
+        press(&mut bot, &mut app, 7, 2, &token, now + CARD_S + 61);
+        assert!(bot.work.is_empty());
+        assert!(matches!(&bot.out[..], [Out::Answer { .. }, Out::Edit { text, .. }] if text.contains("⌛ <b>Not done</b>")), "{:?}", bot.out);
+    }
+
+    #[test]
+    fn a_cancel_from_a_card_goes_to_redash_and_its_answer_back_to_the_card() {
+        let mut app = app();
+        let now = app.now();
+        let job = app.queue.jobs.first().expect("the fake queue has jobs").id.clone();
+        let mut bot = Bot::new(vec![7], now);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 7, text: format!("/cancel {job}"), at: now }), now);
+        let token = button(&bot);
+        press(&mut bot, &mut app, 7, 3, &token, now);
+        assert_eq!(app.take_cancels(), std::slice::from_ref(&job));
+        bot.out.clear();
+        bot.on_cancelled(&app, &job, &Ok(()));
+        assert!(matches!(&bot.out[..], [Out::Edit { message: 3, text, .. }] if text.contains("✅ <b>Cancelled</b> in Redash")), "{:?}", bot.out);
+    }
+
+    #[test]
+    fn status_s_tabs_edit_it_in_place() {
+        let mut app = app();
+        let now = app.now();
+        let mut bot = Bot::new(vec![7], now);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 7, text: "/status".into(), at: now }), now);
+        let (text, buttons) = sent(&bot).pop().unwrap();
+        assert!(text.contains("<b>cobserve</b>"), "{text}");
+        assert_eq!(buttons, look::tabs(&app, look::Tab::Home));
+        bot.out.clear();
+        press(&mut bot, &mut app, 7, 9, "t:f", now + 2);
+        assert!(
+            matches!(&bot.out[..], [Out::Answer { .. }, Out::Edit { message: 9, text, buttons, .. }] if text.contains("<b>Fleet</b>") && *buttons == look::tabs(&app, look::Tab::Fleet)),
+            "{:?}",
+            bot.out
+        );
+    }
+
+    #[test]
+    fn red_news_is_told_unasked_once_and_what_was_there_before_is_not() {
+        let mut app = app();
+        let now = app.now();
+        let mut bot = Bot::new(vec![7], now);
+        bot.tick(&app, now);
+        assert!(matches!(&sent(&bot)[..], [(text, _)] if text.starts_with("🟢 <b>cobserve is up</b>")), "only the hello: {:?}", bot.out);
+        bot.out.clear();
+        let event = crate::tape::Event {
+            at: now as f64 + 1.0,
+            level: Severity::Crit,
+            kind: crate::tape::Kind::Node,
+            parts: vec![("ch-2 memory 96% · 15.0 GiB of 15.6 GiB".to_string(), crate::insight::Tone::Plain)],
+            subject: None,
+        };
+        app.tape.extend([event]);
+        bot.tick(&app, now + ALERT_GAP_S);
+        assert!(
+            matches!(&sent(&bot)[..], [(text, buttons)] if text.starts_with("🔔 <b>1 new</b>") && text.contains("🔴 ") && text.contains("ch-2 memory 96%") && buttons[0].1.starts_with("e:")),
+            "{:?}",
+            bot.out
+        );
+        bot.out.clear();
+        bot.tick(&app, now + 2 * ALERT_GAP_S);
+        assert!(bot.out.is_empty());
+    }
+}
