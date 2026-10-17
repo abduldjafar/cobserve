@@ -590,84 +590,78 @@ impl Group {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
     pub group: Group,
+    /// Whether it is still going on; a line that is not says it cleared.
+    pub ongoing: bool,
     pub html: String,
     pub plain: String,
 }
 
-/// A tape event as an alert, with what the screen knows about its subject now.
-pub fn tape_line(app: &App, e: &crate::tape::Event, level: Severity) -> Line {
-    let text: String = e.parts.iter().map(|(t, _)| t.as_str()).collect();
-    let group = match e.kind {
-        crate::tape::Kind::Node => Group::Nodes,
-        crate::tape::Kind::Query => Group::Queries,
-        crate::tape::Kind::Queue => Group::Redash,
-        _ => Group::Fleet,
-    };
-    let live = match &e.subject {
-        Some(crate::insight::Subject::Node(name)) => app
-            .with_view(|v| {
-                let n = v.nodes.iter().find(|n| n.name() == name)?;
-                if !n.node.reachable {
-                    let since = app.history.node(name)?.unreachable_since?;
-                    return Some(format!(" · for {}", fmt::dur((app.now() as f64 - since).max(0.0))));
-                }
-                let mut s = String::new();
-                if let (Some(p), Some(total)) = (n.mem_pct, n.node.mem_total) {
-                    s.push_str(&format!(" · now {} · {}", panels::fleet::gib_of(n.node.mem_used, total), fmt::pct(Some(p))));
-                }
-                if let (Some(busy), Some(cores)) = (n.busy_cores, n.node.cores) {
-                    s.push_str(&format!(" · {busy:.1}/{cores:.0} cores"));
-                }
-                Some(s)
-            })
-            .flatten()
-            .unwrap_or_default(),
-        Some(crate::insight::Subject::Query { node, query_id, .. }) => app
-            .with_view(|v| v.nodes.iter().find(|n| n.name() == node)?.node.queries.iter().find(|q| q.query_id == *query_id).map(|q| format!(" · {} now", fmt::bytes(q.memory_bytes))))
-            .flatten()
-            .unwrap_or_default(),
-        _ => String::new(),
-    };
-    let at = hm(app, e.at as i64);
+/// Where an issue goes, by what it is about.
+pub fn group_of(subject: &crate::insight::Subject) -> Group {
+    match subject {
+        crate::insight::Subject::Node(_) => Group::Nodes,
+        crate::insight::Subject::Query { .. } => Group::Queries,
+        crate::insight::Subject::Queue => Group::Redash,
+        crate::insight::Subject::Fleet => Group::Fleet,
+    }
+}
+
+/// How long an issue has gone on, in minutes: `10m`, `2h05m`, `3d`.
+fn minutes(seconds: i64) -> String {
+    match seconds.max(0) / 60 {
+        m if m >= 1440 => format!("{}d", m / 1440),
+        m if m >= 60 => format!("{}h{:02}m", m / 60, m % 60),
+        m => format!("{m}m"),
+    }
+}
+
+/// An issue that has gone on for `for_s`: its name and for how long, then what it is.
+pub fn ongoing(group: Group, level: Severity, label: &str, text: &str, for_s: i64) -> Line {
     Line {
         group,
-        html: format!("{}{at} {}{}", dot(level), esc(&text), esc(&live)),
-        plain: format!("{} {at} {} {text}{live}", glyph(level), e.kind.label()),
+        ongoing: true,
+        html: format!("{}<b>{}</b> · for {}\n{}", dot(level), esc(label), minutes(for_s), esc(&fmt::truncate(text, 90))),
+        plain: format!("{} {label} — going on for {}: {text}", glyph(level), minutes(for_s)),
     }
 }
 
-pub fn airflow_line(app: &App, r: &crate::airflow::Run, now: i64) -> Line {
-    let task = app.airflow.progress.get(&(r.dag.clone(), r.id.clone())).and_then(|p| p.failed.first().cloned());
-    let at = r.end.or(r.at()).map(|t| hm(app, t)).unwrap_or_default();
-    let took = r.took(now).map(|s| format!(" · ran {}", fmt::dur(s as f64))).unwrap_or_default();
-    let at_task = task.as_ref().map(|t| format!(" at {}", esc(t))).unwrap_or_default();
+/// An issue told before that is over.
+pub fn cleared(group: Group, label: &str, for_s: i64) -> Line {
     Line {
-        group: Group::Airflow,
-        html: format!("{}{at} <code>{}</code> failed{at_task}{took} · {} run", dot(Severity::Crit), esc(&r.dag), esc(&r.kind)),
-        plain: format!("✖ {at} AIRFLOW {} failed{}{took} · run {}", r.dag, task.map(|t| format!(" at {t}")).unwrap_or_default(), r.id),
+        group,
+        ongoing: false,
+        html: format!("{}<b>{}</b> · cleared after {}", dot(Severity::Ok), esc(label), minutes(for_s)),
+        plain: format!("{label} — cleared after {}", minutes(for_s)),
     }
 }
 
-/// A batch of alerts as one message: grouped, each group oldest first.
+/// A batch of alerts as one message, grouped.
 pub fn alerts(app: &App, lines: &[Line], now: i64) -> String {
-    let mut out = vec![format!("🔔 <b>{} new</b> · {} {}", lines.len(), hm(app, now), esc(&app.time.label(now)))];
+    let going = lines.iter().filter(|l| l.ongoing).count();
+    let title = match (going, lines.len() - going) {
+        (0, n) => format!("🟢 <b>{} cleared</b>", n),
+        (n, 0) => format!("🔔 <b>{} going on for {}+ min</b>", n, super::PERSIST_S / 60),
+        (n, m) => format!("🔔 <b>{n} going on · {m} cleared</b>"),
+    };
+    let mut out = vec![format!("{title} · {} {}", hm(app, now), esc(&app.time.label(now)))];
     let mut groups: Vec<Group> = lines.iter().map(|l| l.group).collect();
     groups.sort();
     groups.dedup();
     let mut shown = 0;
     for group in &groups {
+        out.push(String::new());
         if groups.len() > 1 {
             out.push(format!("<b>{}</b>", group.title()));
         }
         for line in lines.iter().filter(|l| l.group == *group) {
-            if shown < 12 {
+            if shown < 10 {
                 out.push(line.html.clone());
             }
             shown += 1;
         }
     }
-    if shown > 12 {
-        out.push(format!("<i>… and {} more on the tape</i>", shown - 12));
+    if shown > 10 {
+        out.push(format!("\n<i>… and {} more — /status</i>", shown - 10));
     }
     out.join("\n")
 }
@@ -682,7 +676,7 @@ Ask me to stop something and you get a card: nothing happens until you press its
 
 <code>/status</code> — every panel in one message, without Claude
 <code>/kill &lt;node&gt; &lt;query_id&gt;</code> · <code>/cancel &lt;job id&gt;</code> — a card
-<code>/alerts red|all|off</code> — what I say unasked (red by default)
+<code>/alerts red|all|off</code> — what I say unasked: what has been red (or amber) for 10+ minutes
 <code>/forget</code> — start a new conversation";
 
 pub fn stranger(chat: i64) -> String {
@@ -713,8 +707,8 @@ pub const CANCEL_USAGE: &str = "<code>/cancel &lt;job id&gt;</code> — or just 
 
 pub fn alerts_set(alerts: super::Alerts) -> &'static str {
     match alerts {
-        super::Alerts::Red => "🔔 <b>Alerts: red only</b> — I speak unasked when something goes red.",
-        super::Alerts::All => "🔔 <b>Alerts: amber and red</b> — I speak unasked when something goes amber or red.",
+        super::Alerts::Red => "🔔 <b>Alerts: red only</b> — I speak unasked when something has been red for 10 minutes, and when it clears.",
+        super::Alerts::All => "🔔 <b>Alerts: amber and red</b> — I speak unasked when something has been amber or red for 10 minutes, and when it clears.",
         super::Alerts::Off => "<b>Alerts: off</b> — I speak only when asked.",
     }
 }
@@ -735,8 +729,8 @@ pub fn up(app: &App, alerts: super::Alerts) -> String {
         watching.push("Jira".to_string());
     }
     let alerts = match alerts {
-        super::Alerts::Red => "alerts: red only",
-        super::Alerts::All => "alerts: amber and red",
+        super::Alerts::Red => "alerts: red for 10+ min",
+        super::Alerts::All => "alerts: amber or red for 10+ min",
         super::Alerts::Off => "alerts: off",
     };
     format!("🟢 <b>cobserve is up</b> · watching {}\n<i>{alerts} · /status · /help</i>", watching.join(", "))
@@ -790,7 +784,11 @@ mod tests {
         println!("{}\n{HINT}\n\n{}\n\n----\n", facts.html, killed(&app, "asked", facts.killing.as_ref().unwrap()));
         let job = app.queue.jobs.iter().find(|j| j.clickhouse_target().is_some()).unwrap_or(&app.queue.jobs[0]);
         println!("{}\n\n----\n", cancel_card(&app, &job.id).unwrap().html);
-        let lines: Vec<Line> = app.tape.newest_first().take(4).map(|e| tape_line(&app, e, e.level.max(Severity::Warn))).collect();
+        let lines = vec![
+            ongoing(Group::Nodes, Severity::Crit, "clickhouse3", "memory 91.7% · CPU 99.0% · the server itself holds 46%", 734),
+            ongoing(Group::Airflow, Severity::Crit, "kyc_onboarding_tables", "last run failed at build_cohorts · scheduled run", 1200),
+            cleared(Group::Redash, "Redash", 1380),
+        ];
         println!("{}\n\n----\n{}", alerts(&app, &lines, now), up(&app, super::super::Alerts::Red));
     }
 }

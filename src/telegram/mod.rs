@@ -69,8 +69,11 @@ const ANSWER_KEPT: usize = 1200;
 const MESSAGE_MAX: usize = 3500;
 /// Alerts wait this long after the last, gathering what comes meanwhile into one message.
 const ALERT_GAP_S: i64 = 30;
-/// A red line followed by its recovery within this long gets the recovery told too.
-const RECOVERY_S: i64 = 600;
+/// An issue is told only once it has gone on this long — what clears sooner is not news.
+pub const PERSIST_S: i64 = 600;
+/// An issue missing from the screen this long is over; a shorter gap is a flicker, and its
+/// clock goes on.
+const GONE_S: i64 = 90;
 /// How long after a kill its query is watched for, to say it is gone.
 const CONFIRM_S: i64 = 60;
 const ACTIONS_MAX: usize = 5;
@@ -140,6 +143,69 @@ struct Card {
     facts: look::Facts,
 }
 
+/// Something wrong, watched until it has gone on for [`PERSIST_S`] — then told — or is over.
+#[derive(Debug, Clone)]
+struct Issue {
+    group: look::Group,
+    level: Severity,
+    label: String,
+    text: String,
+    since: i64,
+    seen: i64,
+    told: bool,
+}
+
+/// Something wrong on the screen now: a key, where it goes, how bad, its name, what it is, and
+/// since when, when the screen knows.
+type Seen = (String, look::Group, Severity, String, String, Option<i64>);
+
+/// What is wrong on the fleet and on Airflow now; `None` for a source not read.
+fn issues_now(app: &App, now: i64) -> (Option<Vec<Seen>>, Option<Vec<Seen>>) {
+    let fleet = app.with_view(|_| ()).map(|_| {
+        app.insights()
+            .into_iter()
+            .filter(|i| i.level.is_problem())
+            .map(|i| {
+                let text: String = i.parts.iter().map(|(t, _)| t.as_str()).collect();
+                let text = match text.rfind("  +") {
+                    Some(at) if text.ends_with(" more") => text[..at].to_string(),
+                    _ => text,
+                };
+                (format!("i:{}", i.label), look::group_of(&i.subject), i.level, i.label.clone(), text, None)
+            })
+            .collect()
+    });
+    let airflow = app.airflow.day_read.then(|| {
+        let mut latest: HashMap<&str, &crate::airflow::Run> = HashMap::new();
+        for run in app.airflow.runs.iter().filter(|r| !r.state.is_live()) {
+            let newer = latest.get(run.dag.as_str()).is_none_or(|l| run.at() > l.at());
+            if newer {
+                latest.insert(&run.dag, run);
+            }
+        }
+        let mut out = Vec::new();
+        // A DAG whose last run failed — until a run of it goes well.
+        for (dag, run) in latest {
+            if run.state == crate::airflow::RunState::Failed {
+                let task = app.airflow.progress.get(&(run.dag.clone(), run.id.clone())).and_then(|p| p.failed.first().cloned());
+                let text = match task {
+                    Some(task) => format!("last run failed at {task} · {} run", run.kind),
+                    None => format!("last run failed · {} run", run.kind),
+                };
+                out.push((format!("a:{dag}"), look::Group::Airflow, Severity::Crit, dag.to_string(), text, run.end.or(run.at())));
+            }
+        }
+        // A run going on far too long.
+        for run in app.airflow.runs.iter().filter(|r| r.state == crate::airflow::RunState::Running && r.severity(now).is_problem()) {
+            let took = run.took(now).map(|s| fmt::dur(s as f64)).unwrap_or_default();
+            let word = if run.is_stuck(now) { "stuck" } else { "running long" };
+            out.push((format!("r:{}:{}", run.dag, run.id), look::Group::Airflow, run.severity(now), run.dag.clone(), format!("{word} · {took}"), run.start));
+        }
+        out
+    });
+    (fleet, airflow)
+}
+
 /// A killed query watched until it leaves the list.
 #[derive(Debug, Clone)]
 struct Confirm {
@@ -170,10 +236,8 @@ pub struct Bot {
     typed: i64,
     pub alerts: Alerts,
     primed: bool,
-    told_tape: f64,
-    told_runs: std::collections::HashSet<(String, String)>,
-    /// What was alerted, by subject, and when: its recovery is news too.
-    recently: HashMap<String, i64>,
+    /// What is wrong now, by what it is about, and since when.
+    issues: HashMap<String, Issue>,
     owed: Vec<look::Line>,
     alerted: i64,
     pub out: Vec<Out>,
@@ -199,9 +263,7 @@ impl Bot {
             typed: 0,
             alerts: Alerts::Red,
             primed: false,
-            told_tape: 0.0,
-            told_runs: Default::default(),
-            recently: HashMap::new(),
+            issues: HashMap::new(),
             owed: Vec::new(),
             alerted: 0,
             out: Vec::new(),
@@ -548,61 +610,60 @@ impl Bot {
         self.watch(app, now);
     }
 
-    /// What went wrong since the last look: new red (or amber) lines of the tape, and Airflow
-    /// runs that failed — with what recovered soon after. What was already there when the bot
-    /// started is not news.
+    /// What is wrong, kept with since when: told once it has gone on for [`PERSIST_S`], and
+    /// again when it is over — what clears sooner is never told.
     fn watch(&mut self, app: &App, now: i64) {
-        let fresh_tape: Vec<&crate::tape::Event> = app.tape.newest_first().take_while(|e| e.at > self.told_tape).collect();
-        let failed: Vec<&crate::airflow::Run> = if app.airflow.day_read {
-            app.airflow.runs.iter().filter(|r| r.state == crate::airflow::RunState::Failed).collect()
-        } else {
-            Vec::new()
-        };
-        if let Some(newest) = fresh_tape.first() {
-            self.told_tape = newest.at;
-        }
         if !self.primed {
-            // Nothing is news until the fleet has been read once.
-            if app.with_view(|_| ()).is_some() {
-                self.primed = true;
-                self.told_runs.extend(failed.iter().map(|r| (r.dag.clone(), r.id.clone())));
-                for chat in self.chats.clone() {
-                    self.send(chat, look::up(app, self.alerts));
-                }
+            // Nothing is watched until the fleet has been read once.
+            if app.with_view(|_| ()).is_none() {
+                return;
             }
-            return;
+            self.primed = true;
+            for chat in self.chats.clone() {
+                self.send(chat, look::up(app, self.alerts));
+            }
         }
         let threshold = match self.alerts {
-            Alerts::Off => None,
-            Alerts::Red => Some(Severity::Crit),
-            Alerts::All => Some(Severity::Warn),
+            Alerts::Off | Alerts::Red => Severity::Crit,
+            Alerts::All => Severity::Warn,
         };
-        for event in fresh_tape.iter().rev() {
-            if event.kind == crate::tape::Kind::Note {
+        let (fleet, airflow) = issues_now(app, now);
+        let started = self.started;
+        // A source not read this time says nothing about its issues: they stay as they were.
+        let unread: Vec<&str> = [(fleet.is_none(), "i:"), (airflow.is_none(), "a:"), (airflow.is_none(), "r:")].into_iter().filter(|(no, _)| *no).map(|(_, p)| p).collect();
+        for issue in self.issues.iter_mut().filter(|(key, _)| unread.iter().any(|p| key.starts_with(p))) {
+            issue.1.seen = now;
+        }
+        for (key, group, level, label, text, since) in fleet.into_iter().flatten().chain(airflow.into_iter().flatten()) {
+            if level < threshold {
                 continue;
             }
-            let key = event.subject.as_ref().map(|s| format!("{s:?}"));
-            if threshold.is_some_and(|t| event.level >= t) {
-                self.owed.push(look::tape_line(app, event, event.level));
-                if let Some(key) = key {
-                    self.recently.insert(key, now);
-                }
-            } else if event.level == Severity::Ok
-                && let Some(key) = key
-                && self.recently.get(&key).is_some_and(|at| now - at <= RECOVERY_S)
+            let issue = self.issues.entry(key).or_insert_with(|| Issue { group, level, label: label.clone(), text: text.clone(), since: since.unwrap_or(now).clamp(started.min(now), now), seen: now, told: false });
+            issue.seen = now;
+            issue.level = issue.level.max(level);
+            issue.text = text;
+        }
+        let over: Vec<String> = self.issues.iter().filter(|(_, i)| now - i.seen > GONE_S).map(|(k, _)| k.clone()).collect();
+        let mut cleared = Vec::new();
+        for key in over {
+            if let Some(issue) = self.issues.remove(&key)
+                && issue.told
             {
-                self.recently.remove(&key);
-                self.owed.push(look::tape_line(app, event, Severity::Ok));
+                cleared.push(look::cleared(issue.group, &issue.label, issue.seen - issue.since));
             }
         }
-        self.recently.retain(|_, at| now - *at <= RECOVERY_S);
-        if app.airflow.day_read {
-            for run in failed {
-                if self.told_runs.insert((run.dag.clone(), run.id.clone())) && threshold.is_some() {
-                    self.owed.push(look::airflow_line(app, run, now));
-                }
-            }
+        let mut due: Vec<&mut Issue> = self.issues.values_mut().filter(|i| !i.told && now - i.since >= PERSIST_S).collect();
+        due.sort_by_key(|i| (std::cmp::Reverse(i.level), i.since));
+        let mut going = Vec::new();
+        for issue in due {
+            issue.told = true;
+            going.push(look::ongoing(issue.group, issue.level, &issue.label, &issue.text, now - issue.since));
         }
+        if self.alerts == Alerts::Off {
+            return;
+        }
+        self.owed.extend(going);
+        self.owed.extend(cleared);
         if self.owed.is_empty() || now - self.alerted < ALERT_GAP_S {
             return;
         }
@@ -616,12 +677,13 @@ impl Bot {
         {
             self.explains.remove(&oldest);
         }
+        let buttons = if lines.iter().any(|l| l.ongoing) {
+            vec![("🧠 Explain".to_string(), format!("e:{token}")), ("Status".to_string(), "S".to_string())]
+        } else {
+            Vec::new()
+        };
         for chat in self.chats.clone() {
-            self.out.push(Out::Send {
-                chat,
-                text: text.clone(),
-                buttons: vec![("🧠 Explain".to_string(), format!("e:{token}")), ("Status".to_string(), "S".to_string())],
-            });
+            self.out.push(Out::Send { chat, text: text.clone(), buttons: buttons.clone() });
         }
     }
 }
@@ -1018,30 +1080,82 @@ mod tests {
         );
     }
 
+    /// A fleet of one healthy node, read at `at`: nothing wrong on it.
+    fn quiet(at: i64) -> App {
+        const GIB: u64 = 1 << 30;
+        let node = crate::model::NodeSnapshot {
+            name: "ch1".into(),
+            host: "ch1".into(),
+            port: 9000,
+            shard: 1,
+            replica: 1,
+            version: "24.10".into(),
+            reachable: true,
+            mem_total: Some(64 * GIB),
+            mem_used: 10 * GIB,
+            cores: Some(16.0),
+            cpu_busy_cores: Some(2.0),
+            running: 0,
+            lag_s: 0,
+            active_parts: 10,
+            queries: vec![],
+            uptime_s: Some(100),
+            server_cpu_time_us: None,
+            max_memory_usage: Some(9 * GIB),
+            unreachable_reason: None,
+            poll_ms: Some(20),
+        };
+        let taken_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(at as u64);
+        let mut app = App::new();
+        app.update(crate::app::Event::Snapshot(Box::new(crate::model::FleetSnapshot { taken_at, nodes: vec![node] })));
+        app.tick_at(taken_at);
+        app
+    }
+
     #[test]
-    fn red_news_is_told_unasked_once_and_what_was_there_before_is_not() {
-        let mut app = app();
+    fn an_issue_is_told_once_it_has_gone_on_for_ten_minutes_and_again_when_it_clears() {
+        let app = app();
         let now = app.now();
         let mut bot = Bot::new(vec![7], now);
         bot.tick(&app, now);
         assert!(matches!(&sent(&bot)[..], [(text, _)] if text.starts_with("🟢 <b>cobserve is up</b>")), "only the hello: {:?}", bot.out);
         bot.out.clear();
-        let event = crate::tape::Event {
-            at: now as f64 + 1.0,
-            level: Severity::Crit,
-            kind: crate::tape::Kind::Node,
-            parts: vec![("ch-2 memory 96% · 15.0 GiB of 15.6 GiB".to_string(), crate::insight::Tone::Plain)],
-            subject: None,
-        };
-        app.tape.extend([event]);
-        bot.tick(&app, now + ALERT_GAP_S);
-        assert!(
-            matches!(&sent(&bot)[..], [(text, buttons)] if text.starts_with("🔔 <b>1 new</b>") && text.contains("🔴 ") && text.contains("ch-2 memory 96%") && buttons[0].1.starts_with("e:")),
-            "{:?}",
-            bot.out
-        );
+        // Red from the start — some of it for hours before the bot was — but the bot has not
+        // seen it for ten minutes yet: nothing.
+        bot.tick(&app, now + 300);
+        bot.tick(&app, now + PERSIST_S - 1);
+        assert!(bot.out.is_empty(), "{:?}", bot.out);
+        bot.tick(&app, now + PERSIST_S);
+        let (text, buttons) = sent(&bot).pop().expect("the alert");
+        assert!(text.starts_with("🔔 <b>") && text.contains("going on for 10+ min") && text.contains("<b>clickhouse3</b> · for 10m"), "{text}");
+        assert!(buttons[0].1.starts_with("e:"));
+        // Told once.
         bot.out.clear();
-        bot.tick(&app, now + 2 * ALERT_GAP_S);
-        assert!(bot.out.is_empty());
+        bot.tick(&app, now + PERSIST_S + 60);
+        assert!(bot.out.is_empty(), "{:?}", bot.out);
+        // A fleet not read says nothing; a flicker shorter than GONE_S does not end it.
+        let t = now + PERSIST_S + 60;
+        bot.tick(&App::new(), t + 30);
+        bot.tick(&quiet(t + 60), t + 60);
+        assert!(bot.out.is_empty(), "{:?}", bot.out);
+        // Gone for longer: it is over, and that is told.
+        bot.tick(&quiet(t + 60 + GONE_S + 1), t + 60 + GONE_S + 1);
+        assert!(sent(&bot).iter().any(|(text, _)| text.contains("🟢 <b>clickhouse3</b> · cleared after 11m")), "{:?}", bot.out);
     }
+
+    #[test]
+    fn what_clears_within_ten_minutes_is_never_told() {
+        let app = app();
+        let now = app.now();
+        let mut bot = Bot::new(vec![7], now);
+        bot.tick(&app, now);
+        bot.out.clear();
+        bot.tick(&app, now + 300);
+        bot.tick(&quiet(now + 300 + GONE_S + 1), now + 300 + GONE_S + 1);
+        bot.tick(&quiet(now + 2 * PERSIST_S), now + 2 * PERSIST_S);
+        // Airflow, not read by the quiet app, keeps its own; nothing of the fleet is told.
+        assert!(sent(&bot).iter().all(|(text, _)| !text.contains("<b>clickhouse3</b>") && !text.contains("<b>Redash</b>")), "{:?}", bot.out);
+        assert!(bot.issues.keys().all(|k| !k.starts_with("i:")), "{:?}", bot.issues.keys());
+    }
+
 }
