@@ -513,8 +513,10 @@ well, for the chats `TELEGRAM_CHAT_ID` names (`src/telegram/`):
   and when the query has left the node. `/kill <node> <query_id>` and `/cancel <job>` make a
   card without Claude. Another user's query needs the KILL QUERY grant on cobserve's login.
 - **`/status`**: an overview and a tab a panel — Fleet, Redash, Airflow, Jira — in one message.
-- **Unasked**, it tells what went red on the tape and every Airflow run that failed, gathered
-  every 30 s, with **Explain** (`/alerts red | all | off`).
+- **Unasked**, it tells what has been wrong for ten minutes — a node, a query, a Redash queue
+  (the screen's insights), a DAG whose last run failed or a run stuck — once, with **Explain**,
+  and again when it clears. What clears within ten minutes is never told; a gap of under 90 s
+  does not restart the clock (`/alerts red | all | off`).
 
 ## The desktop app
 
