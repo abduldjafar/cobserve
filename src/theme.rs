@@ -8,7 +8,8 @@
 //! - no colour at all under `NO_COLOR` (https://no-color.org) or `THEME=mono`: severity is
 //!   then carried by bold and by the glyphs, which every screen in this app prints anyway.
 //!
-//! `THEME=light` swaps the palette for light terminals. Everything else in the UI asks this
+//! `THEME=light` (or `mori`) swaps the palette for light terminals; `dark` or `soga` is the
+//! default. Everything else in the UI asks this
 //! module for a *role* (`muted`, `crit`, `surface`), never for a colour, so the choice is made
 //! in exactly one place.
 
@@ -59,63 +60,66 @@ struct Palette {
     tint_claude: (u8, u8, u8),
 }
 
-// "Tarum": the colours of hand-dyed batik. The dark ground is cloth dyed in soga, the
-// brown-black of the bark; the text is mori, the undyed cotton; the accent is tarum, the indigo
-// of the leaf. Severity keeps to the dyes that mean it: mengkudu root red, kunyit turmeric
-// yellow, the green of a young leaf. The light variant is the same cloth before the dye: mori
-// ground, soga ink. Nothing here is blue-grey: the chrome is the cloth, the colour is the news.
+// "Tarum": the colours of hand-dyed batik. The dark ground is cloth dyed in soga, the brown of
+// the bark — lifted to the icon's own soga, a ground you can sit in front of all day, not a
+// near-black; the text is mori, the undyed cotton; the accent is tarum, the indigo of the leaf.
+// Severity keeps to the dyes that mean it: mengkudu root red, kunyit turmeric yellow, and a
+// cooler leaf green, so ok and crit stay apart for a red-green blind eye too. The surfaces step
+// far enough apart to stay apart in 256 colours. The light variant (`THEME=mori`) is the same
+// cloth before the dye: mori ground, soga ink, the dyes as inks. Nothing here is blue-grey: the
+// chrome is the cloth, the colour is the news.
 const DARK: Palette = Palette {
-    bg: (22, 18, 15),
-    panel: (33, 27, 23),
-    raised: (45, 37, 31),
-    selection: (56, 52, 82),
-    border: (92, 79, 66),
-    rule: (64, 55, 47),
+    bg: (44, 38, 34),
+    panel: (55, 47, 42),
+    raised: (67, 58, 52),
+    selection: (69, 65, 106),
+    border: (106, 94, 84),
+    rule: (74, 65, 57),
     fg: (238, 228, 210),
-    text2: (200, 188, 168),
-    muted: (156, 142, 122),
-    faint: (110, 99, 86),
-    accent: (158, 156, 236),
-    person: (214, 160, 206),
-    claude: (226, 132, 94),
-    ok: (138, 190, 108),
+    text2: (207, 195, 174),
+    muted: (166, 154, 139),
+    faint: (127, 115, 103),
+    accent: (174, 172, 244),
+    person: (217, 168, 208),
+    claude: (230, 141, 102),
+    ok: (143, 207, 156),
     warn: (240, 180, 56),
-    crit: (246, 110, 90),
-    info: (126, 180, 166),
-    bar: (124, 128, 214),
-    server_bar: (112, 100, 88),
-    keycap: (58, 48, 40),
-    tint_ok: (31, 44, 26),
-    tint_warn: (58, 44, 16),
-    tint_crit: (64, 28, 22),
-    tint_claude: (60, 36, 26),
+    crit: (245, 114, 95),
+    info: (134, 189, 176),
+    bar: (134, 136, 218),
+    server_bar: (122, 110, 98),
+    keycap: (77, 68, 61),
+    tint_ok: (49, 64, 47),
+    tint_warn: (74, 58, 28),
+    tint_crit: (70, 40, 31),
+    tint_claude: (74, 51, 42),
 };
 
 const LIGHT: Palette = Palette {
-    bg: (248, 243, 233),
-    panel: (239, 232, 218),
-    raised: (229, 220, 203),
-    selection: (220, 218, 244),
-    border: (204, 191, 170),
-    rule: (226, 216, 198),
-    fg: (42, 33, 27),
-    text2: (86, 72, 60),
-    muted: (118, 103, 88),
-    faint: (164, 150, 132),
-    accent: (60, 58, 156),
-    person: (138, 64, 128),
-    claude: (180, 82, 46),
-    ok: (52, 118, 36),
-    warn: (150, 94, 0),
-    crit: (184, 44, 30),
-    info: (34, 112, 104),
-    bar: (86, 88, 176),
-    server_bar: (170, 158, 140),
-    keycap: (228, 218, 200),
-    tint_ok: (225, 238, 212),
-    tint_warn: (247, 231, 194),
-    tint_crit: (247, 219, 210),
-    tint_claude: (246, 224, 208),
+    bg: (247, 242, 232),
+    panel: (238, 231, 217),
+    raised: (228, 220, 203),
+    selection: (220, 218, 243),
+    border: (196, 184, 165),
+    rule: (221, 213, 196),
+    fg: (43, 34, 25),
+    text2: (81, 69, 59),
+    muted: (111, 98, 82),
+    faint: (148, 135, 120),
+    accent: (63, 63, 152),
+    person: (138, 74, 134),
+    claude: (171, 79, 42),
+    ok: (28, 111, 78),
+    warn: (141, 91, 0),
+    crit: (176, 58, 42),
+    info: (34, 112, 106),
+    bar: (102, 104, 200),
+    server_bar: (176, 163, 145),
+    keycap: (232, 225, 209),
+    tint_ok: (220, 239, 227),
+    tint_warn: (248, 236, 206),
+    tint_crit: (250, 230, 225),
+    tint_claude: (246, 224, 207),
 };
 
 /// Every colour role the UI uses.
@@ -500,10 +504,7 @@ pub fn choose(
     term: Option<&str>,
 ) -> (Depth, Variant) {
     let theme = theme.map(|t| t.trim().to_ascii_lowercase());
-    let variant = match theme.as_deref() {
-        Some("light") => Variant::Light,
-        _ => Variant::Dark,
-    };
+    let variant = if theme.as_deref().is_some_and(names_light) { Variant::Light } else { Variant::Dark };
     if no_color.is_some_and(|v| !v.is_empty()) || theme.as_deref() == Some("mono") {
         return (Depth::Mono, variant);
     }
@@ -522,6 +523,26 @@ pub fn choose(
         Depth::Ansi16
     };
     (depth, variant)
+}
+
+/// `THEME=light` or `THEME=mori`: the light variant, by either of its names.
+pub fn names_light(theme: &str) -> bool {
+    matches!(theme.trim().to_ascii_lowercase().as_str(), "light" | "mori")
+}
+
+/// The variant `THEME` asks for.
+pub fn variant_from_env() -> Variant {
+    if std::env::var("THEME").is_ok_and(|t| names_light(&t)) { Variant::Light } else { Variant::Dark }
+}
+
+/// A variant's ground and text, as `(r, g, b)`: what a program inside a session is told when it
+/// asks for the default colours.
+pub fn ground_and_text(variant: Variant) -> ((u8, u8, u8), (u8, u8, u8)) {
+    let p = match variant {
+        Variant::Dark => DARK,
+        Variant::Light => LIGHT,
+    };
+    (p.bg, p.fg)
 }
 
 fn from_env() -> Theme {
@@ -566,6 +587,8 @@ mod tests {
     #[test]
     fn the_light_variant_is_asked_for_by_name() {
         assert_eq!(choose(None, Some("LIGHT"), None, None).1, Variant::Light);
+        assert_eq!(choose(None, Some("mori"), None, None).1, Variant::Light);
+        assert_eq!(choose(None, Some("soga"), None, None).1, Variant::Dark);
         assert_eq!(choose(None, None, None, None).1, Variant::Dark);
     }
 
@@ -580,6 +603,16 @@ mod tests {
         // A saturated red stays in the cube.
         let red = nearest_256((250, 108, 98));
         assert!((16..=231).contains(&red), "{red}");
+    }
+
+    #[test]
+    fn the_surfaces_stay_apart_in_256_colours() {
+        for p in [DARK, LIGHT] {
+            let mut cells: Vec<u8> = [p.bg, p.panel, p.raised, p.keycap, p.selection].into_iter().map(nearest_256).collect();
+            cells.sort_unstable();
+            cells.dedup();
+            assert_eq!(cells.len(), 5, "{cells:?}");
+        }
     }
 
     #[test]

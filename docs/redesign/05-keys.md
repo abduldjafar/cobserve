@@ -61,7 +61,7 @@ Screens: `120x36-palette.txt`, `-palette-typed.txt`, `-palette-help.txt`.
 
 A click on a panel's frame or body focuses it; a second click where the cursor already is does
 what `⏎` does. A click on a tile, a row, a lane chooses it; on the top bar's clock toggles UTC;
-on `❖ cobserve` goes to the grid; on a status-bar hint runs it; on a palette row runs it; on the
+on `☗ cobserve` goes to the grid; on a status-bar hint runs it; on a palette row runs it; on the
 dialog's buttons. The wheel moves the focused cursor; over the floating pane it is the program's.
 `MOUSE=0` as today.
 

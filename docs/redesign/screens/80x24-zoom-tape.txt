@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › tape        esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › tape        esc back   ● live   15:52:07 WIB
 ╭ 7 TAPE · 21 lines · newest first ───────────── n note · y export · esc back ─╮
 │ ✖ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▃▃▁▁▁▁▁▁▁▁▁▃▁▃▁▃  10 ✖ · burst 15:26–15:29 · m.kairys ru
 │ ▲ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▁▁▁▁▁▁▁▃▁▁▁▃▁▁▁▁▃▅▃  11 ▲                                 │

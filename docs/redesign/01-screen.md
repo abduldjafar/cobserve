@@ -8,7 +8,7 @@ and the preset, density and replay variants listed at the end.
 ## 120×36, preset *all*
 
 ```
- ❖ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
+ ☗ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
 ╭ 1 FLEET ───────────────────────── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
 │ █ █ ▀▀█ ▀ █  cpu                                               ││ ▄█  █▀▀  waiting                            ▁▂▃▄▅  │
 │ ▀▀█ █▀▀  ▄▀  32.8%                                             ││  █  █▀█  6 running                     ▄▆▇▆▇█████  │
@@ -48,7 +48,7 @@ and the preset, density and replay variants listed at the end.
 
 ## Chrome
 
-**Top bar** (row 0; absent in *focus* density): `❖ cobserve · <profile>` at the left, the clock at
+**Top bar** (row 0; absent in *focus* density): `☗ cobserve · <profile>` at the left, the clock at
 the right (`● live   15:52:07 WIB`; `○ paused …`; `◷ 15:40 · replay −12m` in amber while
 replaying; a click toggles local ↔ UTC). Between them the day line when at least 60 columns are
 free (`04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59`, prayer names added from 80

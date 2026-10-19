@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › airflow     esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › airflow     esc back   ● live   15:52:07 WIB
 ╭ 5 AIRFLOW · airflow.example.net · 2.10.2 ─ scheduler ● 2s · triggerer ● 4s …─╮
 │ last 24 h  217 runs  ✔ 211  ✖ 3   ▸ 2  ◌ 1  ↻ 1   13 of 13 DAGs  read 0s ago │
 │ NOW · 2 running · 1 stuck · 1 queued · 3 failed today                        │

@@ -1,4 +1,4 @@
- ❖ cobserve · prod    Subuh 04:17 ━━━━━━━━━ Terbit 05:29 ━━━━━━━━━ Dzuhur 11:42 ━━━━━━━━━ Ashar 14:46 ━━━●┄┄┄┄┄┄ Maghrib 17:49 in 1h57m  ● live   15:52:07 WIB
+ ☗ cobserve · prod    Subuh 04:17 ━━━━━━━━━ Terbit 05:29 ━━━━━━━━━ Dzuhur 11:42 ━━━━━━━━━ Ashar 14:46 ━━━●┄┄┄┄┄┄ Maghrib 17:49 in 1h57m  ● live   15:52:07 WIB
 ╭ 1 FLEET ─────────────────────────────────────────────── 4 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ───────────────────────────────────── oldest 3m43s ✖ ─╮
 │ ▀▀█ █▀▀ ▀ █  cpu                                                                     ││ ▄█  █▀▀  waiting                                                     │
 │ ▀▀█ █▀█  ▄▀  28.9%                                                                   ││  █  █▀█  6 running                                                   │

@@ -86,7 +86,7 @@ size is preferred; the glyphs above are the contract either way.
 `✖` critical · `▲` warning · `●` fine / live · `○` paused / idle · `✔` done · `!` runaway (replaces
 today's `✕`, too close to `✖`) · `↯` unreachable · `◷` replay / snoozed · `☾` the next prayer ·
 `▸ ◌ ↻` running / queued / retrying · `✻ ▣ ▦ ❯` Claude / OpenCode / SQL / terminal · `⊘` a
-cancelled job · `✎` a note · `❖` the kawung mark.
+cancelled job · `✎` a note · `☗` the mark (the lighthouse's tower).
 
 ## Widths and fonts
 
@@ -105,4 +105,4 @@ cells). Octants (Unicode 16) are not used.
 | OSC 8 links | ✓ | ✓ | ✓ | ✓ | ? | ? | ? | ? check `desktop/` |
 | OSC 52 copy | ? | ✓ | ✓ | ✓ | ? | ? | ? | ? |
 | sync output (DEC 2026) | ✓ | ✓ | ✓ | ✓ | ? | ? | ignored | ? |
-| braille in the default font | ✓ | ✓ | ✓ | ✓ | ✓ | font | font | Rec Mono: check |
+| braille in the default font | ✓ | ✓ | ✓ | ✓ | ✓ | font | font | Maple Mono: ✓ |

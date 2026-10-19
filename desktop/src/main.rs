@@ -59,8 +59,9 @@ struct FromPage {
 }
 
 /// How the terminal looks: cobserve's own — Tarum, the colours of hand-dyed batik (soga ground,
-/// mori text, tarum indigo; src/theme.rs has the story) in Rec Mono Semicasual, which ships with
-/// the app — or, when `COBSERVE_ITERM_PROFILE` names one, an iTerm2 profile's font and colours.
+/// mori text, tarum indigo; or under `THEME=light` / `mori` the cloth before the dye;
+/// src/theme.rs has the story) in Maple Mono, which ships with the app — or, when
+/// `COBSERVE_ITERM_PROFILE` names one, an iTerm2 profile's font and colours.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 struct Look {
     font: String,
@@ -78,28 +79,62 @@ struct Look {
     ansi: Vec<String>,
     /// `dom` (the web view's own text, as crisp as the system's) or `webgl`.
     renderer: String,
+    /// The window round the terminal: a step lighter than the ground when dark, a step darker
+    /// when light. Empty for an iTerm2 profile's colours, where the page mixes its own.
+    chrome: String,
+    light: bool,
 }
 
 impl Default for Look {
     fn default() -> Look {
-        // Black, mengkudu, leaf, kunyit, tarum, secang, jalawe, mori — then each a shade lighter.
-        let ansi = [
-            "#2a231d", "#f66e5a", "#8abe6c", "#f0b438", "#9e9cec", "#d6a0ce", "#7eb4a6", "#d8ccb6", "#6e6356", "#ff8a72", "#a6d488",
-            "#ffcc5c", "#b8b6ff", "#e8bce2", "#9cd0c2", "#f6eee0",
-        ];
+        Look::of(false)
+    }
+}
+
+impl Look {
+    /// Soga, or with `light` mori. The 16 colours: black, mengkudu, leaf, kunyit, tarum, secang,
+    /// jalawe, mori — then each a shade lighter (on mori, the dyes as inks).
+    fn of(light: bool) -> Look {
+        let (ansi, background, foreground, cursor, selection, chrome) = if light {
+            (
+                [
+                    "#2b2219", "#b03a2a", "#1c6f4e", "#8d5b00", "#3f3f98", "#8a4a86", "#22706a", "#d8cfbe", "#6f6252", "#c94a3a", "#2a8a62",
+                    "#a97200", "#5b5cc4", "#a765a1", "#2f8b84", "#f7f2e8",
+                ],
+                "#f7f2e8",
+                "#2b2219",
+                "#3f3f98",
+                "#dcdaf3",
+                "#e9e2d3",
+            )
+        } else {
+            (
+                [
+                    "#4d443d", "#f5725f", "#8fcf9c", "#f0b438", "#aeacf4", "#d9a8d0", "#86bdb0", "#cfc3ae", "#7f7367", "#ff8f78", "#a8e2b2",
+                    "#ffcd5e", "#c6c4ff", "#ecc2e4", "#a0d6c9", "#f6eee0",
+                ],
+                "#2c2622",
+                "#eee4d2",
+                "#aeacf4",
+                "#45416a",
+                "#372f2a",
+            )
+        };
         Look {
-            font: "Rec Mono Semicasual".into(),
-            size: 13.5,
-            background: "#16120f".into(),
-            foreground: "#eee4d2".into(),
-            cursor: "#9e9cec".into(),
-            cursor_text: "#16120f".into(),
-            selection: "#383452".into(),
-            selected_text: "#eee4d2".into(),
+            font: "Maple Mono".into(),
+            size: 13.0,
+            background: background.into(),
+            foreground: foreground.into(),
+            cursor: cursor.into(),
+            cursor_text: background.into(),
+            selection: selection.into(),
+            selected_text: foreground.into(),
             cursor_style: "bar".into(),
             cursor_blink: true,
             ansi: ansi.iter().map(|c| c.to_string()).collect(),
             renderer: "dom".into(),
+            chrome: chrome.into(),
+            light,
         }
     }
 }
@@ -128,7 +163,11 @@ fn look_of(profile: &serde_json::Value, mut look: Look) -> Look {
             *slot = c;
         }
     };
+    let before = look.background.clone();
     color("Background Color", &mut look.background);
+    if look.background != before {
+        look.chrome.clear();
+    }
     color("Foreground Color", &mut look.foreground);
     color("Cursor Color", &mut look.cursor);
     color("Cursor Text Color", &mut look.cursor_text);
@@ -164,14 +203,15 @@ fn iterm_profile(name: &str) -> Option<serde_json::Value> {
     })
 }
 
-/// The look: cobserve's own, or the iTerm2 profile `COBSERVE_ITERM_PROFILE` names; and
-/// `COBSERVE_RENDERER`.
+/// The look: cobserve's own (light when `THEME` says so, as it does for cobserve inside), or
+/// the iTerm2 profile `COBSERVE_ITERM_PROFILE` names; and `COBSERVE_RENDERER`.
 fn look(env: &[(String, String)]) -> Look {
     let get = |key: &str| env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).or_else(|| std::env::var(key).ok());
+    let own = Look::of(get("THEME").is_some_and(|t| matches!(t.trim().to_ascii_lowercase().as_str(), "light" | "mori")));
     let profile = get("COBSERVE_ITERM_PROFILE").filter(|n| !n.trim().is_empty());
     let mut look = match profile.as_deref().and_then(iterm_profile) {
-        Some(profile) => look_of(&profile, Look::default()),
-        None => Look::default(),
+        Some(profile) => look_of(&profile, own),
+        None => own,
     };
     if let Some(renderer) = get("COBSERVE_RENDERER").filter(|r| r == "webgl" || r == "dom") {
         look.renderer = renderer;
@@ -197,9 +237,11 @@ fn page(look: &Look) -> String {
         .replace("/*WEBGL_JS*/", include_str!("../assets/vendor/addon-webgl.js"))
 }
 
-/// The type that ships with the app (desktop/assets/fonts, SIL Open Font License): Rec Mono
-/// Semicasual for the terminal, Recursive for the header and the chips — as `@font-face` rules
-/// with the files in them, so nothing is fetched and nothing needs installing.
+/// The type that ships with the app (desktop/assets/fonts, SIL Open Font License): Maple Mono for
+/// the terminal, the tabs and the chips — rounded and soft as the theme, and it draws cobserve's
+/// frames, bars and braille graphs itself, so the screen is one face — and Recursive's casual
+/// for the name. As `@font-face` rules with the files in them, so nothing is fetched and nothing
+/// needs installing.
 fn fonts() -> String {
     use base64::Engine as _;
     let face = |family: &str, weight: &str, format: &str, mime: &str, bytes: &[u8]| {
@@ -207,8 +249,7 @@ fn fonts() -> String {
         format!("@font-face {{ font-family: \"{family}\"; font-weight: {weight}; font-style: normal; font-display: block; src: url(data:{mime};base64,{data}) format(\"{format}\"); }}\n")
     };
     [
-        face("Rec Mono Semicasual", "400", "truetype", "font/ttf", include_bytes!("../assets/fonts/RecMonoSemicasual-Regular.ttf")),
-        face("Rec Mono Semicasual", "700", "truetype", "font/ttf", include_bytes!("../assets/fonts/RecMonoSemicasual-Bold.ttf")),
+        face("Maple Mono", "400 700", "woff2", "font/woff2", include_bytes!("../assets/fonts/MapleMono-wght400-700.woff2")),
         face("Recursive", "300 1000", "woff2", "font/woff2", include_bytes!("../assets/fonts/Recursive-latin.woff2")),
     ]
     .concat()
@@ -408,7 +449,8 @@ fn main() {
     let _menu = menu();
     let look = look(&app_env());
     let builder = WindowBuilder::new();
-    // The title bar a part of the window, dark, the screen running up under it as a terminal's does.
+    // The title bar a part of the window, in the look's light or dark, the screen running up
+    // under it as a terminal's does.
     #[cfg(target_os = "macos")]
     let builder = {
         use tao::platform::macos::WindowBuilderExtMacOS;
@@ -420,7 +462,7 @@ fn main() {
             .with_traffic_light_inset(tao::dpi::LogicalPosition::new(16.0, 16.0))
     };
     let window = match builder
-        .with_theme(Some(tao::window::Theme::Dark))
+        .with_theme(Some(if look.light { tao::window::Theme::Light } else { tao::window::Theme::Dark }))
         .with_title("cobserve")
         .with_inner_size(LogicalSize::new(1440.0, 900.0))
         .with_min_inner_size(LogicalSize::new(720.0, 420.0))
@@ -438,7 +480,7 @@ fn main() {
     let from_page = proxy.clone();
     let webview = WebViewBuilder::new()
         .with_html(page(&look))
-        .with_background_color(rgb(&look.background))
+        .with_background_color(rgb(if look.chrome.is_empty() { &look.background } else { &look.chrome }))
         .with_devtools(cfg!(debug_assertions))
         .with_drag_drop_handler({
             let proxy = proxy.clone();
@@ -567,10 +609,10 @@ mod tests {
     #[test]
     fn the_page_carries_the_terminal_and_fetches_nothing() {
         let page = page(&Look::default());
-        assert!(page.contains("\"font\":\"Rec Mono Semicasual\""), "the look put in");
+        assert!(page.contains("\"font\":\"Maple Mono\""), "the look put in");
         assert!(!page.contains("/*XTERM_JS*/") && !page.contains("/*WEBGL_JS*/") && !page.contains("/*FONTS*/"), "every part put in");
-        assert_eq!(page.matches("@font-face").count(), 3, "the type ships in the page");
-        assert!(page.contains("url(data:font/ttf;base64,") && page.contains("url(data:font/woff2;base64,"));
+        assert_eq!(page.matches("@font-face").count(), 2, "the type ships in the page");
+        assert!(page.contains("url(data:font/woff2;base64,"));
         assert!(page.contains("FitAddon") && page.contains("Unicode11Addon") && page.contains("WebglAddon"));
         assert!(!page.contains("src=\"http"), "nothing from the network");
     }

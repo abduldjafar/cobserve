@@ -1,4 +1,4 @@
- ❖ cobserve · prod                  ☾ Maghrib in 1h57m   ● live   15:52:07 WIB
+ ☗ cobserve · prod                  ☾ Maghrib in 1h57m   ● live   15:52:07 WIB
 ╭ 1 FLEET ─── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─ oldest 3m43s ✖ ─╮
 │ mem 41.8% 268/640 GiB                    ││ 16 waiting · oldest 3m43s        │
 │ cpu 32.8% 52/160 c        •••••••••••••  ││ ●●●●●●○ 6/7 busy · 3 stale       │

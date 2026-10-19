@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › node › clickesc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › node › clickesc back   ● live   15:52:07 WIB
 ╭ 4 clickh shard 1 · replica 1 · v24.11.1 · up 46d07h · poll 0.6 s · esc back ─╮
 │ WHO HOLDS IT  memory, share of the node · t│MEMORY · 60 mino 93.1% of 64 GiB │
 │ grigol.gankava   █░░░░  25.5%  16.3G  3.10c│                             ▁▃▄ │

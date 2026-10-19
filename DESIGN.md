@@ -40,7 +40,7 @@ Target 120×36, minimum 80×24, richer at 160×48 (`docs/redesign/01-screen.md`,
 `docs/redesign/screens/*.txt`).
 
 ```
- ❖ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
+ ☗ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
 ╭ 1 FLEET ───────────────────────── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
 │ █ █ ▀▀█ ▀ █  cpu                                               ││ ▄█  █▀▀  waiting                            ▁▂▃▄▅  │
 │ ▀▀█ █▀▀  ▄▀  32.8%                                             ││  █  █▀█  6 running                     ▄▆▇▆▇█████  │
@@ -74,7 +74,7 @@ Target 120×36, minimum 80×24, richer at 160×48 (`docs/redesign/01-screen.md`,
 
 | Region | Rows | Content |
 |---|---|---|
-| Top bar | 1 (none in *focus* density) | `❖ cobserve · <cluster>`, the day line (or its chip `☾ Maghrib in 1h57m`), the clock (`● live`, `○ paused`, `◷ replay −2m`); while zoomed, the path `dashboard › node › clickhouse3` and `esc back` |
+| Top bar | 1 (none in *focus* density) | `☗ cobserve · <cluster>`, the day line (or its chip `☾ Maghrib in 1h57m`), the clock (`● live`, `○ paused`, `◷ replay −2m`); while zoomed, the path `dashboard › node › clickhouse3` and `esc back` |
 | The grid | the rest | FLEET (55 %) · QUEUE; NODES (two rows of tiles); NODE 40 % · AIRFLOW 32 % · JIRA; TAPE 60 % · SESSIONS — `ui2/layout.rs`, exactly `01-screen.md`'s algorithm, tested at the worked sizes and 500 random ones |
 | Status bar | 1 | the hints of the scope in force, from the `Action` table; at the right `<preset> · 9/9 nodes · 0.8 s · read-only`, and this machine (`this Mac · cpu 31% · mem 12/32 GiB`) from 140 columns |
 
@@ -905,12 +905,13 @@ or from a slope over the last minutes of it.
   signals a process. With `FAKE=1` the machine is made up too, so screenshots carry no real
   process.
 - **Tarum** (`src/theme.rs`), cobserve's own palette, after the dyes of hand-made batik: a
-  soga brown-black ground, mori cream text, tarum indigo for the accent, the selection and a
+  soga brown ground (lifted to the icon's soga, `#2c2622`), mori cream text, tarum indigo for the accent, the selection and a
   bar's ordinary fill; mengkudu red, kunyit yellow and leaf green for §7's severities and
   nothing else. Light is the cloth before the dye. Text is at least 4.4:1 on every surface it
-  sits on, the body 14:1. The desktop app takes the same colours for its terminal and chrome and
-  ships Recursive (Rec Mono Semicasual in the terminal, Recursive in the header); the mark is a
-  kawung, batik's four-petalled motif (`❖` on screen).
+  sits on, the body 11.8:1. The desktop app takes the same colours for its terminal and chrome and
+  ships its type (Maple Mono in the terminal, the tabs and the chips; Recursive's casual for the
+  name); the mark is the icon's
+  lighthouse, its tower three database discs (`☗`, the tower's silhouette, on screen).
 - **The board and the loom** (`src/ui/board.rs`, `src/ui/loom.rs`): from 140 columns views 6
   and 5 leave the table. Jira is a board — its columns as lanes side by side, each ticket a block:
   the key and its priority, the summary in two lines, then how long in the column, the due date

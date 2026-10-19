@@ -7,36 +7,43 @@
 <style>/*FONTS*/</style>
 <style>
   /* The window: a header of the app's own over a panel holding the terminal. Colours come from
-     the look (Tarum, or an iTerm2 profile); severity alone colours a chip, as on cobserve's
-     screen. The type is Recursive, a touch casual, like a line drawn with a canting. */
+     the look (Tarum's soga or mori, or an iTerm2 profile); severity alone colours a chip, as on
+     cobserve's screen. The frame is a step lighter than the terminal (darker on mori), so the
+     screen sits in it as in a case; it moves a little — the live mark breathes while all is
+     well, the thread of tarum slides to the tab on screen, a chip that changed settles — and is
+     still under reduced motion. The type is Maple Mono, rounded and quiet (a 600 bold, not a
+     700); the name keeps Recursive's casual, like a line drawn with a canting. */ The type is Recursive, a touch casual, like a line drawn with a canting. */
   :root {
-    --bg: #16120f; --fg: #eee4d2; --accent: #9e9cec; --crit: #f66e5a; --warn: #f0b438; --ok: #8abe6c;
-    --chrome: color-mix(in srgb, var(--bg) 82%, black);
+    --bg: #2c2622; --fg: #eee4d2; --accent: #aeacf4; --crit: #f5725f; --warn: #f0b438; --ok: #8fcf9c;
+    --chrome: #372f2a;
     --line: color-mix(in srgb, var(--fg) 9%, transparent);
-    --muted: color-mix(in srgb, var(--fg) 55%, transparent);
-    --faint: color-mix(in srgb, var(--fg) 32%, transparent);
+    --muted: color-mix(in srgb, var(--fg) 58%, transparent);
+    --faint: color-mix(in srgb, var(--fg) 36%, transparent);
     --hover: color-mix(in srgb, var(--fg) 7%, transparent);
     --ui: "Recursive", -apple-system, BlinkMacSystemFont, sans-serif;
-    --mono: "Rec Mono Semicasual", ui-monospace, Menlo, monospace;
+    --mono: "Maple Mono", ui-monospace, Menlo, monospace;
   }
-  html, body { margin: 0; height: 100%; background: var(--chrome); overflow: hidden; color: var(--fg); font: 12.5px/1 var(--ui); font-variation-settings: "CASL" 0.5, "MONO" 0; -webkit-user-select: none; user-select: none; }
+  html, body { margin: 0; height: 100%; background: var(--chrome); overflow: hidden; color: var(--fg); font: 12.5px/1 var(--ui); font-variation-settings: "CASL" 0, "MONO" 0; -webkit-user-select: none; user-select: none; }
 
   /* -- the header: the title bar's height; the traffic lights on its left -------------------
      Words, not widgets: the tabs are cobserve's own masthead — a number and a name — and the
      one on screen has a thread of tarum under it. */
   #bar { position: absolute; top: 0; left: 0; right: 0; height: 44px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; padding: 0 18px 0 84px; box-sizing: border-box; }
-  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; white-space: nowrap; justify-self: start; font-variation-settings: "CASL" 1, "MONO" 0; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; white-space: nowrap; justify-self: start; font-variation-settings: "CASL" 1, "MONO" 0; }
   .brand svg { width: 15px; height: 15px; }
-  .mark { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--faint); }
+  .mark { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--faint); }
   .mark.ok { color: var(--ok); } .mark.warn { color: var(--warn); } .mark.crit { color: var(--crit); }
+  #pulse.ok { animation: breathe 2.6s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 
-  .tabs { display: flex; gap: 20px; font-family: var(--mono); font-size: 12.5px; height: 44px; align-items: stretch; }
-  .tab { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: default; position: relative; white-space: nowrap; }
+  .tabs { position: relative; display: flex; gap: 12px; font-family: var(--mono); font-size: 13px; height: 44px; align-items: stretch; }
+  .tab { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: default; position: relative; white-space: nowrap; margin: 9px 0; padding: 0 8px; border-radius: 6px; transition: color .15s, background-color .15s; }
   .tab .num { color: var(--faint); }
-  .tab:hover { color: var(--fg); }
-  .tab.on { color: var(--fg); font-weight: 700; }
+  .tab:hover { color: var(--fg); background: var(--hover); }
+  .tab.on { color: var(--fg); font-weight: 600; }
   .tab.on .num { color: var(--accent); }
-  .tab.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: 8px; height: 2px; background: var(--accent); border-radius: 1px; }
+  .tabs .thread { position: absolute; bottom: 5px; height: 2px; background: var(--accent); border-radius: 1px; opacity: 0;
+    transition: left .22s cubic-bezier(.2, .7, .2, 1), width .22s cubic-bezier(.2, .7, .2, 1), opacity .15s; }
   .tab .count { color: var(--faint); font-weight: 400; }
   .tab.calling .name { color: var(--warn); }
   .tab .ring { color: var(--warn); font-size: 9px; }
@@ -45,7 +52,7 @@
      One line of text, as a terminal's status line is: each thing watched with cobserve's own
      mark for how it is (✖ ▲ ●, coloured as on screen), its name, its few words; hairlines
      between. Woven along its top edge, faintly, a stripe of tarum and mori. */
-  #status { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; gap: 0; padding: 0 18px; box-sizing: border-box; font-family: var(--mono); font-size: 12px; }
+  #status { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; gap: 0; padding: 0 18px; box-sizing: border-box; font-family: var(--mono); font-size: 12.5px; }
   #status::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; opacity: .55;
     background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, transparent) 0 7px, transparent 7px 10px, color-mix(in srgb, var(--fg) 30%, transparent) 10px 12px, transparent 12px 15px); }
   .chips { display: flex; overflow: hidden; flex: 1; min-width: 0; align-items: center; }
@@ -53,7 +60,9 @@
   .chip:first-child { padding-left: 0; border-left: none; }
   .chip .mark { font-size: 11px; }
   .chip .label { color: var(--muted); }
-  .chip .text { color: var(--fg); }
+  .chip .text { color: var(--fg); border-radius: 4px; transition: color .25s; }
+  .chip.changed .text { animation: settle .9s ease-out; }
+  @keyframes settle { from { background: var(--hover); } to { background: transparent; } }
   .chip.crit .text { color: var(--crit); }
   .chip:hover .label, .chip:hover .text { text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 3px; }
   .chip.state .text { color: var(--warn); }
@@ -61,7 +70,7 @@
   .aside b { color: var(--muted); font-weight: 400; font-style: normal; }
 
   .clock { text-align: right; white-space: nowrap; line-height: 1.3; justify-self: end; font-family: var(--mono); }
-  .clock .time { font-weight: 700; font-size: 13px; }
+  .clock .time { font-weight: 600; font-size: 13px; }
   .clock .zone { color: var(--muted); font-size: 11px; margin-left: 4px; }
   .clock .next { color: var(--faint); font-size: 11px; }
 
@@ -69,13 +78,20 @@
   #panel { position: absolute; top: 44px; left: 10px; right: 10px; bottom: 32px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
   #screen { position: absolute; inset: 10px 8px 8px 12px; }
   .xterm .xterm-viewport { background: var(--bg) !important; overflow-y: hidden !important; }
-  .xterm { font-feature-settings: "liga" 0, "calt" 0; -webkit-font-smoothing: antialiased; }
+  /* Maple's cv02: the `a` with its arm, calmer than the single-storey one. */
+  .xterm, .tabs, #status, .clock { font-feature-settings: "liga" 0, "calt" 0, "cv02" 1; }
+  .xterm { -webkit-font-smoothing: antialiased; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #pulse.ok, .chip.changed .text { animation: none; }
+    .tab, .tabs .thread, .chip .text { transition: none; }
+  }
 
   /* A narrower window: the hint goes, then the aside, the names in the selvedge, the tabs' names. */
   @media (max-width: 1640px) { .aside .hint { display: none; } }
   @media (max-width: 1320px) { .aside { display: none; } }
   @media (max-width: 1180px) { .chip .label { display: none; } }
-  @media (max-width: 1080px) { .tab .name { display: none; } .tabs { gap: 12px; } }
+  @media (max-width: 1080px) { .tab .name { display: none; } .tabs { gap: 4px; } }
   @media (max-width: 820px) { .chip:not(.crit):not(.state) { display: none; } .clock .next { display: none; } }
   @media (max-width: 700px) { .brand .word { display: none; } }
 </style>
@@ -83,7 +99,9 @@
 <body>
 <header id="bar">
   <div class="brand">
-    <svg viewBox="0 0 16 16"><g fill="var(--accent)"><ellipse cx="8" cy="4.1" rx="2.5" ry="3.1"/><ellipse cx="8" cy="11.9" rx="2.5" ry="3.1"/><ellipse cx="4.1" cy="8" rx="3.1" ry="2.5"/><ellipse cx="11.9" cy="8" rx="3.1" ry="2.5"/></g><circle cx="8" cy="8" r="1.3" fill="var(--chrome)"/></svg>
+    <!-- The icon's lighthouse at 15 px: tower and cap, the kunyit lamp, the tarum sea, one gap
+         for the discs. No red: the mark beside it says how things are. -->
+    <svg viewBox="0 0 16 16"><rect x="0" y="13" width="16" height="3" rx="1" fill="var(--accent)"/><path d="M5.5 13 L6.3 6.5 H9.7 L10.5 13 Z" fill="var(--fg)"/><rect x="6.4" y="4.4" width="3.2" height="2.1" fill="var(--warn)"/><path d="M4.8 4.4 L8 1.4 L11.2 4.4 Z" fill="var(--fg)"/><rect x="6.1" y="9.6" width="3.8" height="0.8" fill="var(--chrome)"/></svg>
     <span class="word">cobserve</span>
     <span class="mark" id="pulse"></span>
   </div>
@@ -115,6 +133,8 @@
   root.setProperty("--crit", a[1]);
   root.setProperty("--warn", a[3]);
   root.setProperty("--ok", a[2]);
+  // An iTerm2 profile's colours bring no frame: it is mixed from their ground.
+  root.setProperty("--chrome", look.chrome || `color-mix(in srgb, ${look.background} 82%, ${look.light ? "white" : "black"})`);
 
   // A page with no origin may keep no storage: the size is then the profile's each time.
   const store = {
@@ -123,10 +143,12 @@
   };
   const saved = Number(store.get("fontSize"));
   const term = new Terminal({
-    // Rec Mono for the letters; the icons a prompt draws (Starship, powerline) from a Nerd Font
-    // on the machine, which Rec Mono does not carry.
-    fontFamily: `"${look.font}", "Rec Mono Semicasual", "Symbols Nerd Font Mono", "JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", ui-monospace, "SF Mono", Menlo, monospace`,
+    // Maple Mono for the letters, the frames and the graphs; the icons a prompt draws (Starship,
+    // powerline) from a Nerd Font on the machine, which Maple Mono does not carry.
+    fontFamily: `"${look.font}", "Maple Mono", "Symbols Nerd Font Mono", "JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", ui-monospace, "SF Mono", Menlo, monospace`,
     fontSize: saved >= 9 && saved <= 28 ? saved : look.size,
+    fontWeight: "400",
+    fontWeightBold: "600",
     lineHeight: 1.0,
     letterSpacing: 0,
     allowProposedApi: true,
@@ -193,6 +215,23 @@
     tab.addEventListener("click", () => go(v.key));
     tabs.appendChild(tab);
   }
+  // The thread of tarum under the tab on screen: one, sliding to it.
+  const thread = document.createElement("div");
+  thread.className = "thread";
+  tabs.appendChild(thread);
+  const placeThread = () => {
+    const on = tabs.querySelector(".tab.on");
+    thread.style.opacity = on && on.offsetWidth ? "1" : "0";
+    if (on && on.offsetWidth) {
+      thread.style.left = `${on.offsetLeft + 8}px`;
+      thread.style.width = `${on.offsetWidth - 16}px`;
+    }
+  };
+  new ResizeObserver(placeThread).observe(tabs);
+  // What each chip said the frame before and when it last changed, so the one that changed can
+  // settle — across frames, which come faster than the settling and draw the chips anew.
+  let said = new Map();
+  const changedAt = new Map();
   const chips = document.getElementById("chips");
   // How a thing is, in the marks cobserve's own screen uses.
   const glyph = { crit: "✖", warn: "▲", ok: "●", none: "·" };
@@ -202,7 +241,7 @@
     const pulse = document.getElementById("pulse");
     pulse.className = `mark ${s.status}`;
     pulse.textContent = glyph[s.status] ?? "·";
-    for (const tab of tabs.children) {
+    for (const tab of tabs.querySelectorAll(".tab")) {
       tab.classList.toggle("on", tab.dataset.view === s.view);
       tab.querySelector(".count")?.remove();
       tab.querySelector(".ring")?.remove();
@@ -220,6 +259,19 @@
     chips.innerHTML = states.join("") + s.chips
       .map((c) => `<div class="chip ${c.sev}" data-view="${c.view}" title="${esc(c.label)}: ${esc(c.text)}"><span class="mark ${c.sev}">${glyph[c.sev] ?? "·"}</span><span class="label">${esc(c.label.toLowerCase())}</span><span class="text">${esc(c.text)}</span></div>`)
       .join("");
+    const now = new Map();
+    for (const chip of chips.querySelectorAll("[data-view]")) {
+      const label = chip.querySelector(".label").textContent, text = chip.querySelector(".text").textContent;
+      now.set(label, text);
+      if (said.has(label) && said.get(label) !== text) changedAt.set(label, performance.now());
+      const since = performance.now() - (changedAt.get(label) ?? -1e9);
+      if (since < 900) {
+        chip.classList.add("changed");
+        chip.querySelector(".text").style.animationDelay = `-${Math.round(since)}ms`;
+      }
+    }
+    said = now;
+    placeThread();
     for (const chip of chips.querySelectorAll("[data-view]")) {
       const view = byNumber(Number(chip.dataset.view));
       if (view) chip.addEventListener("click", () => go(view.key));

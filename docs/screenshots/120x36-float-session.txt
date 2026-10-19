@@ -1,4 +1,4 @@
- ❖ cobserve · prod    04:17 ━━ 05:29 ━━ 11:42 ━━ 14:46 ━●┄ 17:49 in 1h57m ┄┄ 18:58               ● live   15:52:07 WIB
+ ☗ cobserve · prod    04:17 ━━ 05:29 ━━ 11:42 ━━ 14:46 ━●┄ 17:49 in 1h57m ┄┄ 18:58               ● live   15:52:07 WIB
 ╭ 1 FLEET ───────────────────────── 4 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
 │ ▀▀█ █▀▀ ▀ ╭─ 7 claude · ~/work/billing ⎇ main · ○ idle  8 ▣ opencode · 9 ❯ terminal · 10 ▦ query · + n… ─╮           │
 │ ▀▀█ █▀█  ▄│ ✻ Claude Code  ~/work/billing                                                                │           │

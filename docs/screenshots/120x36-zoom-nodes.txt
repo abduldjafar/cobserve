@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › nodes                                               esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › nodes                                               esc back   ● live   15:52:07 WIB
 ╭ 3 NODES · 9 ─────────────────────────────────────────────────────── sorted by pressure · s · / filter · ⏎ opens one ─╮
 │ ╭ clickhouse3 ────────────╮ ╭ clickhouse-bi ──────────╮ ╭ clickhouse7 ─── lag 12s ╮ ╭ clickhouse2 ────────────╮      │
 │ │ █████████████████████░░ │ │ ███████████████░░░░░░░░ │ │ ██████████████░░░░░░░░░ │ │ ██████████░░░░░░░░░░░░░ │      │

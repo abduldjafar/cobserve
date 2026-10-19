@@ -144,7 +144,7 @@ everything below it.
 120×36:
 
 ```
- ❖ cobserve · prod    dashboard › queue                                               esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › queue                                               esc back   ● live   15:52:07 WIB  
 ╭ 2 REDASH QUEUE · redash.example.net · 10.1.0 ───────────────────────────────────────── 7 workers, 6 busy · esc back ─╮
 │ ╭ waiting ─────────────────╮╭ queues ────────────────────────────────────────────────╮╭ waiting · 4 min ───────────╮ │
 │ │ ▄█  ▀▀█  jobs waiting    ││ QUEUE              RUN  WAIT  OLDEST   WORKERS    STALE││100 ┤                       │ │
@@ -190,7 +190,7 @@ ticks; `!` is red; `▲` amber; the hero's `12` is amber bold (the oldest wait i
 80×24:
 
 ```
- ❖ cobserve · prod    dashboard › queue       esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › queue       esc back   ● live   15:52:07 WIB  
 ╭ 2 REDASH QUEUE · redash.example.net · 10.1.0 ─ 7 workers, 6 busy · esc back ─╮
 │ 12 waiting · oldest 2m13s ▲ · 7 named  ●●●●●●○ 6/7 busy · 3 stale · 3 of 4 ! │
 │ queries ●●●● 4/4 · 9 ◌ · 2m13s ▲   scheduled_queries ●● 2/2 · 3 ◌ · 1m01s ▲  │
@@ -348,7 +348,7 @@ order: what is wrong, what the day looked like, what this run is doing.
 frame are not visible in text):
 
 ```
- ❖ cobserve · prod    dashboard › airflow                                             esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › airflow                                             esc back   ● live   15:52:07 WIB  
 ╭ 5 AIRFLOW · airflow.example.net · 2.10.2 ─────────────────────────────── scheduler ● 2s · triggerer ● 4s · esc back ─╮
 │ last 24 h   217 runs  ✔ 211  ✖ 3   ▸ 2 running  ◌ 1 queued  ↻ 1 retrying   13 of 13 DAGs ran · 3 paused  read 0s ago │
 │ NOW · 2 running · 1 stuck · 1 queued · 3 failed today                                                                │
@@ -393,7 +393,7 @@ this. Everything else is the fake's.
 80×24 (no Gantt under 30 inside rows; the cards are one line each under 100 columns):
 
 ```
- ❖ cobserve · prod    dashboard › airflow     esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › airflow     esc back   ● live   15:52:07 WIB  
 ╭ 5 AIRFLOW · airflow.example.net · 2.10.2 ─ scheduler ● 2s · triggerer ● 4s …─╮
 │ last 24 h  217 runs  ✔ 211  ✖ 3   ▸ 2  ◌ 1  ↻ 1   13 of 13 DAGs  read 0s ago │
 │ NOW · 2 running · 1 stuck · 1 queued · 3 failed today                        │
@@ -567,7 +567,7 @@ headers where the tickets are, not only in the frame title.
 120×36:
 
 ```
- ❖ cobserve · prod    dashboard › jira                                                esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › jira                                                esc back   ● live   15:52:07 WIB  
 ╭ 6 JIRA · jira.example.net · 9.12.1 · Sam Example ──────────────────────────── ✖ 1 overdue · ▲ 1 due soon · esc back ─╮
 │ LOGGED · October 2026   66h30m in 9 working days · 7h23m a working day · today 2h30m       t by ticket · read 0s ago │
 │       8½  8       7½  8 8½  8 7½        8 2½                                                                         │
@@ -608,7 +608,7 @@ headers where the tickets are, not only in the frame title.
 80×24 (3-line blocks, one-line summaries, one LOGGED line, no detail card):
 
 ```
- ❖ cobserve · prod    dashboard › jira        esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › jira        esc back   ● live   15:52:07 WIB  
 ╭ 6 JIRA · jira.example.net · 9.12.1 · Sam Example ─ ✖ 1 overdue · ▲ 1 due so…─╮
 │ LOGGED · October · 66h30m in 9 working days · today 2h30m        t by ticket │
 │ IN PROGRESS 4 ▲ 1  IN REVIEW 4 ✖ 1    FEEDBACK 1         DONE 8 in 7 days    │
@@ -782,7 +782,7 @@ program, so their cards show the `starting claude in ~/work/billing …` message
 strip is the simulation's numbers and is drawn only when `app.usage.read`:
 
 ```
- ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
 ╭ 8 SESSIONS · 4 ────────────────────────────────────────────────────────────── n new · / find · x x close · esc back ─╮
 │ ✻ 287.0M today · ≈ $191.17 · session 11% · week 70%   ▣ 53.9M today · $0.86                 4 sessions · 1 needs you │
 │ n new session · ↻ past conversations · / find one · x x close · \ float it · ⏎ open it full · r rename it            │
@@ -836,7 +836,7 @@ in `~/work/airflow-dags`), the branch names. The twenty fit in the 30 rows witho
 strip counts every session, not only those on screen:
 
 ```
- ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
 ╭ 8 SESSIONS · 20 ───────────────────────────────────────────────────────────── n new · / find · x x close · esc back ─╮
 │ ✻ 287.0M today · ≈ $191.17 · session 11% · week 70%   ▣ 53.9M today · $0.86    20 sessions · 3 working · 1 needs you │
 │ n new session · ↻ past conversations · / find one · x x close · \ float it · ⏎ open it full · r rename it            │
@@ -891,7 +891,7 @@ hint line's first words become `50 of 50 · x x closes one` and the frame's righ
 `n new` (as today's list says it):
 
 ```
- ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
 ╭ 8 SESSIONS · 50 ───────────────────────────────────────────────────────────────────── x x close · / find · esc back ─╮
 │ ✻ 287.0M today · ≈ $191.17 · session 11% · week 70%   ▣ 53.9M today · $0.86    50 sessions · 7 working · 2 need you  │
 │ 50 of 50 · x x closes one · ↻ past conversations · / find one · \ float it · ⏎ open it full · r rename it            │
@@ -943,7 +943,7 @@ only, then loses the plan's limits before the counts; the list has 18 rows for 2
 the window again. The cursor is on 13 here, so both end lines show:
 
 ```
- ❖ cobserve · prod    dashboard › sessions    esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › sessions    esc back   ● live   15:52:07 WIB  
 ╭ 8 SESSIONS · 20 ───────────────────────────────────────── / find · esc back ─╮
 │ ✻ 287.0M today · ≈ $191.17             20 sessions · 3 working · 1 needs you │
 │ n new · ↻ resume · / find · x x close · \ float · ⏎ full · r rename          │
@@ -981,7 +981,7 @@ not lost; the preview follows the match under the cursor. The layout itself does
 finding (it is chosen by the total, §4.5), so typing never reflows the screen:
 
 ```
- ❖ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
+ ☗ cobserve · prod    dashboard › sessions                                            esc back   ● live   15:52:07 WIB  
 ╭ 8 SESSIONS · 20 ───────────────────────────────────────────────────────────── n new · / find · x x close · esc back ─╮
 │ ✻ 287.0M today · ≈ $191.17 · session 11% · week 70%   ▣ 53.9M today · $0.86    20 sessions · 3 working · 1 needs you │
 │ ⌕ /shell▏  1 of 3 · ↑↓ choose · ⏎ goes there · esc back                                                              │

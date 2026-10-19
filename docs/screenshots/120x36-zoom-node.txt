@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › node › clickhouse3                                  esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › node › clickhouse3                                  esc back   ● live   15:52:07 WIB
 ╭ 4 clickhouse3 · pay-ch-node-1:9000 ──────── shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 0.0 s · esc back ─╮
 │ WHO HOLDS IT  memory, share of the node · the rows add up to the │MEMORY · 4 min                     93.3% of 64 GiB │
 │ grigol.gankava   ███████░░░░░░░░░░░░░░░░░░░░  25.5%  16.3G  3.10c│         ⢀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣶⣶⣶⣶⣶⣶⡆         ⣀⣀⣀ │

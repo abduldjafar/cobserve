@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › sessions    esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › sessions    esc back   ● live   15:52:07 WIB
 ╭ 8 SESSIONS · 4 ────────────────────── n new · / find · x x close · esc back ─╮
 │                                         4 sessions · 1 working · 1 needs you │
 │ n new · ↻ resume · / find · x x close · \ float · ⏎ open · f full            │

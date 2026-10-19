@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › tape                                                esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › tape                                                esc back   ● live   15:52:07 WIB
 ╭ 7 TAPE · 29 lines · newest first ───────────────────────────────────────────────────── n note · y export · esc back ─╮
 │  TAPE · 29 events · 8 ✖ · 18 ▲ · newest first · ↑↓ scroll · ⏎ go to it                                               │
 │    TIME WIB  KIND   WHAT HAPPENED                                                                                    │

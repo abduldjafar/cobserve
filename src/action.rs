@@ -90,7 +90,7 @@ fn grid_or_local(app: &mut App, _: &str) {
 
 /// `:theme`: the other Tarum variant than the one on screen.
 fn theme_toggle(app: &mut App, _: &str) {
-    let from_env = std::env::var("THEME").is_ok_and(|t| t.trim().eq_ignore_ascii_case("light"));
+    let from_env = crate::theme::variant_from_env() == crate::theme::Variant::Light;
     let light = !app.shell.light.unwrap_or(from_env);
     app.shell.light = Some(light);
     let word = if light { "light · mori, the cloth before the dye" } else { "dark · soga and tarum" };
