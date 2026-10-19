@@ -114,7 +114,7 @@ fn the_120x36_dashboard_chrome_and_the_fleet_and_queue_row() {
     let want = screen("120x36-dash");
 
     // Row 0: the name at the left, the clock at the right, the day line between them.
-    assert!(got[0].starts_with(" ❖ cobserve · prod    "), "{}", got[0]);
+    assert!(got[0].starts_with(" ☗ cobserve · prod    "), "{}", got[0]);
     assert!(trimmed(&got[0]).ends_with("● live   15:52:07 WIB"), "{}", got[0]);
     assert_eq!(col(&got[0], "● live"), col(&want[0], "● live"));
     assert!(got[0].contains("━●┄") && got[0].contains(" in "), "the day line, the present on it: {}", got[0]);
@@ -161,7 +161,7 @@ fn the_80x24_and_160x48_dashboards_have_their_frames_where_the_screens_do() {
     let app = app_after(30);
     let got = render(&app, 80, 24);
     let want = screen("80x24-dash");
-    assert!(got[0].starts_with(" ❖ cobserve · prod") && trimmed(&got[0]).ends_with("● live   15:52:07 WIB"), "{}", got[0]);
+    assert!(got[0].starts_with(" ☗ cobserve · prod") && trimmed(&got[0]).ends_with("● live   15:52:07 WIB"), "{}", got[0]);
     assert!(got[0].contains("☾ Maghrib in "), "under 60 free columns the chip: {}", got[0]);
     assert_eq!(col(&got[0], "☾ Maghrib"), col(&want[0], "☾ Maghrib"));
     same_frames(&got, &want, 1..=5, "80x24");
@@ -726,7 +726,7 @@ fn a_click_focuses_a_second_opens() {
     app.update(click(100, 25));
     assert_eq!(app.shell.zoom, Some(PanelId::Jira));
     app.update(click(5, 0));
-    assert_eq!(app.shell.zoom, None, "❖ cobserve goes to the grid");
+    assert_eq!(app.shell.zoom, None, "☗ cobserve goes to the grid");
     // A tile: the second one in the first row.
     app.update(click(25, 11));
     assert_eq!((app.shell.focus, app.shell.chosen.as_deref()), (PanelId::Nodes, Some("clickhouse-bi")));
@@ -950,8 +950,8 @@ fn css(color: ratatui::style::Color, fallback: &str) -> String {
 
 fn html_with(buf: &ratatui::buffer::Buffer, title: &str, theme: &crate::theme::Theme) -> String {
     use ratatui::style::Modifier;
-    let fg0 = css(theme.fg, "#dce2eb");
-    let bg0 = css(theme.bg, "#0f1219");
+    let fg0 = css(theme.fg, "#eee4d2");
+    let bg0 = css(theme.bg, "#2c2622");
     let mut out = String::new();
     out.push_str(&format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title><style>\
@@ -987,7 +987,7 @@ fn html_with(buf: &ratatui::buffer::Buffer, title: &str, theme: &crate::theme::T
                 std::mem::swap(&mut fg, &mut bg);
             }
             if cell.modifier.contains(Modifier::DIM) {
-                fg = "#7a8596".into();
+                fg = css(theme.faint, "#7f7367");
             }
             let this = (fg, bg, cell.modifier.contains(Modifier::BOLD), cell.modifier.contains(Modifier::UNDERLINED));
             if style.as_ref() != Some(&this) {

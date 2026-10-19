@@ -190,14 +190,13 @@ impl vt100::Callbacks for Replies {
     }
 
     /// OSC 10 / 11 `?`: the default colours, which some programs ask for to pick a light or a
-    /// dark theme. The monitor is dark unless THEME=light says otherwise.
+    /// dark theme. The answer is the theme's own ground and text (soga, or mori under
+    /// THEME=light).
     fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
         if let [which @ (b"10" | b"11"), b"?"] = params {
-            let light = std::env::var("THEME").is_ok_and(|t| t.eq_ignore_ascii_case("light"));
-            let rgb = match (*which == b"10", light) {
-                (true, false) | (false, true) => "dcdc/e2e2/ebeb",
-                (true, true) | (false, false) => "0f0f/1212/1919",
-            };
+            let (ground, text) = crate::theme::ground_and_text(crate::theme::variant_from_env());
+            let (r, g, b) = if *which == b"10" { text } else { ground };
+            let rgb = format!("{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}");
             let which = String::from_utf8_lossy(which);
             self.out.extend(format!("\x1b]{which};rgb:{rgb}\x1b\\").as_bytes());
         }

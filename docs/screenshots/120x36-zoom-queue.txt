@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › queue                                               esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › queue                                               esc back   ● live   15:52:07 WIB
 ╭ 2 REDASH QUEUE · redash.example.net · 10.1.0 ───────────────────────────────────────── 7 workers, 6 busy · esc back ─╮
 │ ╭ waiting ─────────────────╮╭ queues ─────────────────────────────── read 1m57s ago ─╮╭ waiting · 4 min ───────────╮ │
 │ │ ▄█  █▀▀  jobs waiting    ││ QUEUE             RUN  WAIT  OLDEST  WORKERS           ││ 100 ┤                      │ │

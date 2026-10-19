@@ -44,7 +44,7 @@ pub fn top_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     let (y, w) = (area.y, area.width);
-    p.put(1, y, "❖", theme.accent());
+    p.put(1, y, "☗", theme.accent());
     p.put(3, y, "cobserve", theme.strong());
     p.put(12, y, &format!("· {}", app.shell.profile), theme.muted());
 

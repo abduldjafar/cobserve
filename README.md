@@ -453,17 +453,20 @@ have a user the other one does not know.
 | `MOUSE` | `0` leaves the mouse to the terminal: no clicks, but selection without a modifier | on |
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `CH_TIMEOUT_MS` | how long a node has to answer one request before it reads `↯ unreachable` — over a VPN, `5000` | `1500` |
-| `THEME` | `dark`, `light` or `mono` | `dark` |
+| `THEME` | `dark` (or `soga`), `light` (or `mori`) or `mono` — Cobserve.app follows it too | `dark` |
 | `NO_COLOR` | any value: no colour at all (glyphs still carry severity) | unset |
 
 Colour depth follows the terminal: 24-bit when `COLORTERM` says so, the 256-colour palette
 otherwise, the 16 ANSI colours (no painted background) on anything older.
 
 The palette is cobserve's own, **Tarum**, after the dyes of hand-made batik: the dark ground is
-cloth dyed in soga, the bark's brown-black, the text the cream of mori, the undyed cotton, and
-the accent the indigo of tarum leaves. Severity keeps to the dyes that mean it — mengkudu red,
-kunyit yellow, the green of a young leaf — and nothing else is coloured. `THEME=light` is the
-same cloth before the dye: a mori ground, soga ink, a deep tarum.
+cloth dyed in soga — the icon's warm brown, soft enough to sit in front of all day — the text
+the cream of mori, the undyed cotton, and the accent the indigo of tarum leaves. Severity keeps
+to the dyes that mean it — mengkudu red, kunyit yellow, a cool leaf green that stays apart from
+the red for a red-green blind eye — and nothing else is coloured. `THEME=light` (or `mori`) is
+the same cloth before the dye: a mori ground, soga ink, a deep tarum. In Cobserve.app the frame
+round the terminal is a step lighter than the screen (darker on mori), the live mark breathes
+while all is well, and the tab underline slides to the view on screen.
 
 ![Light theme](docs/screenshots/120x36-light.png)
 
@@ -526,8 +529,9 @@ pseudo-terminal: the same program, keys, mouse, colours and sessions included. B
 glyphs are drawn to the cell, so bars and rules have no seams.
 
 It looks like cobserve: Tarum for the terminal's colours, the header and the chips, and
-**Recursive** for the type — Rec Mono Semicasual in the terminal, Recursive in the header, a
-touch casual, like a line drawn with a canting. Both ship inside the app (SIL Open Font License,
+**Maple Mono** for the type — rounded and soft, with a quiet 600 bold, and it draws cobserve's
+frames, bars and braille graphs itself, so the screen is one face; the name stays in Recursive's
+casual, like a line drawn with a canting. Both ship inside the app (SIL Open Font License,
 `desktop/assets/fonts`). `COBSERVE_ITERM_PROFILE=<name>` takes an iTerm2 profile's font and
 colours instead.
 

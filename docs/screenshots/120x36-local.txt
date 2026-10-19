@@ -1,4 +1,4 @@
- ❖ cobserve · prod    04:17 ━━ 05:29 ━━ 11:42 ━━ 14:46 ━●┄ 17:49 in 1h57m ┄┄ 18:58               ● live   15:52:07 WIB
+ ☗ cobserve · prod    04:17 ━━ 05:29 ━━ 11:42 ━━ 14:46 ━●┄ 17:49 in 1h57m ┄┄ 18:58               ● live   15:52:07 WIB
 ╭ 0 LOCAL · sam-macbook.local ────────────────────────────────────────────────────────────────────────────── esc back ─╮
 │  sam-macbook.local · 10 cores · 32.0 GiB · up 31d02h · load 3.21 3.05 2.98                              read 0s ago  │
 │                                                                                                                      │

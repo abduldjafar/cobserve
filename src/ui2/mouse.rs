@@ -1,5 +1,5 @@
 //! The mouse in the new shell (`05-keys.md` *Mouse*): a click on a panel focuses it, a second
-//! click opens it; the wheel moves the focused cursor; a click on `❖ cobserve` goes to the grid and
+//! click opens it; the wheel moves the focused cursor; a click on `☗ cobserve` goes to the grid and
 //! on the clock flips it to UTC. Inside a floating session or a zoomed view the click is theirs, as
 //! it is today.
 

@@ -1,4 +1,4 @@
- ❖ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
+ ☗ cobserve · prod    04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59               ● live   15:52:07 WIB
 ╭ 1 FLEET ───────────────────────── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ─────────────────── oldest 3m43s ✖ ─╮
 │ █ █ ▀▀█ ▀ ╭─ 7 claude · ~/work/billing ⎇ main · ● workin 8 ▣ opencode · 9 ▦ sql · 10 ❯ terminal · + new ─╮   ▁▁▂▂▅▆  │
 │ ▀▀█ █▀▀  ▄│ › make the invoice export stream its rows instead of building one big Vec                    │▅▇▇██████  │

@@ -307,7 +307,7 @@ exec cobserve --credential ~/.config/cobserve/credentials.yaml "$@"
 ## 6. The screen at a glance
 
 ```
- ❖ cobserve · ch_paysera   04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59    ● live   15:52:07 WIB  ← top bar
+ ☗ cobserve · ch_paysera   04:21 ━━ 05:33 ━━ 11:45 ━━ 14:48 ━●┄ 17:50 in 1h57m ┄┄ 18:59    ● live   15:52:07 WIB  ← top bar
 ╭ 1 FLEET ─────────────── 8 runaway · 1 hot · 9 nodes ─╮╭ 2 REDASH QUEUE ────────── oldest 3m43s ✖ ─╮
 │  big memory share · cpu · the hour as a graph         ││  jobs waiting · workers · the graph       │
 ╭ 3 NODES ─────────────────────────────────────────────────────────────── sorted by pressure · s ─╮
@@ -651,7 +651,7 @@ over what it keeps.
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `THEME` | `dark`, `light` or `mono` | `dark` |
+| `THEME` | `dark` (or `soga`), `light` (or `mori`) or `mono` — Cobserve.app follows it too | `dark` |
 | `NO_COLOR` | any value: no colour at all (the marks still say how bad) | unset |
 | `MOUSE` | `0` leaves the mouse to the terminal | on |
 | `FAKE` | `1`: a generated fleet, no network | unset |

@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › jira        esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › jira        esc back   ● live   15:52:07 WIB
 ╭ 6 JIRA · jira.example.net · 9.12.1 · Sam Example ─ ✖ 1 overdue · ▲ 1 due so…─╮
 │ LOGGED · October · 66h30m in 9 working days · today 2h30m   t …  read 0s ago │
 │ IN PROGRESS 4 ▲1   IN REVIEW 4 ✖1     FEEDBACK 1         DONE 8 in 7 days    │

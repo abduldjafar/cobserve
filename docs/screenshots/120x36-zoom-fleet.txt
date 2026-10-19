@@ -1,4 +1,4 @@
- ❖ cobserve · prod    dashboard › fleet                                               esc back   ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › fleet                                               esc back   ● live   15:52:07 WIB
 ╭ 1 FLEET · 4 min ──────────────────────────────────────────────────────────────────── esc back · [ ] replay · t live ─╮
 │ memory  36.5% 280/768 GiB · the fleet's share, Σ used ÷ Σ total                                                      │
 │  100% ┤                                                                                                              │
