@@ -617,6 +617,26 @@ mod tests {
         assert!(!page.contains("src=\"http"), "nothing from the network");
     }
 
+    /// A word left outside a comment voids the rule after it — `:root` once, and the header
+    /// fell back to Times. Outside comments every line of the page's own style ends a
+    /// declaration, opens a rule or closes one.
+    #[test]
+    fn the_page_style_has_nothing_stray() {
+        let page = include_str!("../assets/index.html");
+        let css = page.split("<style>\n").nth(1).and_then(|rest| rest.split("</style>").next()).unwrap_or_default();
+        let mut bare = String::new();
+        let mut rest = css;
+        while let Some(start) = rest.find("/*") {
+            bare.push_str(&rest[..start]);
+            rest = rest[start..].find("*/").map_or("", |end| &rest[start + end + 2..]);
+        }
+        bare.push_str(rest);
+        assert!(css.contains(":root {"), "the style was found");
+        for line in bare.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            assert!(line.ends_with(['{', '}', ';', ',']), "stray in the style: {line}");
+        }
+    }
+
     #[test]
     fn the_env_file_is_taken_as_written() {
         let pairs = env_file("# cobserve\nexport JIRA_URL=https://jira.example.net\nJIRA_TOKEN=\"abc=def\"\nAIRFLOW_PASSWORD=p&ss$word\n\nnot a line\nBAD KEY=1\nPRAYER_CITY='Bandung'\n");
