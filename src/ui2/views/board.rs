@@ -80,7 +80,7 @@ pub(super) fn wrap(text: &str, width: usize, max: usize) -> Vec<String> {
 /// A ticket's block, `width` cells wide: the key and its priority (or, finished, when), the
 /// summary in `summary_lines`, then how long in the column, the due date and the time logged.
 #[allow(clippy::too_many_arguments)]
-fn block(ticket: &Ticket, finished: bool, selected: bool, summary_lines: usize, now: i64, today: i64, theme: &Theme, width: usize) -> Vec<Cells> {
+pub(super) fn block(ticket: &Ticket, finished: bool, selected: bool, summary_lines: usize, now: i64, today: i64, theme: &Theme, width: usize) -> Vec<Cells> {
     let due = if finished { Severity::None } else { ticket.due_day().map_or(Severity::None, |d| jira::due_severity(d, today, false)) };
     let edge = |cells: &mut Cells| {
         match (selected, due) {

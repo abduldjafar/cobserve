@@ -46,6 +46,25 @@ pub struct Ticket {
     pub reporter: Option<String>,
     /// Time logged on it, in seconds.
     pub logged_s: Option<u64>,
+    /// Who has it; `None` is nobody: not taken yet. Read for the team's board alone.
+    pub assignee: Option<String>,
+}
+
+/// Whether a summary is the team's: its first word is `prefix` — `DE - Client balances`,
+/// `[DE] …`, `[DE, DA] …` — whatever the case.
+pub fn has_prefix(summary: &str, prefix: &str) -> bool {
+    let first = summary.trim_start().split(|c: char| c.is_whitespace() || matches!(c, ',' | ']' | ':' | '-')).find(|w| !w.trim_start_matches('[').is_empty());
+    first.is_some_and(|w| w.trim_start_matches('[').eq_ignore_ascii_case(prefix))
+}
+
+/// A move Jira allows for a ticket now: its id (what is sent), its name, the status it goes to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transition {
+    pub id: String,
+    pub name: String,
+    pub to: String,
+    /// It asks for fields of its own (a resolution, a comment): only Jira's screen can do it.
+    pub needs_fields: bool,
 }
 
 impl Ticket {

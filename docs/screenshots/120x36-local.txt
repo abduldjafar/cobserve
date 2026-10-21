@@ -5,6 +5,7 @@
 │  CPU       ━━━━━╺━━━━━━━━━━━━━━  25.7%  2.6/10 cores   user 19.3% · system 6.4%                                    ▅ │
 │  MEMORY    ━━━━━━━━━━━━━━━━╸━━━  83.1%  26.6/32.0 GiB   app 12.0 · wired 2.8 · compressed 11.8 · cached 3.7 GiB      │
 │  PRESSURE  ● normal · the kernel counts 50% of memory free     SWAP 2.2/3.0 GiB 72.6%                                │
+│  CHROME    8 processes · 3.7 GiB RSS · 11.5% of 32 GiB · 3 tabs hold 2.2 GiB · c opens it                            │
 │                                                                                                                      │
 │ ─ PROCESSES · 18 · by CPU ────────────────────────────────────────────────────────────────────────────────────────── │
 │   NAME                                        PID  USER           CORES  of 10                RSS  /32.0G   CPU TIME │
@@ -27,10 +28,9 @@
 │   Google Chrome Helper (Renderer)           15002  sam             0.00  ━━━━━━━━━━━━   295.0 MiB    0.9%      1m05s │
 │   Google Chrome Helper (Renderer)           15003  sam             0.00  ━━━━━━━━━━━━   118.0 MiB    0.4%        20s │
 │   the rest                                                         0.91  ━╺━━━━━━━━━━  kernel, short-lived           │
-│                                                                                                                      │
 │ ─ clickhouse3 · pay-ch-node-1:9000 ───────────────────────────────────────────────────────────────────────────────── │
 │ MEM 59.7/64 GiB  93.3%  ▂▃▄▅▆▇▂▃ ↑ +2.4%/min full ~2m48s    CPU 14.5/16 cores  90.8%  ▇▇▇▇▇▇▇▇ ↘ -1.2%/min           │
 │ memory: queries 45.7% + server 47.6% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.3 GiB = 0.2× a 24.0 GiB query  │
 │ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 46 ms · numbers from 15:52:07 WIB                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- esc back   ↑↓ choose   ⏎ open a browser   s sort   g group                         all · 9/9 nodes · 1.0 s · read-only
+ esc back   ↑↓ choose   c chrome   s sort   g group                                 all · 9/9 nodes · 1.0 s · read-only

@@ -99,6 +99,11 @@ impl TabsRead {
         self.result.as_deref().unwrap_or_default()
     }
 
+    /// The tab on screen: the front window's (Chrome's window 1).
+    pub fn on_screen(&self) -> Option<&Tab> {
+        self.tabs().iter().find(|t| t.window == 1 && t.active)
+    }
+
     /// How many windows: Chrome numbers them from 1.
     pub fn windows(&self) -> u32 {
         self.tabs().iter().map(|t| t.window).max().unwrap_or(0)
@@ -312,7 +317,7 @@ mod tests {
     use super::*;
 
     fn tab(window: u32, url: &str) -> Tab {
-        Tab { window, title: url.to_string(), url: url.to_string() }
+        Tab { window, title: url.to_string(), url: url.to_string(), active: false }
     }
 
     #[test]

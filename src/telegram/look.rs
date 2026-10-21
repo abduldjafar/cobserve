@@ -719,6 +719,9 @@ pub fn chrome(app: &App, now: i64, program: &str) -> (String, Vec<crate::local::
         Some(read) => match &read.result {
             Ok(tabs) => {
                 out.push_str(&format!("<b>{} tabs</b> · {} windows · {} sites\n", tabs.len(), read.windows(), read.sites.len()));
+                if let Some(tab) = read.on_screen() {
+                    out.push_str(&format!("● open now: {}\n", esc(&fmt::truncate(&tab.title, 40))));
+                }
                 for site in read.sites.iter().take(3) {
                     out.push_str(&format!("{:>2} {}\n", site.tabs.len(), esc(&site.host)));
                 }
