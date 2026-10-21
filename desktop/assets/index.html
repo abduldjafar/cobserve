@@ -178,7 +178,9 @@
   term.loadAddon(unicode);
   term.unicode.activeVersion = "11";
   term.open(document.getElementById("screen"));
-  // The web view's own text by default, drawn by the system as iTerm2's is; WebGL when asked.
+  // WebGL by default: the GPU draws the cells, where the web view's own text layout costs
+  // several times the energy while sessions talk. `COBSERVE_RENDERER=dom` for the system's text;
+  // a lost GPU context falls back to it by itself.
   if (look.renderer === "webgl") {
     try {
       const webgl = new WebglAddon.WebglAddon();

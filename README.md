@@ -533,7 +533,8 @@ It looks like cobserve: Tarum for the terminal's colours, the header and the chi
 frames, bars and braille graphs itself, so the screen is one face; the name stays in Recursive's
 casual, like a line drawn with a canting. Both ship inside the app (SIL Open Font License,
 `desktop/assets/fonts`). `COBSERVE_ITERM_PROFILE=<name>` takes an iTerm2 profile's font and
-colours instead.
+colours instead. The terminal is drawn with WebGL, by the GPU — a fifth of the energy of the web
+view's own text while sessions talk; `COBSERVE_RENDERER=dom` draws it as the system's text.
 
 ```sh
 ./desktop/bundle.sh             # dist/Cobserve.app
