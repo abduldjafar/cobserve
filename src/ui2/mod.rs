@@ -105,8 +105,24 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
         let inside = if app.shell.local {
             // This machine, zoomed: one frame, today's view 0 inside it.
             let host = app.local.latest.as_ref().map(|s| s.host.clone()).unwrap_or_default();
-            let name = if host.is_empty() { "LOCAL · this machine".to_string() } else { format!("LOCAL · {host}") };
-            let i = frame::panel(&mut p, theme, body, &frame::Title { number: Some(0), name: &name, sev: crate::severity::Severity::None, right: "esc back", focused: true });
+            let (name, sev, right) = match &app.drill {
+                // A browser opened from it: its name, its share and how greedy that is.
+                Some(drill) => {
+                    let name = if host.is_empty() { drill.program.clone() } else { format!("{} · {host}", drill.program) };
+                    match app.local.browser(&drill.program) {
+                        Some(b) => {
+                            let share = crate::browser::share(&app.local, b);
+                            let sev = crate::browser::share_severity(share, app.chrome_lines);
+                            let total = app.local.latest.as_ref().and_then(|s| s.memory).map_or(String::new(), |m| format!(" of {:.0} GiB", crate::fmt::gib(m.total)));
+                            let mark = if sev.is_problem() { format!(" {}", sev.glyph()) } else { String::new() };
+                            (name, sev, format!("{} processes · {} RSS · {}{total}{mark} · esc back", b.count, crate::fmt::bytes(b.rss), crate::fmt::pct(share)))
+                        }
+                        None => (name, crate::severity::Severity::None, "esc back".to_string()),
+                    }
+                }
+                None => (if host.is_empty() { "LOCAL · this machine".to_string() } else { format!("LOCAL · {host}") }, crate::severity::Severity::None, "esc back".to_string()),
+            };
+            let i = frame::panel(&mut p, theme, body, &frame::Title { number: Some(0), name: &name, sev, right: &right, focused: true });
             (i.width > 0 && i.height > 0).then_some((Inside::Local, i))
         } else if let Some(zoom) = app.shell.zoom {
             panels::draw_zoomed(&mut p, app, theme, zoom, body).map(|i| (Inside::Panel(zoom), i))
@@ -146,6 +162,9 @@ pub fn draw_with(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     if let Some(job) = app.cancel_asked() {
         overlay::dialog::draw(&mut p, app, theme, job);
+    }
+    if let Some(helper) = app.stop_asked() {
+        overlay::dialog::draw_stop(&mut p, app, theme, helper);
     }
     if let Some(palette) = &app.shell.palette {
         overlay::palette::draw(&mut p, app, theme, palette);

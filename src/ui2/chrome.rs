@@ -64,6 +64,18 @@ pub fn top_bar(p: &mut Painter<'_>, app: &App, theme: &Theme, area: Rect) {
     }
     let middle_end = w.saturating_sub(right_w + 3);
 
+    if app.shell.local {
+        let mut path = "dashboard › this machine".to_string();
+        if let Some(drill) = &app.drill {
+            // Narrow, the browser alone: `dashboard › Chrome`.
+            path = if w >= 100 { format!("{path} › {}", drill.program) } else { format!("dashboard › {}", crate::browser::short(&drill.program)) };
+        }
+        p.within(Rect::new(0, y, middle_end, 1), |p| {
+            p.put(22, y, &path, theme.muted());
+        });
+        p.putr(middle_end, y, "esc back ", theme.muted());
+        return;
+    }
     if let Some(zoom) = app.shell.zoom {
         let mut path = format!("dashboard › {}", zoom.slug());
         if zoom == crate::ui2::PanelId::Node
@@ -226,6 +238,15 @@ pub fn hints(app: &App) -> Vec<(String, String)> {
     }
     if let Some(keys) = session_full_hints(app) {
         return keys;
+    }
+    if app.shell.local {
+        // This machine, and a browser opened from it: their own keys.
+        let keys: &[(&str, &str)] = if app.drill.is_some() {
+            &[("esc", "back"), ("↑↓", "move"), ("⏎", "open a site"), ("x", "stop process"), ("r", "read tabs")]
+        } else {
+            &[("esc", "back"), ("↑↓", "choose"), ("⏎", "open a browser"), ("s", "sort"), ("g", "group")]
+        };
+        return keys.iter().map(|(k, d)| (k.to_string(), d.to_string())).collect();
     }
     let actions = action::actions_for(app);
     if let Some(zoom) = app.shell.zoom {

@@ -12,6 +12,40 @@ use crate::ui2::paint::{tr, Painter};
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 
+/// The stop dialog (`x` on a browser's tab or extension process): what is stopped, what its tabs
+/// show after, that it cannot be undone; `y` stops it, anything else keeps it.
+pub fn draw_stop(p: &mut Painter<'_>, app: &App, theme: &Theme, helper: &crate::local::Helper) {
+    let screen = p.clip();
+    let (sw, sh) = (screen.width, screen.height);
+    if sw < 30 || sh < 10 {
+        return;
+    }
+    let w = (sw - 4).min(86);
+    let h = 9;
+    let x = (sw - w) / 2;
+    let y = (sh - h) / 2;
+    let program = app.drill.as_ref().map_or("Google Chrome", |d| d.program.as_str());
+    let short = crate::browser::short(program);
+    let word = crate::browser::helper_word(helper.part);
+    let title = format!("Stop {short} {word} process {} · {}?", helper.pid, fmt::bytes(helper.rss));
+    frame::overlay(p, theme, Rect::new(x, y, w, h), &title, theme.sev(Severity::Crit).add_modifier(Modifier::BOLD), "");
+    let b = app.local.browser(program);
+    let of = b.filter(|b| b.rss > 0).map_or(String::new(), |b| format!(" · {} of {short}'s {}", fmt::pct(Some(helper.rss as f64 / b.rss as f64 * 100.0)), fmt::bytes(b.rss)));
+    let age = helper.started.map_or("age unknown".to_string(), |s| format!("{} old", fmt::dur(app.now() as f64 - s)));
+    let what = format!("{word} process · {} RSS{of} · {:.2} cores · {age}", fmt::bytes(helper.rss), helper.cores);
+    let means = if helper.part == crate::local::Part::Extension {
+        format!("The extension stops until {short} starts it again — it does when it is next used.")
+    } else {
+        format!("Its tabs show Aw, Snap! — reload one to get it back. Which, only {short} knows.")
+    };
+    let surface = theme.surface();
+    let lines = [(what, theme.text()), (means, theme.sev(Severity::Warn)), (format!("Its memory is freed; {short} keeps running. This cannot be undone."), theme.text())];
+    for (k, (line, style)) in lines.iter().enumerate() {
+        p.put(x + 3, y + 2 + k as u16, &tr(line, w as usize - 6), style.patch(surface));
+    }
+    p.put(x + 3, y + h - 2, "[y] stop the process     [esc] keep it", theme.accent().add_modifier(Modifier::BOLD).patch(surface));
+}
+
 pub fn draw(p: &mut Painter<'_>, _app: &App, theme: &Theme, job: &Job) {
     let screen = p.clip();
     let (sw, sh) = (screen.width, screen.height);

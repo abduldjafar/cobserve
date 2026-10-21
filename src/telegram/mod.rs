@@ -123,6 +123,8 @@ pub enum Work {
 pub enum Action {
     Kill { node: String, query_id: String },
     Cancel { job: String },
+    /// One of a browser's tab or extension processes, by its pid.
+    Stop { pid: u32 },
 }
 
 /// How much the bot says unasked.
@@ -159,8 +161,10 @@ struct Issue {
 /// since when, when the screen knows.
 type Seen = (String, look::Group, Severity, String, String, Option<i64>);
 
-/// What is wrong on the fleet and on Airflow now; `None` for a source not read.
-fn issues_now(app: &App, now: i64) -> (Option<Vec<Seen>>, Option<Vec<Seen>>) {
+/// What is wrong now on the fleet, on Airflow and on this Mac; `None` for a source not read.
+type IssuesNow = (Option<Vec<Seen>>, Option<Vec<Seen>>, Option<Vec<Seen>>);
+
+fn issues_now(app: &App, now: i64) -> IssuesNow {
     let fleet = app.with_view(|_| ()).map(|_| {
         app.insights()
             .into_iter()
@@ -203,7 +207,24 @@ fn issues_now(app: &App, now: i64) -> (Option<Vec<Seen>>, Option<Vec<Seen>>) {
         }
         out
     });
-    (fleet, airflow)
+    // This Mac: a browser held greedy (two reads over its line, as the tape says it).
+    let mac = app.local.latest.is_some().then(|| {
+        app.local
+            .browsers
+            .iter()
+            .filter_map(|b| {
+                let level = app.greed_of(&b.program);
+                if !level.is_problem() {
+                    return None;
+                }
+                let share = crate::browser::share(&app.local, b)?;
+                let total = app.local.latest.as_ref().and_then(|s| s.memory).map_or(String::new(), |m| format!(" of {:.0} GiB", fmt::gib(m.total)));
+                let tabs = b.parts.iter().find(|p| p.part == crate::local::Part::Tab).map_or(String::new(), |t| format!(" · {} tabs hold {}", t.count, fmt::bytes(t.rss)));
+                Some((format!("l:{}", b.program), look::Group::Mac, level, b.program.clone(), format!("{} RSS · {:.1}%{total}{tabs}", fmt::bytes(b.rss), share), None))
+            })
+            .collect()
+    });
+    (fleet, airflow, mac)
 }
 
 /// A killed query watched until it leaves the list.
@@ -244,6 +265,10 @@ pub struct Bot {
     pub work: Vec<Work>,
     /// For the screen's notice line.
     pub notices: Vec<String>,
+    /// Tab processes being stopped from a card, by the card's message.
+    stopping: HashMap<(i64, i64), look::Facts>,
+    /// The chat that asked `/chrome` while its tabs were being read: they follow when read.
+    chrome_waiting: Option<i64>,
 }
 
 impl Bot {
@@ -269,6 +294,8 @@ impl Bot {
             out: Vec::new(),
             work: Vec::new(),
             notices: Vec::new(),
+            stopping: HashMap::new(),
+            chrome_waiting: None,
         }
     }
 
@@ -337,6 +364,7 @@ impl Bot {
                 [node, query_id] => self.propose(app, chat, Action::Kill { node: node.to_string(), query_id: query_id.to_string() }, now),
                 _ => self.send(chat, look::KILL_USAGE),
             },
+            "/chrome" => self.chrome(app, chat, if rest.is_empty() { "Google Chrome" } else { rest }, now),
             "/cancel" => match rest.split_whitespace().collect::<Vec<_>>()[..] {
                 [job] => self.propose(app, chat, Action::Cancel { job: job.to_string() }, now),
                 _ => self.send(chat, look::CANCEL_USAGE),
@@ -396,6 +424,7 @@ impl Bot {
                 look::kill_card(app, node, query_id)
             }
             Action::Cancel { job } => look::cancel_card(app, job),
+            Action::Stop { pid } => look::stop_card(app, *pid),
         };
         match facts {
             Ok(facts) => {
@@ -408,6 +437,7 @@ impl Bot {
                 let yes = match action {
                     Action::Kill { .. } => "🛑 Kill it",
                     Action::Cancel { .. } => "🛑 Cancel job",
+                    Action::Stop { .. } => "🛑 Stop it",
                 };
                 self.out.push(Out::Send {
                     chat,
@@ -430,6 +460,11 @@ impl Bot {
         if let Some(tab) = tab {
             self.toast(callback, if data.starts_with("r:") { "Refreshed" } else { "" });
             self.out.push(Out::Edit { chat, message, text: look::status(app, now, tab), buttons: look::tabs(app, tab) });
+            return;
+        }
+        if data == "C" {
+            self.toast(callback, "");
+            self.chrome(app, chat, "Google Chrome", now);
             return;
         }
         if data == "S" {
@@ -497,6 +532,7 @@ impl Bot {
                     .flatten()
                     .unwrap_or_default(),
                 Action::Cancel { .. } => String::new(),
+                Action::Stop { pid } => app.local.browsers.iter().find_map(|b| b.heaviest.iter().find(|h| h.pid == *pid)).map(|h| format!(" · still {}", fmt::bytes(h.rss))).unwrap_or_default(),
             };
             self.edit(chat, message, format!("{facts}\n\n— <b>Left alone</b>{still} · <i>{again} if you change your mind</i>"));
             return;
@@ -509,6 +545,9 @@ impl Bot {
             Action::Cancel { job } => look::cancel_card(app, job)
                 .err()
                 .map(|_| format!("✅ <b>Already gone</b> · Redash job <code>{}</code> is not in the queue any more — nothing to cancel", esc(job))),
+            Action::Stop { pid } => look::stop_card(app, *pid)
+                .err()
+                .map(|_| format!("✅ <b>Already gone</b> · pid {pid} is not one of Chrome's processes any more — nothing to stop")),
         };
         if let Some(line) = gone {
             self.toast(callback, "It is gone already");
@@ -528,7 +567,70 @@ impl Bot {
                 app.cancel_from_elsewhere(&job);
                 self.cancelling.insert(job, (chat, message, card.facts));
             }
+            Action::Stop { pid } => {
+                let helper = app.local.browsers.iter().find_map(|b| b.heaviest.iter().find(|h| h.pid == pid)).cloned();
+                if let Some(helper) = helper {
+                    self.edit(chat, message, format!("{facts}\n\n⏳ Stopping pid {pid} …"));
+                    self.notices.push(format!("Telegram: stop {pid} ({} process), pressed on the phone", crate::browser::helper_word(helper.part)));
+                    self.stopping.insert((chat, message), card.facts);
+                    app.ask_stop(helper, crate::app::Asked::Phone { chat, message });
+                }
+            }
         }
+    }
+
+    /// `/chrome`: the browser's memory and tabs, a stop button for each of its heaviest tab
+    /// processes. Tabs older than 30 s are read again and follow in a message of their own.
+    fn chrome(&mut self, app: &mut App, chat: i64, program: &str, now: i64) {
+        let (text, heavy) = look::chrome(app, now, program);
+        let fresh = app.tabs.as_ref().is_some_and(|t| t.program == program && (now as f64 - t.at) < crate::browser::TABS_FRESH_S);
+        if app.local.browser(program).is_some() && !fresh {
+            app.tabs_for_phone = true;
+            self.chrome_waiting = Some(chat);
+        }
+        let mut buttons = Vec::new();
+        for h in heavy {
+            let token = self.token();
+            buttons.push((format!("🛑 Stop {} · {:.0} MiB", h.pid, h.rss as f64 / 1_048_576.0), format!("k:{token}")));
+            buttons.push((String::new(), String::new()));
+            self.follows.insert(token, (chat, Action::Stop { pid: h.pid }, now));
+        }
+        buttons.push(("↻ Refresh".into(), "C".into()));
+        buttons.push(("‹ Overview".into(), "S".into()));
+        self.out.push(Out::Send { chat, text, buttons });
+    }
+
+    /// The tabs `/chrome` was waiting for have been read: they follow in a message.
+    pub fn on_tabs(&mut self, app: &mut App) {
+        app.tabs_for_phone = false;
+        let Some(chat) = self.chrome_waiting.take() else { return };
+        let Some(read) = app.tabs.as_ref() else { return };
+        let text = match &read.result {
+            Ok(tabs) => {
+                let mut text = format!("🗂 <b>{} tabs</b> · {} windows · {} sites\n", tabs.len(), read.windows(), read.sites.len());
+                for site in read.sites.iter().take(8) {
+                    text.push_str(&format!("{:>2} {}\n", site.tabs.len(), esc(&site.host)));
+                }
+                if read.sites.len() > 8 {
+                    text.push_str(&format!("<i>+{} sites</i>\n", read.sites.len() - 8));
+                }
+                text.push_str("<i>a site's tabs share one process · which, only Chrome's Task Manager says</i>");
+                text
+            }
+            Err(e) => format!("<i>tabs: {}</i>", esc(e)),
+        };
+        self.send(chat, text);
+    }
+
+    /// What came of a stop a card asked for.
+    pub fn on_stopped(&mut self, stop: &crate::app::Stop, result: &Result<String, String>) {
+        let crate::app::Asked::Phone { chat, message } = stop.asked else { return };
+        let Some(facts) = self.stopping.remove(&(chat, message)) else { return };
+        match result {
+            Ok(_) => self.notices.push(format!("Telegram: ✔ stopped {}", stop.helper.pid)),
+            Err(e) => self.notices.push(format!("Telegram: ✖ not stopped: {e}")),
+        }
+        self.edit(chat, message, format!("{}\n\n{}", facts.html, look::stopped(stop, result)));
     }
 
     fn on_killed(&mut self, app: &App, chat: i64, message: i64, result: Result<String, String>, now: i64) {
@@ -627,14 +729,14 @@ impl Bot {
             Alerts::Off | Alerts::Red => Severity::Crit,
             Alerts::All => Severity::Warn,
         };
-        let (fleet, airflow) = issues_now(app, now);
+        let (fleet, airflow, mac) = issues_now(app, now);
         let started = self.started;
         // A source not read this time says nothing about its issues: they stay as they were.
-        let unread: Vec<&str> = [(fleet.is_none(), "i:"), (airflow.is_none(), "a:"), (airflow.is_none(), "r:")].into_iter().filter(|(no, _)| *no).map(|(_, p)| p).collect();
+        let unread: Vec<&str> = [(fleet.is_none(), "i:"), (airflow.is_none(), "a:"), (airflow.is_none(), "r:"), (mac.is_none(), "l:")].into_iter().filter(|(no, _)| *no).map(|(_, p)| p).collect();
         for issue in self.issues.iter_mut().filter(|(key, _)| unread.iter().any(|p| key.starts_with(p))) {
             issue.1.seen = now;
         }
-        for (key, group, level, label, text, since) in fleet.into_iter().flatten().chain(airflow.into_iter().flatten()) {
+        for (key, group, level, label, text, since) in fleet.into_iter().flatten().chain(airflow.into_iter().flatten()).chain(mac.into_iter().flatten()) {
             if level < threshold {
                 continue;
             }
@@ -677,11 +779,14 @@ impl Bot {
         {
             self.explains.remove(&oldest);
         }
-        let buttons = if lines.iter().any(|l| l.ongoing) {
+        let mut buttons = if lines.iter().any(|l| l.ongoing) {
             vec![("🧠 Explain".to_string(), format!("e:{token}")), ("Status".to_string(), "S".to_string())]
         } else {
             Vec::new()
         };
+        if lines.iter().any(|l| l.ongoing && l.group == look::Group::Mac) {
+            buttons.push(("Chrome".to_string(), "C".to_string()));
+        }
         for chat in self.chats.clone() {
             self.out.push(Out::Send { chat, text: text.clone(), buttons: buttons.clone() });
         }
@@ -952,6 +1057,40 @@ mod tests {
             (node.node.name.clone(), node.node.queries[0].query_id.clone())
         })
         .unwrap()
+    }
+
+    #[test]
+    fn chrome_shows_its_parts_and_a_stop_button_that_makes_a_card() {
+        let mut app = app();
+        let now = app.now();
+        app.update(crate::app::Event::Local(Box::new(crate::fake::local(1, now as f64 - 2.0))));
+        app.update(crate::app::Event::Local(Box::new(crate::fake::local(2, now as f64))));
+        let mut bot = Bot::new(vec![7], now);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Message { chat: 7, text: "/chrome".into(), at: now }), now);
+        let (text, buttons) = sent(&bot).pop().expect("the message");
+        assert!(text.contains("<b>Google Chrome</b> · 3.7 GiB RSS") && text.contains("11.5% of 32 GiB · 8 processes"), "{text}");
+        assert!(text.contains("<pre>part") && text.contains("tabs: reading…") && text.contains("Heaviest tab processes"), "{text}");
+        assert!(crate::telegram::html::plain_of(&text).lines().all(|l| l.chars().count() <= 52), "phone-wide: {text}");
+        assert!(buttons.iter().any(|b| b.0 == "🛑 Stop 15564 · 834 MiB") && !buttons.iter().any(|b| b.0.contains("14897")), "never the browser: {buttons:?}");
+        assert!(app.tabs_for_phone, "its tabs are read for the phone");
+        // The tabs, when read, follow in a message of their own.
+        app.update(crate::app::Event::Tabs(Box::new(crate::browser::TabsRead::new("Google Chrome".into(), now as f64, Ok(crate::fake::tabs())))));
+        bot.out.clear();
+        bot.on_tabs(&mut app);
+        assert!(sent(&bot)[0].0.contains("🗂 <b>12 tabs</b> · 2 windows · 6 sites") && !app.tabs_for_phone);
+        // A stop button makes a card; y stops it, asked on the phone; the result comes under it.
+        let data = buttons.iter().find(|b| b.0.starts_with("🛑 Stop 15564")).unwrap().1.clone();
+        bot.out.clear();
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Button { chat: 7, message: 3, callback: "c".into(), data }), now);
+        assert!(sent(&bot)[0].0.contains("Stop this Chrome tab process?") && sent(&bot)[0].0.contains("Aw, Snap!"));
+        let yes = button(&bot);
+        bot.on_event(&mut app, BotEvent::Incoming(Incoming::Button { chat: 7, message: 9, callback: "c".into(), data: yes }), now + 5);
+        let stops = app.take_stops();
+        assert_eq!(stops.len(), 1);
+        assert_eq!((stops[0].helper.pid, stops[0].asked), (15564, crate::app::Asked::Phone { chat: 7, message: 9 }));
+        bot.out.clear();
+        bot.on_stopped(&stops[0], &Ok("stopped".into()));
+        assert!(matches!(&bot.out[..], [Out::Edit { message: 9, text, .. }] if text.contains("✅ <b>Stopped</b> · pid 15564")), "{:?}", bot.out);
     }
 
     #[test]

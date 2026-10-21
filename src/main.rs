@@ -10,6 +10,7 @@ mod airflow;
 mod app;
 mod assist;
 mod attrib;
+mod browser;
 mod caps;
 mod claude;
 mod clock;
@@ -124,6 +125,7 @@ async fn run_plain(config: Config) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
     app.poll_interval = config.poll;
+    app.chrome_lines = config.chrome_lines;
     let zone_table = clock::zone_table();
     let zone = clock::zone_now();
     app.update(Event::Zone(zone.clone(), prayer_place(&config, zone.as_deref(), zone_table.as_deref())));
@@ -178,9 +180,30 @@ async fn run_plain(config: Config) -> color_eyre::Result<()> {
             for id in app.take_cancels() {
                 let _ = cancel_tx.send(id);
             }
+            drive_browser(&mut app, &tx, config.fake);
         }
     }
     Ok(())
+}
+
+/// A browser's tabs read when they are due (the drill-down is open, or the phone asked), and the
+/// tab processes asked to be stopped sent — each on the runtime, its answer an event.
+fn drive_browser(app: &mut App, tx: &mpsc::UnboundedSender<Event>, fake: bool) {
+    let now = wall_now() as f64;
+    if let Some((program, running)) = app.wants_tabs(now) {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result = if fake { Ok(fake::tabs()) } else { sources::chrome::tabs(running).await };
+            let _ = tx.send(Event::Tabs(Box::new(browser::TabsRead::new(program, wall_now() as f64, result))));
+        });
+    }
+    for stop in app.take_stops() {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result = if fake { Err("FAKE=1 — nothing was sent".to_string()) } else { sources::chrome::stop(stop.helper.pid, &stop.helper.command).await };
+            let _ = tx.send(Event::Stopped(Box::new(stop), result));
+        });
+    }
 }
 
 /// Asked of the terminal before anything reads keys: where it speaks the kitty keyboard
@@ -240,6 +263,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     }
     app.shell.profile = if config.fake { "fake".to_string() } else { config.clickhouse.cluster.clone() };
     app.poll_interval = config.poll;
+    app.chrome_lines = config.chrome_lines;
     app.modified_enter = modified_enter;
     app.claude.commands = claude::Commands {
         claude: config.claude_command.clone(),
@@ -456,6 +480,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
                 app.update(Event::Cancelled(lost.0, Err("the Redash source has stopped".into())));
             }
         }
+        drive_browser(&mut app, &tx, config.fake);
         for feed in app.take_refreshes() {
             let _ = match feed {
                 app::Feed::Airflow => airflow_tx.send(()),
@@ -487,10 +512,21 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
 
 /// An event for the screen — and, for a Redash cancel a Telegram card asked for, for the bot too.
 fn take_in(app: &mut App, bot: Option<&mut telegram::Bot>, event: Event) {
-    if let (Some(bot), Event::Cancelled(id, result)) = (bot, &event) {
-        bot.on_cancelled(app, id, result);
+    match (bot, &event) {
+        (Some(bot), Event::Cancelled(id, result)) => {
+            bot.on_cancelled(app, id, result);
+            app.update(event);
+        }
+        (Some(bot), Event::Stopped(stop, result)) => {
+            bot.on_stopped(stop, result);
+            app.update(event);
+        }
+        (Some(bot), Event::Tabs(_)) => {
+            app.update(event);
+            bot.on_tabs(app);
+        }
+        _ => app.update(event),
     }
-    app.update(event);
 }
 
 fn wall_now() -> i64 {

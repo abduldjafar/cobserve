@@ -100,6 +100,15 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
         return;
     }
     if app.shell.local {
+        // A browser opened from it: its own keys first (esc closes it, back to the machine).
+        if key.code == KeyCode::Char('0') && app.stop_asked().is_none() {
+            app.drill = None;
+            app.shell.local = false;
+            return;
+        }
+        if app.drill_key(key.code) {
+            return;
+        }
         // This machine, zoomed: today's view 0 and its keys; esc or 0 goes back.
         match key.code {
             KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('0') => app.shell.local = false,

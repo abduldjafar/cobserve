@@ -130,6 +130,23 @@ pub fn token_in(text: &str) -> Option<String> {
     pattern.find(text).map(|m| m.as_str().to_string())
 }
 
+/// The browser's two lines: numbers 1–100 with warn under crit, else the defaults and a word.
+fn chrome_lines(env: &Env<'_>, warnings: &mut Vec<String>) -> Option<(f64, f64)> {
+    let warn = env.get("CHROME_WARN_PCT");
+    if warn.as_deref().is_some_and(|w| matches!(w.to_ascii_lowercase().as_str(), "off" | "0" | "no" | "none")) {
+        return None;
+    }
+    let defaults = (crate::browser::WARN_PCT, crate::browser::CRIT_PCT);
+    let read = |value: Option<String>, default: f64| value.map_or(Some(default), |v| v.trim_end_matches('%').parse::<f64>().ok().filter(|n| (1.0..=100.0).contains(n)));
+    match (read(warn, defaults.0), read(env.get("CHROME_CRIT_PCT"), defaults.1)) {
+        (Some(w), Some(c)) if w < c => Some((w, c)),
+        _ => {
+            warnings.push(format!("CHROME_WARN_PCT / CHROME_CRIT_PCT: numbers 1–100, warn under crit — {:.0} and {:.0} it is", defaults.0, defaults.1));
+            Some(defaults)
+        }
+    }
+}
+
 fn telegram_config(env: &Env<'_>, warnings: &mut Vec<String>) -> Result<TelegramConfig, ConfigError> {
     let token = match env.get("TELEGRAM_BOT_TOKEN").filter(|t| !t.trim().is_empty()) {
         Some(token) => Some(token.trim().to_string()),
@@ -195,6 +212,9 @@ pub struct Config {
     /// Who writes a query session's SQL when asked (`ASSISTANT=opencode`; Claude by default).
     pub assistant: crate::console::Assistant,
     pub telegram: TelegramConfig,
+    /// When a browser is greedy, in percent of the Mac's memory: `CHROME_WARN_PCT` (40) and
+    /// `CHROME_CRIT_PCT` (60); `CHROME_WARN_PCT=off` for never.
+    pub chrome_lines: Option<(f64, f64)>,
 }
 
 /// Where and whether: `PRAYER_CITY` (a city by name) or `PRAYER_AT` (`lat,lon`), else the city
@@ -821,6 +841,7 @@ impl Config {
                 Some(other) => return Err(ConfigError::Bad("ASSISTANT", format!("{other:?} is not claude or opencode"))),
             },
             telegram: telegram_config(env, &mut warnings)?,
+            chrome_lines: chrome_lines(env, &mut warnings),
             warnings,
         })
     }

@@ -572,6 +572,8 @@ pub enum Group {
     Redash,
     Fleet,
     Airflow,
+    /// This Mac: a browser holding too much of its memory.
+    Mac,
 }
 
 impl Group {
@@ -582,6 +584,7 @@ impl Group {
             Group::Redash => "Redash",
             Group::Fleet => "Fleet",
             Group::Airflow => "Airflow",
+            Group::Mac => "This Mac",
         }
     }
 }
@@ -676,8 +679,110 @@ Ask me to stop something and you get a card: nothing happens until you press its
 
 <code>/status</code> — every panel in one message, without Claude
 <code>/kill &lt;node&gt; &lt;query_id&gt;</code> · <code>/cancel &lt;job id&gt;</code> — a card
+<code>/chrome</code> — Chrome's processes and tabs · a button stops a heavy tab process
 <code>/alerts red|all|off</code> — what I say unasked: what has been red (or amber) for 10+ minutes
 <code>/forget</code> — start a new conversation";
+
+// -- this Mac's browser ------------------------------------------------------------------------
+
+/// `/chrome`: the browser's memory part by part, its tabs by site, its heaviest tab processes —
+/// and those processes, for a button each.
+pub fn chrome(app: &App, now: i64, program: &str) -> (String, Vec<crate::local::Helper>) {
+    let local = &app.local;
+    if local.latest.is_none() {
+        return ("this Mac has not been read yet".into(), Vec::new());
+    }
+    let Some(b) = local.browser(program) else {
+        if !crate::local::has_parts(program) {
+            return (format!("<i>no breakdown for {} — its processes do not say what they are</i>", esc(program)), Vec::new());
+        }
+        return (format!("<b>{}</b> is not running on this Mac\n<i>nothing of it holds memory · /status for the rest</i>", esc(program)), Vec::new());
+    };
+    let share = crate::browser::share(local, b);
+    let sev = crate::browser::share_severity(share, app.chrome_lines);
+    let total = local.latest.as_ref().and_then(|s| s.memory).map(|m| m.total);
+    let of = total.map_or(String::new(), |t| format!(" of {:.0} GiB", fmt::gib(t)));
+    let mut out = format!(
+        "{} <b>{}</b> · {} RSS\n{}{of} · {} processes · {:.1} cores\n\n<pre>part         procs       RSS\n",
+        dot(if sev == Severity::None { Severity::Ok } else { sev }),
+        esc(program),
+        fmt::bytes(b.rss),
+        fmt::pct(share),
+        b.count,
+        b.cores
+    );
+    for s in &b.parts {
+        out.push_str(&format!("{:<11}{:>7}{:>10}\n", crate::browser::part_word(s.part), s.count, fmt::bytes(s.rss)));
+    }
+    out = out.trim_end().to_string() + "</pre>\n\n";
+    match app.tabs.as_ref().filter(|t| t.program == program) {
+        Some(read) => match &read.result {
+            Ok(tabs) => {
+                out.push_str(&format!("<b>{} tabs</b> · {} windows · {} sites\n", tabs.len(), read.windows(), read.sites.len()));
+                for site in read.sites.iter().take(3) {
+                    out.push_str(&format!("{:>2} {}\n", site.tabs.len(), esc(&site.host)));
+                }
+                if read.sites.len() > 3 {
+                    out.push_str(&format!("<i>+{} sites · a site's tabs share one process</i>\n", read.sites.len() - 3));
+                }
+            }
+            Err(e) => out.push_str(&format!("<i>tabs: {}</i>\n", esc(e))),
+        },
+        None => out.push_str("<i>tabs: reading…</i>\n"),
+    }
+    let heavy: Vec<crate::local::Helper> = b.heaviest.iter().take(3).cloned().collect();
+    if !heavy.is_empty() {
+        out.push_str("\n<b>Heaviest tab processes</b>\n");
+        for h in &heavy {
+            let age = h.started.map_or("—".into(), |s| fmt::dur(now as f64 - s));
+            out.push_str(&format!("• <b>{}</b> · {} {} · {:.2} cores · {age}\n", fmt::bytes(h.rss), crate::browser::helper_word(h.part), h.pid, h.cores));
+        }
+        out.push_str(&format!("<i>which tabs, only {}'s Task Manager says</i>\n", crate::browser::short(program)));
+    }
+    let read = local.latest.as_ref().map_or(String::new(), |s| format!(" · read {}", fmt::ago((now as f64 - s.at).max(0.0) as i64)));
+    out.push_str(&format!("\n<i>{} {}{read}</i>", hm(app, now), esc(&app.time.label(now))));
+    (out, heavy)
+}
+
+/// The card for stopping one of a browser's tab or extension processes.
+pub fn stop_card(app: &App, pid: u32) -> Result<Facts, String> {
+    let local = &app.local;
+    let found = local.browsers.iter().find_map(|b| b.heaviest.iter().find(|h| h.pid == pid).map(|h| (b, h)));
+    let Some((b, h)) = found else {
+        return Err(format!("❌ <b>No card</b>\npid <code>{pid}</code> is not one of Chrome's tab or extension processes"));
+    };
+    let short = crate::browser::short(&b.program);
+    let word = crate::browser::helper_word(h.part);
+    let total = local.latest.as_ref().and_then(|s| s.memory).map(|m| m.total);
+    let of_mac = total.map_or(String::new(), |t| format!(" · {} of {:.0} GiB", fmt::pct(Some(h.rss as f64 / t as f64 * 100.0)), fmt::gib(t)));
+    let share = crate::browser::share(local, b);
+    let age = h.started.map_or("age unknown".into(), |s| format!("{} old", fmt::dur(app.now() as f64 - s)));
+    let what = if h.part == crate::local::Part::Extension {
+        format!("The extension stops until {short} starts it again.\nIt does when the extension is next used.\nIts memory is freed; {short} keeps running.")
+    } else {
+        format!("Its tabs show Aw, Snap!\nReload one to get it back.\nWhich tabs, only {short}'s Task Manager says.\nIts memory is freed; {short} keeps running.")
+    };
+    let html = format!(
+        "🛑 <b>Stop this {short} {word} process?</b>\npid <code>{pid}</code> · {word} process\n\n<b>memory</b>  {}\n   {} of {short}'s {}{of_mac}\n<b>runs</b>  {:.2} cores · CPU time {} · {age}\n<b>{short}</b>  {} RSS · {} · {} processes\n\n{what}",
+        fmt::bytes(h.rss),
+        fmt::pct(Some(h.rss as f64 / b.rss.max(1) as f64 * 100.0)),
+        fmt::bytes(b.rss),
+        h.cores,
+        fmt::dur(h.cpu_time_s),
+        fmt::bytes(b.rss),
+        fmt::pct(share),
+        b.count,
+    );
+    Ok(Facts { html, again: "/chrome".into(), killing: None, follow: None })
+}
+
+/// What came of a stop pressed on the phone.
+pub fn stopped(stop: &crate::app::Stop, result: &Result<String, String>) -> String {
+    match result {
+        Ok(_) => format!("✅ <b>Stopped</b> · pid {} — its tabs show Aw, Snap!\n{} to come back", stop.helper.pid, fmt::bytes(stop.helper.rss)),
+        Err(e) => format!("❌ <b>Not stopped</b> — {}\n<i>/chrome makes a fresh card</i>", esc(e)),
+    }
+}
 
 pub fn stranger(chat: i64) -> String {
     format!("cobserve answers only the chats it is told to. This chat's id is <code>{chat}</code>: set <code>TELEGRAM_CHAT_ID={chat}</code> and start cobserve again.")

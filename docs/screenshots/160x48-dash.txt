@@ -45,4 +45,4 @@
 │                                ▲ 15:50 ended m.kairys on clickhouse-bi after ≥ 1m00s · peak… ││                                                              │
 │                                ✖ 15:49 Redash queries backed up: 9 waiting, oldest 3m01s     ││                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────╯
- 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command   ? keys    this Mac · cpu 25% · mem 27/32 GiB   all · 9/9 nodes · 1.0 s · read-only
+ 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command   ? keys    this Mac · cpu 26% · mem 27/32 GiB   all · 9/9 nodes · 1.0 s · read-only
