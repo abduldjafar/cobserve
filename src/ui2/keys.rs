@@ -48,10 +48,10 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
     if app.shell.wizard.is_some() {
         return crate::ui2::wizard::key(app, key);
     }
-    // F1–F8 a panel zoomed, F9 the next session, F10 this machine — from anywhere, a session's
-    // screen included: what a terminal that keeps ctrl+\ for itself still has, and what the
-    // desktop app's tabs send.
-    if let KeyCode::F(n @ 1..=10) = key.code {
+    // F1–F8 a panel zoomed, F9 the next session, F10 this machine, F11 its Chrome — from
+    // anywhere, a session's screen included: what a terminal that keeps ctrl+\ for itself still
+    // has, and what the desktop app's tabs send.
+    if let KeyCode::F(n @ 1..=11) = key.code {
         return f_key(app, n);
     }
     if app.shell.palette.is_some() {
@@ -140,6 +140,14 @@ pub fn f_key(app: &mut App, n: u8) {
             app.shell.zoom = Some(panel);
         }
         9 => app.claude.step(true),
+        11 => {
+            app.shell.float = None;
+            app.shell.zoom = None;
+            app.shell.local = true;
+            app.set_view(crate::app::View::Local);
+            app.open_browser();
+            return;
+        }
         _ => {
             app.shell.float = None;
             app.shell.zoom = None;

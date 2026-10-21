@@ -82,6 +82,9 @@ fn draw_machine(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, ai_line
     lines.push(cpu_line(app, theme, width));
     lines.push(memory_line(app, theme, width));
     lines.push(pressure_line(local, theme, width));
+    if let Some(line) = browser_line(app, theme, width) {
+        lines.push(line);
+    }
     if ai_line {
         lines.push(super::usage::line(app, theme, width));
     }
@@ -241,6 +244,29 @@ fn pressure_line(local: &Local, theme: &Theme, width: usize) -> Line<'static> {
         }
     }
     cells.line(width, Style::default())
+}
+
+/// `CHROME    22 processes · 5.5 GiB RSS · 17.2% of 32 GiB · 14 tabs hold 4.1 GiB · c opens it`:
+/// the heaviest browser, and the key that opens it.
+fn browser_line(app: &App, theme: &Theme, width: usize) -> Option<Line<'static>> {
+    let b = app.local.browsers.first()?;
+    let share = crate::browser::share(&app.local, b);
+    let sev = crate::browser::share_severity(share, app.chrome_lines);
+    let total = app.local.latest.as_ref().and_then(|s| s.memory).map_or(String::new(), |m| format!(" of {:.0} GiB", crate::fmt::gib(m.total)));
+    let mut cells = Cells::new();
+    cells.push(" ", Style::default());
+    cells.cell(&crate::browser::short(&b.program).to_uppercase(), 10, theme.section());
+    cells.push(format!("{} processes · ", b.count), theme.muted());
+    cells.push(format!("{} RSS", fmt::bytes(b.rss)), theme.strong());
+    let mark = if sev.is_problem() { format!(" {}", sev.glyph()) } else { String::new() };
+    cells.push(format!(" · {}{total}{mark}", fmt::pct(share)), if sev.is_problem() { theme.sev(sev).add_modifier(Modifier::BOLD) } else { theme.text2() });
+    if let Some(t) = b.parts.iter().find(|p| p.part == crate::local::Part::Tab) {
+        cells.push(format!(" · {} tabs hold {}", t.count, fmt::bytes(t.rss)), theme.muted());
+    }
+    cells.push(" · ", theme.faint());
+    cells.push("c", theme.keycap());
+    cells.push(" opens it", theme.faint());
+    Some(cells.line(width, Style::default()))
 }
 
 fn list_rule(local: &Local, rows: &[Row], theme: &Theme, width: usize) -> Line<'static> {

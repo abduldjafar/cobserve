@@ -203,7 +203,9 @@ pub fn state(app: &App) -> State {
         .unwrap_or_default();
     let clock = app.time.hms(now);
     State {
-        view: if app.shell.local {
+        view: if app.shell.local && app.drill.is_some() {
+            "chrome"
+        } else if app.shell.local {
             "local"
         } else {
             app.shell.zoom.map_or("dashboard", |p| p.slug())

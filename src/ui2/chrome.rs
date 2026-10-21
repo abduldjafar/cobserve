@@ -244,7 +244,7 @@ pub fn hints(app: &App) -> Vec<(String, String)> {
         let keys: &[(&str, &str)] = if app.drill.is_some() {
             &[("esc", "back"), ("↑↓", "move"), ("⏎", "open a site"), ("x", "stop process"), ("r", "read tabs")]
         } else {
-            &[("esc", "back"), ("↑↓", "choose"), ("⏎", "open a browser"), ("s", "sort"), ("g", "group")]
+            &[("esc", "back"), ("↑↓", "choose"), ("c", "chrome"), ("s", "sort"), ("g", "group")]
         };
         return keys.iter().map(|(k, d)| (k.to_string(), d.to_string())).collect();
     }
