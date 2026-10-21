@@ -1690,6 +1690,7 @@ fn the_session_list_says_what_each_session_used_today() {
         replies: vec![reply(Tool::Claude, "conv-a", 1_200_000), reply(Tool::Claude, "elsewhere", 3_000_000), reply(Tool::OpenCode, "ses_9", 50_000)],
         notes: Vec::new(),
         read: true,
+        ..Default::default()
     })));
     let screen = render(&app, 160, 48);
     let row = |text: &str| screen.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {screen}")).to_string();

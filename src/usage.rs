@@ -104,6 +104,20 @@ pub struct Usage {
     /// What could not be read, by program: `OpenCode: sqlite3 not found`.
     pub notes: Vec<String>,
     pub read: bool,
+    /// The last summary and the second it was worked out for.
+    pub memo: Memo,
+}
+
+/// A summary goes through every reply of two months; the screen asks for it in every frame,
+/// and a frame can follow a frame many times a second while sessions talk. It is worked out
+/// once a second at most — a new `Usage` (a new read) starts with none.
+#[derive(Debug, Default)]
+pub struct Memo(std::sync::Mutex<Option<((i64, i64), Summary)>>);
+
+impl Clone for Memo {
+    fn clone(&self) -> Memo {
+        Memo::default()
+    }
 }
 
 /// A program's day: its tokens, its dollars, how many replies.
@@ -176,6 +190,18 @@ impl Usage {
 
     /// The panel's numbers at `now`, days on a clock `offset_s` east of UTC.
     pub fn summary(&self, now: i64, offset_s: i64) -> Summary {
+        let mut memo = self.memo.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((key, summary)) = memo.as_ref()
+            && *key == (now, offset_s)
+        {
+            return summary.clone();
+        }
+        let summary = self.work_out(now, offset_s);
+        *memo = Some(((now, offset_s), summary.clone()));
+        summary
+    }
+
+    fn work_out(&self, now: i64, offset_s: i64) -> Summary {
         let day_of = |at: i64| (at + offset_s).div_euclid(86_400);
         let today = day_of(now);
         let mut summary = Summary { days: vec![BTreeMap::new(); 7], ..Summary::default() };
@@ -388,6 +414,18 @@ mod tests {
     }
 
     #[test]
+    fn a_summary_is_worked_out_once_a_second() {
+        let mut usage = Usage { replies: vec![reply(Tool::Claude, NOW - 60, "claude-opus-5-5", "cobserve", 10, 20, 30)], read: true, ..Default::default() };
+        let first = usage.summary(NOW, 0);
+        // The same second answers from the memo, even had the replies changed under it…
+        usage.replies.push(reply(Tool::Claude, NOW - 30, "claude-opus-5-5", "cobserve", 10, 20, 30));
+        assert_eq!(usage.summary(NOW, 0).today, first.today);
+        // …the next works it out again, and a new read starts with no memo.
+        assert_eq!(usage.summary(NOW + 1, 0).today[&Tool::Claude].replies, 2);
+        assert_eq!(usage.clone().summary(NOW + 1, 0).today[&Tool::Claude].replies, 2);
+    }
+
+    #[test]
     fn today_the_window_and_the_week() {
         let usage = Usage {
             replies: vec![
@@ -399,6 +437,7 @@ mod tests {
             ],
             notes: Vec::new(),
             read: true,
+            ..Default::default()
         };
         let s = usage.summary(NOW, 0);
         let claude = s.today[&Tool::Claude];

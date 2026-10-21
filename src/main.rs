@@ -227,6 +227,9 @@ fn install_panic_hook() {
     }));
 }
 
+/// The shortest time between two frames: 30 a second.
+const FRAME: Duration = Duration::from_millis(33);
+
 async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, modified_enter: bool, caps: caps::Caps) -> color_eyre::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut app = App::new();
@@ -326,7 +329,22 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     let inside_app = desktop::inside_the_app();
     app.outside_chrome = inside_app;
     let mut told: Option<desktop::State> = None;
+    let mut last_frame = std::time::Instant::now() - FRAME;
     loop {
+        // No more frames than the eye uses: what comes in while one would be too soon waits for
+        // the next — busy sessions print many times a second, and every frame is drawn twice,
+        // here and by the terminal showing it (Cobserve.app's web view most of all).
+        let since = last_frame.elapsed();
+        if since < FRAME {
+            tokio::time::sleep(FRAME - since).await;
+            for _ in 0..512 {
+                match rx.try_recv() {
+                    Ok(event) => take_in(&mut app, bot.as_mut().map(|(b, _)| b), event),
+                    Err(_) => break,
+                }
+            }
+        }
+        last_frame = std::time::Instant::now();
         // One frame at a time on the terminal (DEC 2026, where it is spoken): ratatui does not
         // wrap its draw in synchronized output itself; a terminal that does not know it ignores it.
         let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate);

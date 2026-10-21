@@ -51,7 +51,7 @@ impl Reader {
             Ok(rows) => replies.extend(rows),
             Err(why) => notes.push(format!("OpenCode: {why}")),
         }
-        Usage { replies, notes, read: true }
+        Usage { replies, notes, read: true, ..Default::default() }
     }
 
     fn read_claude(&mut self, root: &Path, now: i64) {

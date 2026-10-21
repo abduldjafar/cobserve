@@ -1548,7 +1548,7 @@ pub fn usage(now: i64) -> crate::usage::Usage {
             });
         }
     }
-    Usage { replies, notes: Vec::new(), read: true }
+    Usage { replies, notes: Vec::new(), read: true, ..Default::default() }
 }
 
 /// A made-up Max plan's limits, for view 0 and the sessions' list.
