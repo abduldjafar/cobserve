@@ -847,6 +847,8 @@ fn dump() {
     let (w, h) = std::env::var("SIZE").ok().and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))).unwrap_or((120, 36));
     let mut app = app_after(30);
     app.shell.last_size.set((w, h));
+    app.update(Event::Local(Box::new(crate::fake::local(1, MOMENT as f64 - 2.0))));
+    app.update(Event::Local(Box::new(crate::fake::local(2, MOMENT as f64))));
     match std::env::var("SESSIONS").ok().and_then(|n| n.parse::<usize>().ok()) {
         Some(4) => with_running_sessions(&mut app),
         Some(n) => with_many_sessions(&mut app, n),
@@ -865,6 +867,10 @@ fn dump() {
         });
     }
     answer_asks(&mut app);
+    // The tabs a browser opened from this machine asks for, as the fake answers them.
+    if let Some((program, _)) = app.wants_tabs(MOMENT as f64) {
+        app.update(Event::Tabs(Box::new(crate::browser::TabsRead::new(program, MOMENT as f64 - 12.0, Ok(crate::fake::tabs())))));
+    }
     println!("{}", render(&app, w, h).join("\n"));
 }
 

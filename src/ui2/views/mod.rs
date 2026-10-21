@@ -9,6 +9,7 @@ pub mod board;
 pub mod claude;
 pub mod console;
 pub mod detail;
+pub mod drill;
 pub mod drawer;
 pub mod jira;
 pub mod kit;
@@ -179,6 +180,11 @@ pub fn draw(frame: &mut ratatui::Frame, app: &App, theme: &crate::theme::Theme, 
 /// This machine zoomed (`:local`, `0`, F10): today's view 0 with its drawer under it.
 pub fn draw_local(frame: &mut ratatui::Frame, app: &App, theme: &crate::theme::Theme, inside: ratatui::layout::Rect) {
     use ratatui::layout::Rect;
+    if let Some(drill) = &app.drill {
+        let mut p = crate::ui2::paint::Painter::new(frame.buffer_mut());
+        drill::draw(&mut p, app, theme, inside, drill);
+        return;
+    }
     let drawer_h = if inside.height >= 20 { 4 } else { 0 };
     local::draw(frame, app, theme, Rect::new(inside.x, inside.y, inside.width, inside.height - drawer_h));
     if drawer_h > 0 {

@@ -1482,7 +1482,7 @@ fn this_machine_has_a_status_line_and_a_zoom() {
     let screen = render(&app, 140, 40);
     assert!(screen.contains("sam-macbook.local · 10 cores · 32.0 GiB · up 31d02h · load 3.21 3.05 2.98"), "{screen}");
     assert!(screen.contains("PRESSURE  ● normal · the kernel counts 50% of memory free"), "{screen}");
-    assert!(screen.contains("PROCESSES · 14 · by CPU"), "{screen}");
+    assert!(screen.contains("PROCESSES · 18 · by CPU"), "{screen}");
     let rows: Vec<&str> = screen.lines().skip_while(|l| !l.contains("NAME")).skip(1).collect();
     assert!(inner(rows[0]).starts_with("▌ WindowServer") && rows[0].contains("164"), "the busiest first, the cursor on it: {}", rows[0]);
     let rest = rows.iter().find(|l| l.contains("the rest")).expect("the closing row");
@@ -1495,7 +1495,44 @@ fn this_machine_has_a_status_line_and_a_zoom() {
     let screen = render(&app, 140, 40);
     assert!(screen.contains("PROGRAMS · 9 · by memory"), "{screen}");
     let rows: Vec<&str> = screen.lines().skip_while(|l| !l.contains("NAME")).skip(1).collect();
-    assert!(rows[0].contains("Google Chrome ×4"), "{}", rows[0]);
+    assert!(rows[0].contains("Google Chrome ×8"), "{}", rows[0]);
+
+    // ⏎ on Chrome: its parts, its tab and extension processes, the cursor on the heaviest.
+    app.update(key(KeyCode::Enter));
+    let screen = render(&app, 120, 36);
+    assert!(screen.lines().nth(1).is_some_and(|l| l.starts_with("╭ 0 Google Chrome · sam-macbook.local") && l.contains("8 processes · 3.7 GiB RSS · 11.5% of 32 GiB")), "{screen}");
+    assert!(screen.contains("dashboard › this machine › Google Chrome"), "{screen}");
+    assert!(screen.contains("╭ parts") && screen.contains("the rows add up to Chrome") && screen.contains("─ TAB AND EXTENSION PROCESSES · 5 · heaviest first"), "{screen}");
+    assert!(screen.contains("◌ asking Chrome…"), "before the tabs are read: {screen}");
+    assert!(screen.lines().any(|l| inner(l).starts_with("▌") && l.contains("15564") && l.contains("834.0 MiB")), "{screen}");
+    // The tabs are due (the drill is open) once, not again while one is read.
+    let (program, running) = app.wants_tabs(app.now() as f64).expect("asked for when the drill opens");
+    assert!(program == "Google Chrome" && running && app.wants_tabs(app.now() as f64).is_none());
+    app.update(Event::Tabs(Box::new(crate::browser::TabsRead::new(program, app.now() as f64 - 12.0, Ok(crate::fake::tabs())))));
+    let screen = render(&app, 120, 36);
+    assert!(screen.contains("12 tabs · 2 windows · 6 sites") && screen.contains("─ TABS · 12 in 2 windows · by site"), "{screen}");
+    assert!(screen.lines().any(|l| l.contains("4   docs.google.com") && l.contains("Q4 metrics plan")), "{screen}");
+    assert!(app.wants_tabs(app.now() as f64).is_none(), "fresh for 30 s");
+    // x on a process asks, anything but y keeps it, y sends it.
+    app.update(key(KeyCode::Char('x')));
+    assert!(render(&app, 120, 36).contains("Stop Chrome tab process 15564 · 834.0 MiB?"));
+    app.update(key(KeyCode::Char('n')));
+    assert!(app.stop_asked().is_none() && app.take_stops().is_empty(), "kept");
+    app.update(key(KeyCode::Char('x')));
+    app.update(key(KeyCode::Char('y')));
+    let stops = app.take_stops();
+    assert_eq!(stops.len(), 1);
+    assert_eq!((stops[0].helper.pid, stops[0].asked), (15564, crate::app::Asked::Screen));
+    // ⏎ on a site opens its tabs; esc closes the drill, esc again the machine.
+    let site = app.drill.as_ref().unwrap().processes();
+    app.drill.as_mut().unwrap().select(site);
+    app.update(key(KeyCode::Enter));
+    assert!(render(&app, 120, 36).contains("w1  Q4 metrics plan"));
+    for (w, h) in [(40, 12), (60, 20), (80, 24), (200, 60), (10, 4)] {
+        render(&app, w, h);
+    }
+    app.update(key(KeyCode::Esc));
+    assert!(app.drill.is_none() && render(&app, 120, 36).contains("╭ 0 LOCAL ·"));
     for (w, h) in [(40, 12), (60, 20), (80, 24), (200, 60), (10, 4)] {
         render(&app, w, h);
     }

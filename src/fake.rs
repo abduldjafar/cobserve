@@ -1452,6 +1452,25 @@ fn fake_tasks(run: &crate::airflow::Run, now: i64) -> Vec<crate::airflow::TaskRu
         .collect()
 }
 
+/// A made-up Chrome's open tabs: 12 over 2 windows and 6 sites.
+pub fn tabs() -> Vec<crate::sources::chrome::Tab> {
+    let tab = |window: u32, title: &str, url: &str| crate::sources::chrome::Tab { window, title: title.into(), url: url.into() };
+    vec![
+        tab(1, "Q4 metrics plan", "https://docs.google.com/document/d/1"),
+        tab(1, "posthog tables", "https://docs.google.com/spreadsheets/d/2"),
+        tab(1, "abduldjafar/cobserve", "https://github.com/abduldjafar/cobserve"),
+        tab(1, "Inbox (3) - sam@example.net", "https://mail.google.com/mail/u/0/#inbox"),
+        tab(1, "#8585 AML dashboard", "https://redash.example.net/queries/8585"),
+        tab(1, "DAG review notes", "https://docs.google.com/document/d/3"),
+        tab(2, "PR #47 · WebGL", "https://github.com/abduldjafar/cobserve/pull/47"),
+        tab(2, "DATA-2207 Product metrics", "https://jira.example.net/browse/DATA-2207"),
+        tab(2, "ratatui issues", "https://github.com/ratatui/ratatui/issues"),
+        tab(2, "Re: FR13 Grafana", "https://mail.google.com/mail/u/0/#inbox/1"),
+        tab(2, "Chrome drill-down", "https://docs.google.com/document/d/4"),
+        tab(2, "lofi beats", "https://www.youtube.com/watch?v=1"),
+    ]
+}
+
 /// A made-up laptop for view 0, `step` polls in: the CPU time of each process goes on at its own
 /// pace, so from the second read its cores are the delta form, as on a real one.
 pub fn local(step: u64, at: f64) -> crate::local::Sample {
@@ -1461,7 +1480,9 @@ pub fn local(step: u64, at: f64) -> crate::local::Sample {
     let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     let renderer = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)";
     // pid, name, cores it runs at, MiB resident, CPU time it had at the first read
-    let table: [(u32, &str, f64, u64, f64); 14] = [
+    let gpu = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)";
+    let helper = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper";
+    let table: [(u32, &str, f64, u64, f64); 18] = [
         (28932, "/Users/sam/.opencode/bin/opencode", 0.47, 825, 144.0),
         (28839, "/Users/sam/.opencode/bin/opencode", 0.22, 737, 88.0),
         (164, "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer", 0.46, 691, 216_253.0),
@@ -1473,6 +1494,10 @@ pub fn local(step: u64, at: f64) -> crate::local::Sample {
         (15564, renderer, 0.012, 834, 1500.0),
         (62018, renderer, 0.004, 783, 960.0),
         (5792, renderer, 0.002, 679, 410.0),
+        (14903, gpu, 0.031, 123, 8_120.0),
+        (14905, helper, 0.004, 84, 610.0),
+        (15002, renderer, 0.0, 295, 65.0),
+        (15003, renderer, 0.0, 118, 20.0),
         (29329, "/Users/sam/.local/bin/claude", 0.07, 387, 9.7),
         (11989, "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)", 0.007, 728, 1504.0),
         (37781, "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService", 0.0, 489, 2.0),
@@ -1491,6 +1516,15 @@ pub fn local(step: u64, at: f64) -> crate::local::Sample {
             rss: mib * MIB,
             cpu_time_s: start + used(pid, cores),
             command: command.into(),
+            part: match (command, pid) {
+                (c, _) if c == chrome => Some(crate::local::Part::Browser),
+                (c, _) if c == gpu => Some(crate::local::Part::Gpu),
+                (c, _) if c == helper => Some(crate::local::Part::Network),
+                (c, 15002 | 15003) if c == renderer => Some(crate::local::Part::Extension),
+                (c, _) if c == renderer => Some(crate::local::Part::Tab),
+                _ => None,
+            },
+            started: command.contains("Google Chrome").then_some(at - start * 4.0),
         })
         .collect();
     // 10 cores at 100 ticks a second: what the processes use, and the kernel's 0.9 cores on top —

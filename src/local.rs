@@ -106,6 +106,61 @@ pub struct Process {
     pub cpu_time_s: f64,
     /// The executable's path, as `ps` gives it.
     pub command: String,
+    /// What it does for its browser, for a helper of one (Chrome's `--type=`); read for those
+    /// alone, once per process.
+    pub part: Option<Part>,
+    /// When it started, Unix seconds — read with its part.
+    pub started: Option<f64>,
+}
+
+/// What a process of a multi-process browser does: Chrome's `--type=` flag, and for a utility
+/// its `--utility-sub-type=`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Part {
+    /// No `--type`: the browser itself, which owns the windows.
+    Browser,
+    /// A renderer: one or more tabs of a site (Chrome puts a site's tabs in one), or an iframe,
+    /// a worker or a page being prerendered.
+    Tab,
+    /// A renderer with `--extension-process`.
+    Extension,
+    Gpu,
+    Network,
+    Storage,
+    Audio,
+    /// Any other utility or helper.
+    Other,
+}
+
+impl Part {
+    /// The browser and its GPU process are not to be killed: the first takes every window with
+    /// it, the second every tab's drawing.
+    pub fn killable(self) -> bool {
+        matches!(self, Part::Tab | Part::Extension)
+    }
+}
+
+/// A browser helper's part, from its command line.
+pub fn part_of(args: &str) -> Part {
+    let flag = |name: &str| args.split_whitespace().find_map(|w| w.strip_prefix(name)).unwrap_or_default();
+    match flag("--type=") {
+        "" => Part::Browser,
+        "renderer" if args.contains("--extension-process") => Part::Extension,
+        "renderer" => Part::Tab,
+        "gpu-process" => Part::Gpu,
+        "utility" => match flag("--utility-sub-type=") {
+            s if s.starts_with("network.") => Part::Network,
+            s if s.starts_with("storage.") => Part::Storage,
+            s if s.starts_with("audio.") => Part::Audio,
+            _ => Part::Other,
+        },
+        _ => Part::Other,
+    }
+}
+
+/// Programs whose helpers say what they are on their command lines, as Chrome's do.
+pub fn has_parts(program: &str) -> bool {
+    matches!(program, "Google Chrome" | "Google Chrome Beta" | "Google Chrome Canary" | "Chromium" | "Brave Browser" | "Microsoft Edge" | "Arc")
 }
 
 impl Process {
@@ -153,6 +208,45 @@ pub struct Row {
     pub rest: bool,
 }
 
+/// A multi-process browser, part by part: worked out once a read, for its zoom, the alert and
+/// Telegram.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Breakdown {
+    /// `Google Chrome`.
+    pub program: String,
+    pub count: usize,
+    /// Every process's resident memory added up, bytes — shared pages counted in each, as
+    /// Activity Monitor's Memory column does not; so a little over what the processes hold.
+    pub rss: u64,
+    pub cores: f64,
+    /// Each part's processes, memory and cores; the most memory first.
+    pub parts: Vec<PartSum>,
+    /// Its tab and extension processes, the most memory first.
+    pub heaviest: Vec<Helper>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PartSum {
+    pub part: Part,
+    pub count: usize,
+    pub rss: u64,
+    pub cores: f64,
+}
+
+/// One of a browser's processes, as its zoom lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Helper {
+    pub pid: u32,
+    pub part: Part,
+    pub rss: u64,
+    pub cores: f64,
+    pub cpu_time_s: f64,
+    pub started: Option<f64>,
+    pub ppid: u32,
+    /// Its executable, to check it is still the same process before it is stopped.
+    pub command: String,
+}
+
 /// What view 0 is sorted by.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Sort {
@@ -176,6 +270,8 @@ pub struct Local {
     /// on it while the rows re-sort under it every read.
     pub selected: usize,
     selected_key: Option<String>,
+    /// The browsers on the machine, part by part, as of the latest read.
+    pub browsers: Vec<Breakdown>,
 }
 
 impl Local {
@@ -198,6 +294,7 @@ impl Local {
             self.mem_pct.push(sample.at, pct);
         }
         self.latest = Some(sample);
+        self.browsers = self.break_down();
         let rows = self.rows();
         let found = self.selected_key.as_ref().and_then(|k| rows.iter().position(|r| self.key(r) == *k));
         self.selected = found.unwrap_or(self.selected).min(rows.len().saturating_sub(1));
@@ -309,6 +406,50 @@ impl Local {
         rows
     }
 
+    /// Every browser whose helpers say what they are, part by part.
+    fn break_down(&self) -> Vec<Breakdown> {
+        let mut out: Vec<Breakdown> = Vec::new();
+        for (p, cores) in self.process_cores() {
+            if !has_parts(p.program()) {
+                continue;
+            }
+            let at = match out.iter().position(|b| b.program == p.program()) {
+                Some(at) => at,
+                None => {
+                    out.push(Breakdown { program: p.program().to_string(), ..Breakdown::default() });
+                    out.len() - 1
+                }
+            };
+            let b = &mut out[at];
+            let part = p.part.unwrap_or(Part::Other);
+            b.count += 1;
+            b.rss += p.rss;
+            b.cores += cores;
+            match b.parts.iter_mut().find(|s| s.part == part) {
+                Some(sum) => {
+                    sum.count += 1;
+                    sum.rss += p.rss;
+                    sum.cores += cores;
+                }
+                None => b.parts.push(PartSum { part, count: 1, rss: p.rss, cores }),
+            }
+            if part.killable() {
+                b.heaviest.push(Helper { pid: p.pid, part, rss: p.rss, cores, cpu_time_s: p.cpu_time_s, started: p.started, ppid: p.ppid, command: p.command.clone() });
+            }
+        }
+        for b in &mut out {
+            b.parts.sort_by(|x, y| y.rss.cmp(&x.rss).then(x.part.cmp(&y.part)));
+            b.heaviest.sort_by(|x, y| y.rss.cmp(&x.rss).then(x.pid.cmp(&y.pid)));
+        }
+        out.sort_by_key(|b| std::cmp::Reverse(b.rss));
+        out
+    }
+
+    /// The browser called `program`, as of the latest read.
+    pub fn browser(&self, program: &str) -> Option<&Breakdown> {
+        self.browsers.iter().find(|b| b.program == program)
+    }
+
     /// How the machine is: the worse of its CPU (75 and 90, as a node's) and its memory pressure.
     pub fn severity(&self) -> Severity {
         let cpu = crate::severity::node(self.cpu.map(|c| c.busy_pct));
@@ -358,9 +499,35 @@ pub fn parse_ps(text: &str) -> Vec<Process> {
             let rss_kib: u64 = field()?.parse().ok()?;
             let cpu_time_s = cpu_time(field()?)?;
             let command = rest.trim_end().to_string();
-            (!command.is_empty()).then_some(Process { pid, ppid, user, pcpu, rss: rss_kib * 1024, cpu_time_s, command })
+            (!command.is_empty()).then_some(Process { pid, ppid, user, pcpu, rss: rss_kib * 1024, cpu_time_s, command, part: None, started: None })
         })
         .collect()
+}
+
+/// `ps -o pid=,etime=,args=`: each process's pid, how long it has run (seconds), its command line.
+pub fn parse_args(text: &str) -> Vec<(u32, Option<f64>, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut words = line.trim_start().splitn(2, char::is_whitespace);
+            let pid = words.next()?.parse().ok()?;
+            let rest = words.next()?.trim_start();
+            let (etime, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            Some((pid, elapsed(etime), args.trim().to_string()))
+        })
+        .collect()
+}
+
+/// ps's `etime`: `[[dd-]hh:]mm:ss`, as seconds.
+pub fn elapsed(text: &str) -> Option<f64> {
+    let (days, clock) = match text.split_once('-') {
+        Some((d, c)) => (d.parse::<f64>().ok()?, c),
+        None => (0.0, text),
+    };
+    let mut seconds = 0.0;
+    for part in clock.split(':') {
+        seconds = seconds * 60.0 + part.parse::<f64>().ok()?;
+    }
+    Some(days * 86_400.0 + seconds)
 }
 
 /// ps's `time`: `2:34.27` and `3605:00.08` on macOS, `[[dd-]hh:]mm:ss` on Linux.
@@ -562,8 +729,39 @@ not a line
         assert_eq!(super::cpu([5, 1, 1, 1], [1, 1, 9, 1], 10), None, "a counter went back: a reboot");
     }
 
+    #[test]
+    fn a_browser_helper_says_what_it_is() {
+        assert_eq!(part_of("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), Part::Browser);
+        assert_eq!(part_of("…/Google Chrome Helper (Renderer) --type=renderer --lang=en-US --num-raster-threads=4"), Part::Tab);
+        assert_eq!(part_of("…(Renderer) --type=renderer --extension-process --lang=en-US"), Part::Extension);
+        assert_eq!(part_of("…/Google Chrome Helper (GPU) --type=gpu-process --gpu-preferences=x"), Part::Gpu);
+        assert_eq!(part_of("…Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en"), Part::Network);
+        assert_eq!(part_of("…Helper --type=utility --utility-sub-type=storage.mojom.StorageService"), Part::Storage);
+        assert_eq!(part_of("…Helper --type=utility --utility-sub-type=audio.mojom.AudioService"), Part::Audio);
+        assert_eq!(part_of("…Helper --type=utility --utility-sub-type=video_capture.mojom.VideoCaptureService"), Part::Other);
+        assert!(Part::Tab.killable() && Part::Extension.killable() && !Part::Browser.killable() && !Part::Gpu.killable());
+        let args = parse_args("  15564  1-02:03:04 /Applications/Google Chrome.app/x (Renderer) --type=renderer\n   902      03:20 /bin/zsh -l\n");
+        assert_eq!(args[0], (15564, Some(93_784.0), "/Applications/Google Chrome.app/x (Renderer) --type=renderer".into()));
+        assert_eq!(args[1].1, Some(200.0));
+    }
+
+    #[test]
+    fn a_browser_is_broken_down_by_part_once_a_read() {
+        let mut local = Local::default();
+        local.record(crate::fake::local(1, 1000.0));
+        local.record(crate::fake::local(2, 1002.0));
+        let chrome = local.browser("Google Chrome").expect("Chrome is on the fake laptop");
+        assert_eq!(chrome.count, 8);
+        assert_eq!(chrome.rss, chrome.parts.iter().map(|p| p.rss).sum::<u64>());
+        assert_eq!(chrome.parts[0].part, Part::Tab, "the tabs hold the most: {:?}", chrome.parts);
+        assert_eq!((chrome.parts[0].count, chrome.heaviest.len()), (3, 5), "three tabs, and two extensions to stop too");
+        assert!(chrome.heaviest.iter().all(|h| h.part.killable()));
+        assert!(chrome.heaviest.windows(2).all(|w| w[0].rss >= w[1].rss));
+        assert!(local.browser("Safari").is_none());
+    }
+
     fn process(pid: u32, command: &str, cpu_time_s: f64, rss_mib: u64, pcpu: f64) -> Process {
-        Process { pid, ppid: 1, user: "me".into(), pcpu, rss: rss_mib << 20, cpu_time_s, command: command.into() }
+        Process { pid, ppid: 1, user: "me".into(), pcpu, rss: rss_mib << 20, cpu_time_s, command: command.into(), part: None, started: None }
     }
 
     fn sample(at: f64, ticks: [u64; 4], processes: Vec<Process>) -> Sample {

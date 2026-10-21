@@ -3,7 +3,7 @@
 //! Each read a few milliseconds of child processes, on the runtime's own time: never the UI's.
 
 use crate::app::Event;
-use crate::local::{self, Sample};
+use crate::local::{self, Part, Sample};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -23,10 +23,44 @@ const SYSCTL_KEYS: [&str; 8] = [
 pub async fn run(every: Duration, tx: mpsc::UnboundedSender<Event>) {
     let mut ticker = tokio::time::interval(every);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut parts = Parts::new();
     loop {
         ticker.tick().await;
-        if tx.send(Event::Local(Box::new(read().await))).is_err() {
+        let mut sample = read().await;
+        fill_parts(&mut sample, &mut parts).await;
+        if tx.send(Event::Local(Box::new(sample))).is_err() {
             return;
+        }
+    }
+}
+
+/// What each browser helper was found to be, by pid and command: a part never changes, so a
+/// process's command line is read once, not every poll.
+type Parts = std::collections::HashMap<u32, (String, Part, Option<f64>)>;
+
+/// The parts of a browser's helpers (Chrome's `--type=`) and when each started: one `ps` for
+/// the processes not seen before, and none at all when there are none.
+async fn fill_parts(sample: &mut Sample, parts: &mut Parts) {
+    parts.retain(|pid, (command, _, _)| sample.processes.iter().any(|p| p.pid == *pid && p.command == *command));
+    let new: Vec<String> = sample
+        .processes
+        .iter()
+        .filter(|p| local::has_parts(p.program()) && !parts.contains_key(&p.pid))
+        .map(|p| p.pid.to_string())
+        .collect();
+    if !new.is_empty()
+        && let Ok(text) = output("ps", &["-o", "pid=,etime=,args=", "-p", &new.join(",")]).await
+    {
+        for (pid, age_s, args) in local::parse_args(&text) {
+            if let Some(p) = sample.processes.iter().find(|p| p.pid == pid) {
+                parts.insert(pid, (p.command.clone(), local::part_of(&args), age_s.map(|a| sample.at - a)));
+            }
+        }
+    }
+    for p in &mut sample.processes {
+        if let Some((_, part, started)) = parts.get(&p.pid) {
+            p.part = Some(*part);
+            p.started = *started;
         }
     }
 }
@@ -123,6 +157,30 @@ mod tests {
             let m = first.memory.expect("vm_stat");
             assert!(m.total > 0 && m.used() <= m.total, "{m:?}");
             assert!(first.ticks.is_some() && first.pressure.is_some());
+        }
+    }
+
+    /// `cargo test live_browser -- --ignored --nocapture`: this machine's browsers part by part,
+    /// as the drill-down would show them (names of parts, counts and sizes only).
+    #[tokio::test]
+    #[ignore]
+    async fn live_browser() {
+        let mut parts = super::Parts::new();
+        let mut local = crate::local::Local::default();
+        for _ in 0..2 {
+            let mut sample = super::read().await;
+            super::fill_parts(&mut sample, &mut parts).await;
+            local.record(sample);
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        for b in &local.browsers {
+            println!("{} · {} processes · {}", b.program, b.count, crate::fmt::bytes(b.rss));
+            for s in &b.parts {
+                println!("  {:<10} {:>4} {:>10}", crate::browser::part_word(s.part), s.count, crate::fmt::bytes(s.rss));
+            }
+            for h in b.heaviest.iter().take(3) {
+                println!("  heaviest {} {:?} {} age {:?}", h.pid, h.part, crate::fmt::bytes(h.rss), h.started.map(|s| local.latest.as_ref().unwrap().at - s));
+            }
         }
     }
 

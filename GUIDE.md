@@ -652,6 +652,7 @@ over what it keeps.
 | Variable | Meaning | Default |
 |---|---|---|
 | `THEME` | `dark` (or `soga`), `light` (or `mori`) or `mono` — Cobserve.app follows it too | `dark` |
+| `CHROME_WARN_PCT` / `CHROME_CRIT_PCT` | when Chrome (or another Chromium browser) holds too much of the Mac's memory, % of RAM by RSS; `CHROME_WARN_PCT=off` for never | `40` / `60` |
 | `NO_COLOR` | any value: no colour at all (the marks still say how bad) | unset |
 | `MOUSE` | `0` leaves the mouse to the terminal | on |
 | `FAKE` | `1`: a generated fleet, no network | unset |

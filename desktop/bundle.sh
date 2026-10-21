@@ -39,6 +39,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>io.github.abduldjafar.cobserve</string>
   <key>CFBundleExecutable</key><string>cobserve-desktop</string>
   <key>CFBundleIconFile</key><string>cobserve</string>
+  <key>NSAppleEventsUsageDescription</key><string>cobserve lists Chrome's open tabs, by site, when you open Chrome on this machine's view or ask /chrome.</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>

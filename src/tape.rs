@@ -82,6 +82,8 @@ pub enum Kind {
     Queue,
     /// A line of the person at the screen (`n`), kept with the events.
     Note,
+    /// This machine: a browser that holds too much of its memory, a tab process stopped.
+    Local,
 }
 
 impl Kind {
@@ -92,6 +94,7 @@ impl Kind {
             Kind::Query => "QUERY",
             Kind::Queue => "QUEUE",
             Kind::Note => "NOTE",
+            Kind::Local => "LOCAL",
         }
     }
 }

@@ -901,9 +901,20 @@ or from a slope over the last minutes of it.
   runs from (all of Chrome's helpers are Google Chrome) — by CPU or by memory, `s`, each with its
   cores of the machine's and its RSS of the machine's. The cursor follows its process while the
   list re-sorts; the drawer has the rest. With 20 rows, the band says the machine on a third
-  line, `LOCAL`, on every view, and the desktop app has a chip for it. Read-only: nothing here
-  signals a process. With `FAKE=1` the machine is made up too, so screenshots carry no real
-  process.
+  line, `LOCAL`, on every view, and the desktop app has a chip for it. With `FAKE=1` the machine
+  is made up too, so screenshots carry no real process.
+- **A browser, opened** (`⏎` on Chrome's row in view 0; `src/browser.rs`, `views/drill.rs`):
+  its processes by part, from each helper's `--type=` (read once per process): tabs, browser,
+  extensions, GPU, utility — RSS, of Chrome and of the Mac's memory, the rows adding up to
+  Chrome; its tab and extension processes heaviest first; its open tabs by site, read through
+  AppleScript only while it is open or `/chrome` asks, at most every 30 s. No tab is matched to a
+  process: Chrome puts a site's tabs in one renderer and gives iframes and workers their own, so
+  only its Task Manager knows; the screen says so. **Read-only but for one thing, asked and
+  confirmed:** a tab's or an extension's process is sent SIGTERM (`x`, then `y`; or the phone's
+  card) — never the browser or its GPU process, and only after its command line is read again.
+  `share = Σ rss ÷ hw.memsize × 100`, amber at `CHROME_WARN_PCT` (40), red at `CHROME_CRIT_PCT`
+  (60), two reads to raise and two reads 3 points under to clear: a `LOCAL` line on the tape, and
+  on Telegram once it has gone on 10 minutes.
 - **Tarum** (`src/theme.rs`), cobserve's own palette, after the dyes of hand-made batik: a
   soga brown ground (lifted to the icon's soga, `#2c2622`), mori cream text, tarum indigo for the accent, the selection and a
   bar's ordinary fill; mengkudu red, kunyit yellow and leaf green for §7's severities and

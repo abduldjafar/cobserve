@@ -1,12 +1,12 @@
- ☗ cobserve · prod    04:17 ━━ 05:29 ━━ 11:42 ━━ 14:46 ━●┄ 17:49 in 1h57m ┄┄ 18:58               ● live   15:52:07 WIB
+ ☗ cobserve · prod    dashboard › this machine                                        esc back   ● live   15:52:07 WIB
 ╭ 0 LOCAL · sam-macbook.local ────────────────────────────────────────────────────────────────────────────── esc back ─╮
 │  sam-macbook.local · 10 cores · 32.0 GiB · up 31d02h · load 3.21 3.05 2.98                              read 0s ago  │
 │                                                                                                                      │
-│  CPU       ━━━━━╺━━━━━━━━━━━━━━  25.2%  2.5/10 cores   user 18.9% · system 6.3%                                    ▅ │
+│  CPU       ━━━━━╺━━━━━━━━━━━━━━  25.7%  2.6/10 cores   user 19.3% · system 6.4%                                    ▅ │
 │  MEMORY    ━━━━━━━━━━━━━━━━╸━━━  83.1%  26.6/32.0 GiB   app 12.0 · wired 2.8 · compressed 11.8 · cached 3.7 GiB      │
 │  PRESSURE  ● normal · the kernel counts 50% of memory free     SWAP 2.2/3.0 GiB 72.6%                                │
 │                                                                                                                      │
-│ ─ PROCESSES · 14 · by CPU ────────────────────────────────────────────────────────────────────────────────────────── │
+│ ─ PROCESSES · 18 · by CPU ────────────────────────────────────────────────────────────────────────────────────────── │
 │   NAME                                        PID  USER           CORES  of 10                RSS  /32.0G   CPU TIME │
 │ ▌ opencode                                  28932  sam             0.55  ╸━━━━━━━━━━━   825.0 MiB    2.5%      2m26s │
 │   WindowServer                                164  _system         0.35  ╸━━━━━━━━━━━   691.0 MiB    2.1%      2d12h │
@@ -15,22 +15,22 @@
 │   claude                                    29329  sam             0.09  ╸━━━━━━━━━━━   387.0 MiB    1.2%        10s │
 │   cobserve                                  40112  sam             0.07  ╸━━━━━━━━━━━    48.0 MiB    0.1%        25s │
 │   coreaudiod                                  343  _system         0.05  ╸━━━━━━━━━━━    38.0 MiB    0.1%      9h31m │
+│   Google Chrome Helper (GPU)                14903  sam             0.04  ╸━━━━━━━━━━━   123.0 MiB    0.4%      2h15m │
 │   Google Chrome                             14897  sam             0.03  ╸━━━━━━━━━━━   857.0 MiB    2.6%      6h27m │
 │   cobserve-desktop                          40110  sam             0.02  ╸━━━━━━━━━━━    96.0 MiB    0.3%        12s │
 │   Google Chrome Helper (Renderer)           15564  sam             0.01  ╸━━━━━━━━━━━   834.0 MiB    2.5%     25m00s │
 │   Claude Helper (Renderer)                  11989  sam             0.01  ╸━━━━━━━━━━━   728.0 MiB    2.2%     25m04s │
 │   Google Chrome Helper (Renderer)           62018  sam             0.00  ╸━━━━━━━━━━━   783.0 MiB    2.4%     16m00s │
+│   Google Chrome Helper                      14905  sam             0.00  ╸━━━━━━━━━━━    84.0 MiB    0.3%     10m10s │
 │   Google Chrome Helper (Renderer)            5792  sam             0.00  ╸━━━━━━━━━━━   679.0 MiB    2.1%      6m50s │
 │   VTDecoderXPCService                       37781  sam             0.00  ━━━━━━━━━━━━   489.0 MiB    1.5%         2s │
-│   the rest                                                         0.90  ━╺━━━━━━━━━━  kernel, short-lived           │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
+│   Google Chrome Helper (Renderer)           15002  sam             0.00  ━━━━━━━━━━━━   295.0 MiB    0.9%      1m05s │
+│   Google Chrome Helper (Renderer)           15003  sam             0.00  ━━━━━━━━━━━━   118.0 MiB    0.4%        20s │
+│   the rest                                                         0.91  ━╺━━━━━━━━━━  kernel, short-lived           │
 │                                                                                                                      │
 │ ─ clickhouse3 · pay-ch-node-1:9000 ───────────────────────────────────────────────────────────────────────────────── │
 │ MEM 59.7/64 GiB  93.3%  ▂▃▄▅▆▇▂▃ ↑ +2.4%/min full ~2m48s    CPU 14.5/16 cores  90.8%  ▇▇▇▇▇▇▇▇ ↘ -1.2%/min           │
 │ memory: queries 45.7% + server 47.6% · 4 running (2 ✕) · lag 0s · 1.2k parts · free 4.3 GiB = 0.2× a 24.0 GiB query  │
 │ shard 1 · replica 1 · v24.11.1.2557 · up 46d07h · poll 46 ms · numbers from 15:52:07 WIB                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- 1-8 panel   ⏎ open nodes   ←→↑↓ choose   e explain   p layout   : command          all · 9/9 nodes · 1.0 s · read-only
+ esc back   ↑↓ choose   ⏎ open a browser   s sort   g group                         all · 9/9 nodes · 1.0 s · read-only

@@ -2,6 +2,7 @@
 //! loop; nothing here touches `App` or the UI.
 
 pub mod airflow;
+pub mod chrome;
 pub mod clickhouse;
 pub mod jira;
 pub mod limits;

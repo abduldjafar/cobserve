@@ -53,7 +53,7 @@ on top of it and are listed in `DESIGN.md` §13.
 | **JIRA** | `6` | Your tickets: the flow across your board's columns, what is overdue, today's logged hours. Zoomed: the board as lanes, each ticket with its priority, time in the column, due date and time logged, the ticket in full, the month by ticket. |
 | **TAPE** | `7` | What changed, newest first, beside two strips of `✖` and `▲` a minute: nodes going hot or unreachable and recovering, runaways starting and ending — *"probably killed"* when a query vanished at its memory limit — the queue backing up and draining, your cancels and notes. |
 | **SESSIONS** | `8` | Claude Code itself — your own `claude`, signed in with your plan — OpenCode, your own shell, or a query session on a server of the fleet, in as many named sessions as you need. `\` floats one over any panel. |
-| **this Mac** | `0` | This machine, as Activity Monitor shows it — CPU, memory and its pressure, every process or program — and what Claude Code and OpenCode used today and this month, with the plan's own limits. Its line joins the status bar from 140 columns. |
+| **this Mac** | `0` | This machine, as Activity Monitor shows it — CPU, memory and its pressure, every process or program — and what Claude Code and OpenCode used today and this month, with the plan's own limits. `⏎` on Chrome opens it: its memory by part, its heaviest tab processes (`x` stops one, after `y`), its tabs by site. Its line joins the status bar from 140 columns. |
 
 Each panel's frame takes the colour of its worst finding and says its gist on its border. `:` is
 the palette — every action, and every node, person, query, job, DAG, ticket, session and tape
@@ -454,6 +454,7 @@ have a user the other one does not know.
 | `POLL_MS` | ClickHouse poll interval | `2000` |
 | `CH_TIMEOUT_MS` | how long a node has to answer one request before it reads `↯ unreachable` — over a VPN, `5000` | `1500` |
 | `THEME` | `dark` (or `soga`), `light` (or `mori`) or `mono` — Cobserve.app follows it too | `dark` |
+| `CHROME_WARN_PCT` / `CHROME_CRIT_PCT` | when Chrome (or another Chromium browser) holds too much of the Mac's memory, % of RAM by RSS; `CHROME_WARN_PCT=off` for never | `40` / `60` |
 | `NO_COLOR` | any value: no colour at all (glyphs still carry severity) | unset |
 
 Colour depth follows the terminal: 24-bit when `COLORTERM` says so, the 256-colour palette
@@ -516,6 +517,9 @@ well, for the chats `TELEGRAM_CHAT_ID` names (`src/telegram/`):
   and when the query has left the node. `/kill <node> <query_id>` and `/cancel <job>` make a
   card without Claude. Another user's query needs the KILL QUERY grant on cobserve's login.
 - **`/status`**: an overview and a tab a panel — Fleet, Redash, Airflow, Jira — in one message.
+- **`/chrome`**: Chrome's memory by part, its tabs by site and its three heaviest tab processes,
+  each with a button that makes a stop card (SIGTERM, never the browser or GPU process). When
+  Chrome has held over 40 % of the Mac's memory for ten minutes, it says so unasked.
 - **Unasked**, it tells what has been wrong for ten minutes — a node, a query, a Redash queue
   (the screen's insights), a DAG whose last run failed or a run stuck — once, with **Explain**,
   and again when it clears. What clears within ten minutes is never told; a gap of under 90 s

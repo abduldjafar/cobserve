@@ -265,7 +265,26 @@ pub enum Event {
     Limits(Box<crate::limits::PlanLimits>),
     /// What a page of view 5 or 6 asked for, and what came back.
     Detail(crate::detail::Ask, Result<crate::detail::Body, String>),
+    /// A browser's open tabs, as it said (`sources::chrome::tabs`).
+    Tabs(Box<crate::browser::TabsRead>),
+    /// A tab process the owner asked to stop, and what came of it.
+    Stopped(Box<Stop>, Result<String, String>),
     Quit,
+}
+
+/// A browser's tab or extension process to stop, and who asked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stop {
+    pub program: String,
+    pub helper: crate::local::Helper,
+    pub asked: Asked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asked {
+    Screen,
+    /// The bot's card: its chat and message, where the answer is edited in.
+    Phone { chat: i64, message: i64 },
 }
 
 /// A job Redash has been asked to cancel from view 2.
@@ -404,6 +423,21 @@ pub struct App {
     /// View 6's page of the month's time by ticket (`t`): the day chosen and the ticket under the
     /// cursor. A ticket opened from it opens over it.
     pub jira_time: Option<TimePage>,
+    /// This machine's browser, opened (`⏎` on its row): its processes and tabs.
+    pub drill: Option<crate::browser::Drill>,
+    /// The last read of a browser's tabs; whether one is being read; `r` asked for one now; the
+    /// phone is waiting for one.
+    pub tabs: Option<crate::browser::TabsRead>,
+    tabs_in_flight: bool,
+    tabs_forced: bool,
+    pub tabs_for_phone: bool,
+    /// Tab processes to stop, for `main.rs`; and those stopped, watched for two reads.
+    stops: Vec<Stop>,
+    stopped: Vec<(Stop, u8)>,
+    /// The lines a browser's share is greedy at (`CHROME_WARN_PCT`, `CHROME_CRIT_PCT`), and the
+    /// level each browser is held at.
+    pub chrome_lines: Option<(f64, f64)>,
+    greed: HashMap<String, crate::browser::Greed>,
 }
 
 /// Where the cursor is on the month's time: a day of the month (from 1) and a ticket's row.
@@ -497,6 +531,15 @@ impl App {
             tasks_asked: Vec::new(),
             jira_time: None,
             outside_chrome: false,
+            drill: None,
+            tabs: None,
+            tabs_in_flight: false,
+            tabs_forced: false,
+            tabs_for_phone: false,
+            stops: Vec::new(),
+            stopped: Vec::new(),
+            chrome_lines: Some((crate::browser::WARN_PCT, crate::browser::CRIT_PCT)),
+            greed: HashMap::new(),
         }
     }
 
@@ -1089,9 +1132,18 @@ impl App {
             Event::Limits(limits) => self.limits = Some(*limits),
             Event::Local(sample) => {
                 if !self.paused {
-                    self.local.record(*sample)
+                    self.local.record(*sample);
+                    self.after_local_read();
                 }
             }
+            Event::Tabs(read) => {
+                self.tabs_in_flight = false;
+                self.tabs = Some(*read);
+                if let Some(drill) = self.drill.as_mut() {
+                    drill.rebuild(&self.local, self.tabs.as_ref());
+                }
+            }
+            Event::Stopped(stop, result) => self.on_stopped(*stop, result),
             Event::Detail(ask, result) => self.on_detail(ask, result),
             Event::Notice(message) => {
                 let now = SystemTime::now();
@@ -2421,8 +2473,174 @@ impl App {
                 self.local.grouped = !self.local.grouped;
                 self.local.select(0);
             }
+            KeyCode::Enter => self.open_drill(),
             _ => {}
         }
+    }
+
+    /// After a read of the machine: each browser's level against its lines (a tape line when it
+    /// changes), the drill-down's rows again, and the processes stopped looked for.
+    fn after_local_read(&mut self) {
+        let at = self.local.latest.as_ref().map_or(0.0, |s| s.at);
+        let total = self.local.latest.as_ref().and_then(|s| s.memory).map(|m| m.total);
+        let mut lines = Vec::new();
+        if let Some(chrome_lines) = self.chrome_lines {
+            for b in &self.local.browsers {
+                let Some(share) = crate::browser::share(&self.local, b) else { continue };
+                let greed = self.greed.entry(b.program.clone()).or_default();
+                let before = (greed.level, greed.since);
+                if let Some(level) = greed.observe(share, chrome_lines, at) {
+                    lines.extend(crate::browser::tape_line(b, share, total, chrome_lines, before, level, at));
+                }
+            }
+        }
+        // A browser that has gone, while it was held greedy: it gave its memory back.
+        let gone: Vec<String> = self.greed.keys().filter(|p| self.local.browser(p).is_none()).cloned().collect();
+        for program in gone {
+            if let Some(g) = self.greed.remove(&program)
+                && g.level >= Severity::Warn
+            {
+                lines.push(crate::browser::quit_line(&program, at));
+            }
+        }
+        // A stopped process still listed two reads on: it did not stop.
+        let mut still = Vec::new();
+        for (stop, reads) in std::mem::take(&mut self.stopped) {
+            let listed = self.local.latest.as_ref().is_some_and(|s| s.processes.iter().any(|p| p.pid == stop.helper.pid && p.command == stop.helper.command));
+            if !listed {
+                continue;
+            }
+            if reads + 1 >= 2 {
+                self.shell.toast(format!("✖ {} did not stop — Chrome's Task Manager can end it (⇧esc)", stop.helper.pid), true, SystemTime::now());
+            } else {
+                still.push((stop, reads + 1));
+            }
+        }
+        self.stopped = still;
+        self.tape.extend(lines);
+        if let Some(drill) = self.drill.as_mut() {
+            drill.rebuild(&self.local, self.tabs.as_ref());
+        }
+    }
+
+    /// `⏎` on view 0: the browser on the row opened, part by part — its program's row, or one of
+    /// its processes.
+    fn open_drill(&mut self) {
+        let rows = self.local.rows();
+        let Some(row) = rows.get(self.local.selected) else { return };
+        let program = crate::local::Process { command: row.command.clone(), ..Default::default() }.program().to_string();
+        if self.local.browser(&program).is_none() {
+            let name = if self.local.grouped { row.name.clone() } else { program.clone() };
+            self.shell.toast(format!("no breakdown for {name} — its processes do not say what they are"), false, SystemTime::now());
+            return;
+        }
+        let on = (!self.local.grouped && row.count == 1).then_some(row.pid);
+        self.drill = Some(crate::browser::Drill::new(&program, &self.local, self.tabs.as_ref(), on));
+        self.tabs_forced = self.tabs.as_ref().is_none_or(|t| t.program != program);
+    }
+
+    /// The drill-down's keys; `false` for a key it leaves to view 0.
+    pub fn drill_key(&mut self, code: KeyCode) -> bool {
+        let Some(drill) = self.drill.as_mut() else { return false };
+        if drill.asked.is_some() {
+            // The stop dialog: `y` sends it, anything else keeps the process.
+            let helper = drill.asked.take();
+            if matches!(code, KeyCode::Char('y' | 'Y'))
+                && let Some(helper) = helper
+            {
+                self.ask_stop(helper, Asked::Screen);
+            } else {
+                self.shell.toast("kept · nothing was sent", false, SystemTime::now());
+            }
+            return true;
+        }
+        match code {
+            KeyCode::Esc | KeyCode::Backspace => self.drill = None,
+            KeyCode::Up | KeyCode::Char('k') => drill.select_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => drill.select_by(1),
+            KeyCode::PageUp => drill.select_by(-10),
+            KeyCode::PageDown => drill.select_by(10),
+            KeyCode::Home => drill.select(0),
+            KeyCode::End => drill.select(usize::MAX),
+            KeyCode::Enter => drill.toggle(&self.local, self.tabs.as_ref()),
+            KeyCode::Char('r') => self.tabs_forced = true,
+            KeyCode::Char('x') => match drill.current() {
+                Some(crate::browser::Row::Process(helper)) => drill.asked = Some(helper.clone()),
+                _ => self.shell.toast("x stops a process — choose one under TAB AND EXTENSION PROCESSES", false, SystemTime::now()),
+            },
+            _ => return false,
+        }
+        true
+    }
+
+    /// The process the stop dialog is about, while it waits for `y`.
+    pub fn stop_asked(&self) -> Option<&crate::local::Helper> {
+        self.drill.as_ref()?.asked.as_ref()
+    }
+
+    /// A stop, for `main.rs` to send: only a process still listed as the same one.
+    pub fn ask_stop(&mut self, helper: crate::local::Helper, asked: Asked) {
+        let listed = self.local.latest.as_ref().is_some_and(|s| s.processes.iter().any(|p| p.pid == helper.pid && p.command == helper.command));
+        if !listed {
+            if asked == Asked::Screen {
+                self.shell.toast(format!("✔ {} is gone already — nothing to stop", helper.pid), false, SystemTime::now());
+            }
+            return;
+        }
+        let program = crate::local::Process { command: helper.command.clone(), ..Default::default() }.program().to_string();
+        if asked == Asked::Screen {
+            self.shell.toast(format!("stopping {} …", helper.pid), false, SystemTime::now());
+        }
+        self.stops.push(Stop { program, helper, asked });
+    }
+
+    /// The level a browser's share is held at (two reads to change it).
+    pub fn greed_of(&self, program: &str) -> Severity {
+        self.greed.get(program).map_or(Severity::None, |g| g.level)
+    }
+
+    /// A tab read is under way.
+    pub fn tabs_reading(&self) -> bool {
+        self.tabs_in_flight
+    }
+
+    pub fn take_stops(&mut self) -> Vec<Stop> {
+        std::mem::take(&mut self.stops)
+    }
+
+    fn on_stopped(&mut self, stop: Stop, result: Result<String, String>) {
+        let at = crate::history::secs(self.clock);
+        let ok = result.is_ok();
+        if stop.asked == Asked::Screen {
+            match &result {
+                Ok(_) => self.shell.toast(format!("✔ stopped {} · {} to come back · its tabs show Aw, Snap!", stop.helper.pid, crate::fmt::bytes(stop.helper.rss)), false, SystemTime::now()),
+                Err(e) => self.shell.toast(format!("✖ not stopped: {e}"), true, SystemTime::now()),
+            }
+        }
+        self.tape.extend([crate::browser::stop_line(&stop, &result, at)]);
+        if ok {
+            self.stopped.push((stop, 0));
+        }
+    }
+
+    /// The browser whose tabs are due a read — the drill-down is open on it, or the phone asked —
+    /// and whether it is running; one read at a time, and none sooner than every 30 s unless `r`.
+    pub fn wants_tabs(&mut self, now: f64) -> Option<(String, bool)> {
+        if self.tabs_in_flight {
+            return None;
+        }
+        let program = match (&self.drill, self.tabs_for_phone) {
+            (Some(d), _) => d.program.clone(),
+            (None, true) => "Google Chrome".to_string(),
+            (None, false) => return None,
+        };
+        let fresh = self.tabs.as_ref().is_some_and(|t| t.program == program && now - t.at < crate::browser::TABS_FRESH_S);
+        if fresh && !self.tabs_forced {
+            return None;
+        }
+        self.tabs_forced = false;
+        self.tabs_in_flight = true;
+        Some((program.clone(), self.local.browser(&program).is_some()))
     }
 
     fn move_local(&mut self, delta: isize) {
