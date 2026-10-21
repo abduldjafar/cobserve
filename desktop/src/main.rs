@@ -77,7 +77,8 @@ struct Look {
     cursor_blink: bool,
     /// The 16 ANSI colours, black to bright white.
     ansi: Vec<String>,
-    /// `dom` (the web view's own text, as crisp as the system's) or `webgl`.
+    /// `webgl` (the default: the GPU draws the cells, a fifth of the energy the web view's
+    /// own text layout takes while sessions talk) or `dom` (the system's text, as iTerm2's is).
     renderer: String,
     /// The window round the terminal: a step lighter than the ground when dark, a step darker
     /// when light. Empty for an iTerm2 profile's colours, where the page mixes its own.
@@ -132,7 +133,7 @@ impl Look {
             cursor_style: "bar".into(),
             cursor_blink: true,
             ansi: ansi.iter().map(|c| c.to_string()).collect(),
-            renderer: "dom".into(),
+            renderer: "webgl".into(),
             chrome: chrome.into(),
             light,
         }
