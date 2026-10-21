@@ -191,7 +191,7 @@
 
   // -- the header ---------------------------------------------------------------------------
   // The panels, as cobserve numbers them; a tab sends the F-key that zooms it from anywhere, a
-  // session's screen included (F1–F8; F10 this machine).
+  // session's screen included (F1–F8; F10 this machine; F11 its Chrome).
   const views = [
     { id: "fleet", name: "Fleet", key: "\x1bOP" },
     { id: "queue", name: "Queue", key: "\x1bOQ" },
@@ -203,6 +203,8 @@
     { id: "sessions", name: "Sessions", key: "\x1b[19~" },
     // This machine: cobserve's `0`, F10 — beside the sessions, where the work is.
     { id: "local", name: "Local", num: 0, key: "\x1b[21~" },
+    // Its Chrome, opened: cobserve's `c` from this machine, F11 from anywhere.
+    { id: "chrome", name: "Chrome", num: "c", key: "\x1b[23~" },
   ];
   // The number cobserve gives a panel (its chips say which they open): 1–8, and 0.
   const byNumber = (n) => views.find((v, i) => (v.num ?? i + 1) === n);
@@ -212,7 +214,7 @@
     const tab = document.createElement("div");
     tab.className = "tab";
     tab.dataset.view = v.id;
-    tab.title = `${v.name} · ⌘${i + 1}`;
+    tab.title = i < 9 ? `${v.name} · ⌘${i + 1}` : `${v.name} · c from Local`;
     tab.innerHTML = `<span class="num">${v.num ?? i + 1}</span><span class="name">${v.name.toLowerCase()}</span>`;
     tab.addEventListener("click", () => go(v.key));
     tabs.appendChild(tab);

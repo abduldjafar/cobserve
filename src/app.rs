@@ -2474,6 +2474,7 @@ impl App {
                 self.local.select(0);
             }
             KeyCode::Enter => self.open_drill(),
+            KeyCode::Char('c') => self.open_browser(),
             _ => {}
         }
     }
@@ -2536,6 +2537,16 @@ impl App {
         }
         let on = (!self.local.grouped && row.count == 1).then_some(row.pid);
         self.drill = Some(crate::browser::Drill::new(&program, &self.local, self.tabs.as_ref(), on));
+        self.tabs_forced = self.tabs.as_ref().is_none_or(|t| t.program != program);
+    }
+
+    /// `c` on view 0, or `:chrome`: the heaviest browser opened, whatever row the cursor is on.
+    pub fn open_browser(&mut self) {
+        let Some(program) = self.local.browsers.first().map(|b| b.program.clone()) else {
+            self.shell.toast("no Chrome running here — nothing to open", false, SystemTime::now());
+            return;
+        };
+        self.drill = Some(crate::browser::Drill::new(&program, &self.local, self.tabs.as_ref(), None));
         self.tabs_forced = self.tabs.as_ref().is_none_or(|t| t.program != program);
     }
 
