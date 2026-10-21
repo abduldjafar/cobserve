@@ -54,6 +54,7 @@ struct ApiFields {
     labels: Option<Vec<String>>,
     reporter: Option<ApiUser>,
     timespent: Option<u64>,
+    assignee: Option<ApiUser>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -388,7 +389,103 @@ pub struct JiraDetails {
     client: reqwest::Client,
 }
 
+#[derive(Debug, Deserialize)]
+struct ApiTransitions {
+    #[serde(default)]
+    transitions: Vec<ApiTransition>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiTransition {
+    id: String,
+    name: String,
+    to: Option<ApiTransitionTo>,
+    /// With `expand=transitions.fields`: the fields its screen asks for.
+    #[serde(default)]
+    fields: HashMap<String, ApiTransitionField>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiTransitionTo {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiTransitionField {
+    #[serde(default)]
+    required: bool,
+    #[serde(rename = "hasDefaultValue", default)]
+    has_default: bool,
+}
+
+fn transitions_of(answer: ApiTransitions) -> Vec<jira::Transition> {
+    answer
+        .transitions
+        .into_iter()
+        .map(|t| jira::Transition {
+            needs_fields: t.fields.values().any(|f| f.required && !f.has_default),
+            to: t.to.map(|to| to.name).unwrap_or_default(),
+            id: t.id,
+            name: t.name,
+        })
+        .collect()
+}
+
+/// The team's tickets of a Structure: the open ones, the board's fields and who has each.
+const TEAM_FIELDS: &str = "summary,status,priority,issuetype,created,updated,duedate,parent,assignee";
+
 impl JiraDetails {
+    /// The open tickets of Structure `id` whose summary starts with `prefix` (Structure's own JQL
+    /// function, `issue in structure(…)`), the most urgent first — this Jira cannot sort by Rank.
+    pub async fn team(&self, id: u64, prefix: &str) -> Result<Vec<Ticket>, String> {
+        let jql = format!("issue in structure({id}) AND statusCategory != Done ORDER BY priority DESC, updated DESC");
+        let mut tickets = Vec::new();
+        for page in 0..MAX_PAGES {
+            let (limit, start) = (PAGE.to_string(), (page * PAGE).to_string());
+            let query = [("jql", jql.as_str()), ("fields", TEAM_FIELDS), ("maxResults", &limit), ("startAt", &start)];
+            let search: Search = fetch(&self.client, &self.base_url, &self.token, "/rest/api/2/search", &query).await.map_err(|e| e.to_string())?;
+            let got = search.issues.len();
+            let seen = page * PAGE + got;
+            tickets.extend(search.issues.into_iter().map(|i| ticket(i, None)).filter(|t| prefix.is_empty() || jira::has_prefix(&t.summary, prefix)));
+            if got < PAGE || seen >= search.total {
+                break;
+            }
+        }
+        Ok(tickets)
+    }
+
+    /// The moves Jira allows for `key` now.
+    pub async fn transitions(&self, key: &str) -> Result<Vec<jira::Transition>, String> {
+        if !is_key(key) {
+            return Err(format!("{key} is not a ticket's key"));
+        }
+        let path = format!("/rest/api/2/issue/{key}/transitions");
+        let answer: ApiTransitions = fetch(&self.client, &self.base_url, &self.token, &path, &[("expand", "transitions.fields")]).await.map_err(|e| e.to_string())?;
+        Ok(transitions_of(answer))
+    }
+
+    /// Move `key` by transition `id`: the one write cobserve makes to Jira, after the person
+    /// pressed `y` on what it says.
+    pub async fn transition(&self, key: &str, id: &str) -> Result<(), String> {
+        if !is_key(key) || !id.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!("{key} / {id} is not a ticket and a transition"));
+        }
+        let response = self
+            .client
+            .post(format!("{}/rest/api/2/issue/{key}/transitions", self.base_url))
+            .bearer_auth(&self.token)
+            .json(&serde_json::json!({ "transition": { "id": id } }))
+            .send()
+            .await
+            .map_err(|e| transport(e, REQUEST_TIMEOUT))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = response.text().await.unwrap_or_default();
+        Err(format!("HTTP {}{}", status.as_u16(), said(&body).map(|s| format!(" — {s}")).unwrap_or_default()))
+    }
+
     pub async fn issue(&self, key: &str) -> Result<jira::IssueDetail, String> {
         if !is_key(key) {
             return Err(format!("{key} is not a ticket's key"));
@@ -426,6 +523,7 @@ fn ticket(issue: ApiIssue, ranks: Option<&HashMap<String, u32>>) -> Ticket {
         labels: fields.labels.unwrap_or_default(),
         reporter: fields.reporter.and_then(|r| r.display_name.or(r.name)),
         logged_s: fields.timespent,
+        assignee: fields.assignee.and_then(|a| a.display_name.or(a.name)),
     }
 }
 
@@ -679,6 +777,27 @@ impl JiraSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transitions_say_where_they_go_and_whether_they_need_a_screen() {
+        let text = r#"{"expand":"transitions","transitions":[
+            {"id":"11","name":"Select","to":{"name":"Selected for Development"},"fields":{}},
+            {"id":"31","name":"Done","to":{"name":"Done"},"fields":{"resolution":{"required":true,"hasDefaultValue":false}}},
+            {"id":"41","name":"Hold","to":{"name":"On Hold"},"fields":{"comment":{"required":false}}}]}"#;
+        let got = transitions_of(serde_json::from_str(text).unwrap());
+        assert_eq!(got[0], jira::Transition { id: "11".into(), name: "Select".into(), to: "Selected for Development".into(), needs_fields: false });
+        assert!(got[1].needs_fields && !got[2].needs_fields);
+    }
+
+    #[test]
+    fn the_team_s_tickets_are_known_by_their_first_word() {
+        for summary in ["DE - Client account balances", "de: lowercase", "[DE] bracketed", "[DE, DA] two teams", "  DE-something"] {
+            assert!(jira::has_prefix(summary, "DE"), "{summary}");
+        }
+        for summary in ["DEX migration", "Fix DE pipeline", "[DA] other", ""] {
+            assert!(!jira::has_prefix(summary, "DE"), "{summary}");
+        }
+    }
 
     /// A search answer shaped like Jira 9.12's, cut down to two tickets.
     const SEARCH: &str = r#"{

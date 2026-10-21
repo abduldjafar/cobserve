@@ -16,6 +16,7 @@ pub mod kit;
 pub mod local;
 pub mod queue;
 pub mod tape;
+pub mod team;
 pub mod usage;
 pub mod widgets;
 
@@ -133,7 +134,7 @@ pub fn follow(app: &mut App) {
 pub fn has_inner(app: &App) -> bool {
     match app.shell.zoom {
         Some(PanelId::Airflow) => !app.airflow_pages.is_empty(),
-        Some(PanelId::Jira) => app.jira_page.is_some() || app.jira_time.is_some(),
+        Some(PanelId::Jira) => app.jira_page.is_some() || app.jira_time.is_some() || app.team.moving.is_some(),
         _ => false,
     }
 }
@@ -165,6 +166,10 @@ pub fn draw(frame: &mut ratatui::Frame, app: &App, theme: &crate::theme::Theme, 
         PanelId::Jira => match (app.page(), app.jira_time) {
             (Some(page), _) => detail::draw(frame, app, theme, body, page),
             (None, Some(time)) => jira::draw_time(frame, app, theme, body, time),
+            (None, None) if app.team_on => {
+                team::draw(frame, app, theme, inside);
+                return;
+            }
             (None, None) => {
                 board::draw(frame, app, theme, inside);
                 return;

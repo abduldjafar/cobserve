@@ -128,6 +128,9 @@ fn hero_tabs(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, b: &Breakdo
         Some(Ok(list)) => {
             let read = tabs.expect("matched");
             lines.push((format!("{} tabs · {} windows · {} sites", list.len(), read.windows(), read.sites.len()), theme.strong()));
+            if let Some(tab) = read.on_screen() {
+                lines.push((format!("● open now: {} · {}", tab.title, crate::sources::chrome::site(&tab.url)), theme.text()));
+            }
             let text = format!("{tab_procs} tab processes for {} tabs: {HONEST}", list.len());
             for line in wrap(&text, w) {
                 lines.push((line, theme.muted()));
@@ -272,8 +275,11 @@ fn draw_list(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, drill: &Dri
                     Row::Tab(i) => {
                         if let Some(tab) = tabs.and_then(|t| t.tabs().get(*i)) {
                             let mut c = Cells::new();
-                            c.push(format!("{}w{}  ", " ".repeat(10), tab.window), theme.faint());
-                            c.push(tab.title.clone(), theme.text());
+                            c.push(format!("{}{} w{}  ", " ".repeat(8), if tab.active { "●" } else { " " }, tab.window), if tab.active { theme.text() } else { theme.faint() });
+                            c.push(tab.title.clone(), if tab.active { theme.strong() } else { theme.text() });
+                            if tab.active {
+                                c.push(if tab.window == 1 { "  · open now" } else { "  · shown in its window" }, theme.faint());
+                            }
                             kit::put_cells(p, r.x, y, c, w);
                         }
                     }
@@ -343,8 +349,10 @@ fn process_row(p: &mut Painter<'_>, app: &App, theme: &Theme, x: u16, y: u16, w:
 fn site_row(p: &mut Painter<'_>, theme: &Theme, x: u16, y: u16, w: usize, host: &str, count: usize, tabs: Option<&TabsRead>, open: bool) {
     let mut c = Cells::new();
     c.push(lp(&count.to_string(), 8), theme.text2());
-    c.push(if open { " ▾ " } else { "   " }, theme.faint());
-    c.push(rp(host, 22), theme.text2());
+    let shown = tabs.and_then(|t| t.sites.iter().find(|s| s.host == host).map(|s| s.tabs.iter().any(|&i| t.tabs().get(i).is_some_and(|tab| tab.active)))).unwrap_or(false);
+    c.push(if open { " ▾" } else { "  " }, theme.faint());
+    c.push(if shown { "● " } else { "  " }, theme.text());
+    c.push(rp(host, 21), if shown { theme.strong() } else { theme.text2() });
     let titles: Vec<String> = tabs
         .and_then(|t| t.sites.iter().find(|s| s.host == host).map(|s| s.tabs.iter().filter_map(|&i| t.tabs().get(i).map(|tab| tab.title.clone())).collect()))
         .unwrap_or_default();
@@ -411,7 +419,7 @@ fn detail(p: &mut Painter<'_>, app: &App, theme: &Theme, r: Rect, drill: &Drill,
             let ids: Vec<usize> = site.map(|s| s.tabs.clone()).unwrap_or_default();
             for &i in ids.iter().take(3) {
                 if let Some(tab) = read.tabs().get(i) {
-                    lines.push((format!("w{}  {}", tab.window, tab.title), theme.text()));
+                    lines.push((format!("{} w{}  {}", if tab.active { "●" } else { " " }, tab.window, tab.title), theme.text()));
                 }
             }
             if ids.len() > 3 {

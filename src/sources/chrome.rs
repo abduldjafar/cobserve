@@ -17,14 +17,19 @@ pub struct Tab {
     pub window: u32,
     pub title: String,
     pub url: String,
+    /// The tab its window shows; window 1's is the one on screen.
+    pub active: bool,
 }
 
-/// The tabs of every window, `window ⇥ url ⇥ title` a line.
+/// The tabs of every window, front window first, `window ⇥ shown ⇥ url ⇥ title` a line.
 const SCRIPT: &str = r#"tell application "Google Chrome"
   set out to ""
   repeat with w from 1 to count windows
+    set shown to active tab index of window w
+    set i to 0
     repeat with t in tabs of window w
-      set out to out & w & tab & (URL of t) & tab & (title of t) & linefeed
+      set i to i + 1
+      set out to out & w & tab & (i = shown) & tab & (URL of t) & tab & (title of t) & linefeed
     end repeat
   end repeat
   return out
@@ -65,11 +70,12 @@ pub fn refusal(stderr: &str) -> String {
 pub fn parse_tabs(text: &str) -> Vec<Tab> {
     text.lines()
         .filter_map(|line| {
-            let mut fields = line.splitn(3, '\t');
+            let mut fields = line.splitn(4, '\t');
             let window = fields.next()?.trim().parse().ok()?;
+            let active = fields.next()?.trim() == "true";
             let url = fields.next()?.trim().to_string();
             let title = fields.next().unwrap_or_default().trim().to_string();
-            Some(Tab { window, title, url })
+            Some(Tab { window, title, url, active })
         })
         .collect()
 }
@@ -123,9 +129,10 @@ mod tests {
 
     #[test]
     fn tabs_come_out_of_the_script_and_sites_out_of_their_addresses() {
-        let tabs = parse_tabs("1\thttps://mail.google.com/mail/u/0/#inbox\tInbox (3) - me@x\n1\tchrome://newtab/\tNew Tab\n2\thttps://www.youtube.com/watch?v=1\tA video\twith a tab\n\nnot a line\n");
+        let tabs = parse_tabs("1\tfalse\thttps://mail.google.com/mail/u/0/#inbox\tInbox (3) - me@x\n1\ttrue\tchrome://newtab/\tNew Tab\n2\ttrue\thttps://www.youtube.com/watch?v=1\tA video\twith a tab\n\nnot a line\n");
         assert_eq!(tabs.len(), 3);
-        assert_eq!(tabs[2], Tab { window: 2, title: "A video\twith a tab".into(), url: "https://www.youtube.com/watch?v=1".into() });
+        assert!(!tabs[0].active && tabs[1].active);
+        assert_eq!(tabs[2], Tab { window: 2, title: "A video\twith a tab".into(), url: "https://www.youtube.com/watch?v=1".into(), active: true });
         assert_eq!(site(&tabs[0].url), "mail.google.com");
         assert_eq!(site(&tabs[1].url), "chrome://newtab");
         assert_eq!(site(&tabs[2].url), "youtube.com");

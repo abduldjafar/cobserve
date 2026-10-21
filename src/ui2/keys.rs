@@ -66,6 +66,12 @@ pub fn on_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    if app.team.moving.is_some() && app.shell.zoom == Some(crate::ui2::PanelId::Jira) {
+        // A ticket being moved: its picker and its dialog take every key (esc keeps it).
+        app.set_view(crate::app::View::Jira);
+        app.view_key(key);
+        return;
+    }
     if app.shell.note.is_some() {
         return note_key(app, key);
     }

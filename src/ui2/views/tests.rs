@@ -1010,6 +1010,8 @@ async fn live_airflow_and_jira() {
         token: env("JIRA_TOKEN"),
         statuses: crate::jira::DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
         done_days: crate::jira::DEFAULT_DONE_DAYS,
+        structure: None,
+        team_prefix: "DE".into(),
     };
     if let Some(mut source) = crate::sources::jira::JiraSource::new(&jira) {
         for round in 1..=2 {
@@ -1511,7 +1513,8 @@ fn this_machine_has_a_status_line_and_a_zoom() {
     app.update(Event::Tabs(Box::new(crate::browser::TabsRead::new(program, app.now() as f64 - 12.0, Ok(crate::fake::tabs())))));
     let screen = render(&app, 120, 36);
     assert!(screen.contains("12 tabs · 2 windows · 6 sites") && screen.contains("─ TABS · 12 in 2 windows · by site"), "{screen}");
-    assert!(screen.lines().any(|l| l.contains("4   docs.google.com") && l.contains("Q4 metrics plan")), "{screen}");
+    assert!(screen.lines().any(|l| l.trim_start_matches(['│', ' ']).starts_with("4 ") && l.contains("docs.google.com") && l.contains("Q4 metrics plan")), "{screen}");
+    assert!(screen.contains("● open now: abduldjafar/cobserve · github.com") && screen.contains("● github.com"), "the tab on screen: {screen}");
     assert!(app.wants_tabs(app.now() as f64).is_none(), "fresh for 30 s");
     // x on a process asks, anything but y keeps it, y sends it.
     app.update(key(KeyCode::Char('x')));

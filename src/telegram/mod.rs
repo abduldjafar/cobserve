@@ -608,6 +608,9 @@ impl Bot {
         let text = match &read.result {
             Ok(tabs) => {
                 let mut text = format!("🗂 <b>{} tabs</b> · {} windows · {} sites\n", tabs.len(), read.windows(), read.sites.len());
+                if let Some(tab) = read.on_screen() {
+                    text.push_str(&format!("● open now: {} · {}\n", esc(&fmt::truncate(&tab.title, 40)), esc(&crate::sources::chrome::site(&tab.url))));
+                }
                 for site in read.sites.iter().take(8) {
                     text.push_str(&format!("{:>2} {}\n", site.tabs.len(), esc(&site.host)));
                 }

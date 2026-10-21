@@ -1261,6 +1261,42 @@ const FAKE_TICKETS: &[(&str, &str, &str, &str, u32, &str, i64, u64, Option<i64>)
 
 /// FAKE=1's Jira at `now`: seventeen tickets of a data engineer's week across the board's
 /// columns — one overdue in review, one due tomorrow, a week of finished ones.
+/// A made-up team's board: the DE tickets of a Structure, some nobody has taken.
+pub fn team() -> Vec<crate::jira::Ticket> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let t = |key: &str, summary: &str, status: &str, kind: &str, priority: &str, assignee: Option<&str>, days: i64| crate::jira::Ticket {
+        key: key.into(),
+        summary: summary.into(),
+        status: status.into(),
+        category: if status == "Backlog" || status == "Selected for Development" { "new".into() } else { "indeterminate".into() },
+        kind: Some(kind.into()),
+        priority: Some(priority.into()),
+        created: Some(now - days * 86_400 - 3_600),
+        updated: Some(now - days * 43_200),
+        status_since: Some(now - days * 86_400),
+        parent: Some("DATA-12001".into()),
+        assignee: assignee.map(Into::into),
+        ..crate::jira::Ticket::default()
+    };
+    vec![
+        t("DATA-13301", "DE - Reconcile gateway transfers against the ledger daily", "Backlog", "Task", "High", None, 9),
+        t("DATA-13288", "DE - Move statement_daily_agg to ReplacingMergeTree", "Backlog", "Task", "Medium", None, 15),
+        t("DATA-13275", "DE - PostHog warehouse table for savings balances", "Backlog", "Story", "Medium", None, 21),
+        t("DATA-13260", "DE - Alert when kyc_onboarding_tables runs over 30 minutes", "Backlog", "Task", "Low", Some("j.petrova"), 4),
+        t("DATA-13241", "DE - Drop the legacy cbk_accounts_report DAG", "Selected for Development", "Task", "High", None, 3),
+        t("DATA-13230", "DE - Partition gateway_transfers_backfill by month", "Selected for Development", "Task", "Medium", None, 6),
+        t("DATA-13158", "DE - Rebuild accounting_monitoring for October", "In progress", "Task", "ASAP", Some("sam"), 2),
+        t("DATA-13120", "DE - Code review: redash_publishers_dag", "In Review", "Code review", "Medium", Some("haris"), 1),
+        t("DATA-13101", "DE - Replicate CreditOnline tables to clickhouse-bi", "On Hold", "Story", "Medium", None, 12),
+    ]
+}
+
+/// The moves a made-up Jira allows from any status.
+pub fn transitions() -> Vec<crate::jira::Transition> {
+    let t = |id: &str, to: &str, needs_fields: bool| crate::jira::Transition { id: id.into(), name: to.into(), to: to.into(), needs_fields };
+    vec![t("11", "Backlog", false), t("21", "Selected for Development", false), t("31", "In progress", false), t("41", "On Hold", false), t("51", "In Review", false), t("61", "Done", true)]
+}
+
 pub fn jira(now: i64) -> crate::jira::Board {
     use crate::jira::{Board, Ticket, DEFAULT_DONE_DAYS, DEFAULT_STATUSES};
     const H: i64 = 3600;
@@ -1292,6 +1328,7 @@ pub fn jira(now: i64) -> crate::jira::Board {
                 labels: if key == "DATA-2207" { vec!["posthog".into(), "clickhouse".into(), "poc".into()] } else { Vec::new() },
                 reporter: Some(if key.ends_with('7') { "Jurgita Petrova" } else { "Tomas Rimkus" }.into()),
                 logged_s: (logged > 0).then_some(logged),
+                assignee: None,
             }
         })
         .collect();
@@ -1454,7 +1491,7 @@ fn fake_tasks(run: &crate::airflow::Run, now: i64) -> Vec<crate::airflow::TaskRu
 
 /// A made-up Chrome's open tabs: 12 over 2 windows and 6 sites.
 pub fn tabs() -> Vec<crate::sources::chrome::Tab> {
-    let tab = |window: u32, title: &str, url: &str| crate::sources::chrome::Tab { window, title: title.into(), url: url.into() };
+    let tab = |window: u32, title: &str, url: &str| crate::sources::chrome::Tab { window, title: title.into(), url: url.into(), active: title == "abduldjafar/cobserve" || title == "lofi beats" };
     vec![
         tab(1, "Q4 metrics plan", "https://docs.google.com/document/d/1"),
         tab(1, "posthog tables", "https://docs.google.com/spreadsheets/d/2"),

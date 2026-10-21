@@ -40,6 +40,7 @@ mod severity;
 mod sources;
 mod sqltext;
 mod tape;
+mod team;
 mod telegram;
 mod theme;
 mod tree;
@@ -126,6 +127,7 @@ async fn run_plain(config: Config) -> color_eyre::Result<()> {
     let mut app = App::new();
     app.poll_interval = config.poll;
     app.chrome_lines = config.chrome_lines;
+    app.team = team::Team::new(config.jira.structure, &config.jira.team_prefix);
     let zone_table = clock::zone_table();
     let zone = clock::zone_now();
     app.update(Event::Zone(zone.clone(), prayer_place(&config, zone.as_deref(), zone_table.as_deref())));
@@ -264,6 +266,7 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
     app.shell.profile = if config.fake { "fake".to_string() } else { config.clickhouse.cluster.clone() };
     app.poll_interval = config.poll;
     app.chrome_lines = config.chrome_lines;
+    app.team = team::Team::new(config.jira.structure, &config.jira.team_prefix);
     app.modified_enter = modified_enter;
     app.claude.commands = claude::Commands {
         claude: config.claude_command.clone(),
@@ -492,6 +495,9 @@ async fn run(terminal: &mut DefaultTerminal, config: Config, open_claude: bool, 
         }
         for ask in app.take_detail_asks() {
             details.read(ask, tx.clone());
+        }
+        for ask in app.take_team_asks() {
+            details.team(ask, tx.clone());
         }
 
         if app.quit {
@@ -1178,6 +1184,9 @@ struct Details {
     airflow: Option<sources::airflow::AirflowDetails>,
     jira: Option<sources::jira::JiraDetails>,
     fake: bool,
+    /// The team's board: its Structure and the team's word.
+    structure: Option<u64>,
+    team_prefix: String,
 }
 
 impl Details {
@@ -1209,6 +1218,35 @@ impl Details {
     }
 }
 
+impl Details {
+    /// What the team's board asked of Jira: a read, a ticket's moves, a move — each a task.
+    fn team(&self, ask: team::Ask, tx: mpsc::UnboundedSender<Event>) {
+        let (jira, fake) = (self.jira.clone(), self.fake);
+        let (structure, prefix) = (self.structure, self.team_prefix.clone());
+        tokio::spawn(async move {
+            let event = match (ask, jira, fake) {
+                (team::Ask::Read, _, true) => Event::Team(Ok(fake::team())),
+                (team::Ask::Transitions(key), _, true) => Event::Transitions(key, Ok(fake::transitions())),
+                (team::Ask::Move { key, to, .. }, _, true) => Event::Moved(key, to, Err("FAKE=1 — nothing was sent".into())),
+                (_, None, false) => Event::Team(Err("Jira is not configured".into())),
+                (team::Ask::Read, Some(jira), false) => match structure {
+                    Some(id) => Event::Team(jira.team(id, &prefix).await),
+                    None => Event::Team(Err("JIRA_STRUCTURE is not set".into())),
+                },
+                (team::Ask::Transitions(key), Some(jira), false) => {
+                    let result = jira.transitions(&key).await;
+                    Event::Transitions(key, result)
+                }
+                (team::Ask::Move { key, id, to, .. }, Some(jira), false) => {
+                    let result = jira.transition(&key, &id).await;
+                    Event::Moved(key, to, result)
+                }
+            };
+            let _ = tx.send(event);
+        });
+    }
+}
+
 fn spawn_sources(
     config: &Config,
     tx: mpsc::UnboundedSender<Event>,
@@ -1216,7 +1254,7 @@ fn spawn_sources(
     asks: Asks,
 ) -> Details {
     let Asks { mut cancels, airflow: airflow_asks, jira: jira_asks } = asks;
-    let mut details = Details { airflow: None, jira: None, fake: config.fake };
+    let mut details = Details { airflow: None, jira: None, fake: config.fake, structure: config.jira.structure, team_prefix: config.jira.team_prefix.clone() };
     if config.fake {
         tokio::spawn(fake_loop(config.poll, tx, cancels, airflow_asks, jira_asks));
         return details;

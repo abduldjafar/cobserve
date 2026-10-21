@@ -47,6 +47,10 @@ impl std::fmt::Debug for Action {
     }
 }
 
+fn team_on(app: &App) -> bool {
+    app.team_on
+}
+
 fn always(_: &App) -> bool {
     true
 }
@@ -175,6 +179,9 @@ pub static ACTIONS: &[Action] = &[
     Action { id: "jira-browser", label: "in Jira", phrase: "open in Jira", detail: "the ticket in the browser", keys: &["o"], shown: "o", scope: Scope::Zoomed(PanelId::Jira), rank: 4, enabled: always, run: pass },
     Action { id: "jira-copy", label: "copy link", phrase: "copy the ticket's link", detail: "its Jira address on the clipboard", keys: &["y"], shown: "y", scope: Scope::Zoomed(PanelId::Jira), rank: 5, enabled: always, run: pass },
     Action { id: "jira-time", label: "the month", phrase: "the month's time", detail: "logged time by day and ticket", keys: &["t"], shown: "t", scope: Scope::Zoomed(PanelId::Jira), rank: 6, enabled: always, run: pass },
+    Action { id: "jira-team", label: "team board", phrase: "the team's board", detail: "the Structure's tickets of your team, the untaken first · d again for yours", keys: &["d"], shown: "d", scope: Scope::Zoomed(PanelId::Jira), rank: 9, enabled: always, run: pass },
+    Action { id: "jira-filter", label: "untaken/all", phrase: "untaken or everyone's", detail: "the team's board: what nobody has, or all of it", keys: &["f"], shown: "f", scope: Scope::Zoomed(PanelId::Jira), rank: 1, enabled: team_on, run: pass },
+    Action { id: "jira-move", label: "move", phrase: "move the ticket", detail: "to a status Jira allows now, after y", keys: &["m"], shown: "m", scope: Scope::Zoomed(PanelId::Jira), rank: 2, enabled: team_on, run: pass },
     Action { id: "jira-read", label: "read now", phrase: "read Jira now", detail: "instead of at the next poll", keys: &["r"], shown: "r", scope: Scope::Zoomed(PanelId::Jira), rank: 7, enabled: always, run: pass },
     Action { id: "tape-scroll", label: "scroll", phrase: "scroll the tape", detail: "newest first", keys: &["Up", "Down", "j", "k", "PageUp", "PageDown", "Home", "End"], shown: "↑↓", scope: Scope::Zoomed(PanelId::Tape), rank: 1, enabled: always, run: pass },
     Action { id: "tape-open", label: "go to it", phrase: "go to what it is about", detail: "the node, the person, the queue", keys: &["Enter"], shown: "⏎", scope: Scope::Zoomed(PanelId::Tape), rank: 2, enabled: always, run: pass },

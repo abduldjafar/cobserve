@@ -78,6 +78,10 @@ pub struct JiraConfig {
     pub statuses: Vec<String>,
     /// How many days of finished tickets the last column shows.
     pub done_days: u32,
+    /// The team's board (view 6, `d`): a Jira Structure (`JIRA_STRUCTURE`, its number) and the
+    /// first word of the team's summaries (`JIRA_TEAM_PREFIX`, `DE` by default).
+    pub structure: Option<u64>,
+    pub team_prefix: String,
 }
 
 impl std::fmt::Debug for JiraConfig {
@@ -795,6 +799,17 @@ impl Config {
             token: pick(jira_file.and_then(|j| j.token.as_ref()), "JIRA_TOKEN"),
             statuses,
             done_days,
+            structure: match env.get("JIRA_STRUCTURE") {
+                None => None,
+                Some(n) => match n.parse::<u64>() {
+                    Ok(n) => Some(n),
+                    Err(_) => {
+                        warnings.push(format!("JIRA_STRUCTURE: {n:?} is not a structure's number — the team's board is off"));
+                        None
+                    }
+                },
+            },
+            team_prefix: env.get("JIRA_TEAM_PREFIX").unwrap_or_else(|| "DE".to_string()),
         };
         if jira.url.is_some() != jira.token.is_some() {
             warnings.push("Jira needs both a url and a token — JIRA_URL and JIRA_TOKEN, or under jira: in the file".to_string());

@@ -269,6 +269,12 @@ pub enum Event {
     Tabs(Box<crate::browser::TabsRead>),
     /// A tab process the owner asked to stop, and what came of it.
     Stopped(Box<Stop>, Result<String, String>),
+    /// The team's tickets of the Jira Structure (view 6, `d`).
+    Team(Result<Vec<crate::jira::Ticket>, String>),
+    /// The moves Jira allows for a ticket now.
+    Transitions(String, Result<Vec<crate::jira::Transition>, String>),
+    /// A ticket moved, or why not: its key, where it went.
+    Moved(String, String, Result<(), String>),
     Quit,
 }
 
@@ -438,6 +444,10 @@ pub struct App {
     /// level each browser is held at.
     pub chrome_lines: Option<(f64, f64)>,
     greed: HashMap<String, crate::browser::Greed>,
+    /// View 6's other board: the team's tickets of a Jira Structure, and whether it is the one
+    /// on screen (`d`).
+    pub team: crate::team::Team,
+    pub team_on: bool,
 }
 
 /// Where the cursor is on the month's time: a day of the month (from 1) and a ticket's row.
@@ -540,6 +550,8 @@ impl App {
             stopped: Vec::new(),
             chrome_lines: Some((crate::browser::WARN_PCT, crate::browser::CRIT_PCT)),
             greed: HashMap::new(),
+            team: crate::team::Team::default(),
+            team_on: false,
         }
     }
 
@@ -943,6 +955,12 @@ impl App {
         if self.jira_time.is_some() {
             return self.on_time_key(code);
         }
+        if code == KeyCode::Char('d') {
+            return self.toggle_team();
+        }
+        if self.team_on {
+            return self.on_team_key(code);
+        }
         if code == KeyCode::Char('t') {
             let today = self.time_by_ticket().0.today;
             self.jira_time = Some(TimePage { day: today, ticket: 0 });
@@ -967,6 +985,93 @@ impl App {
             KeyCode::Char('r') => self.read_again(Feed::Jira),
             _ => {}
         }
+    }
+
+    /// `d` on view 6: the team's board, or yours again.
+    fn toggle_team(&mut self) {
+        if self.team.structure.is_none() {
+            self.shell.toast("no team board — set JIRA_STRUCTURE to the Structure's number (and JIRA_TEAM_PREFIX, DE by default)", false, SystemTime::now());
+            return;
+        }
+        self.team_on = !self.team_on;
+        if self.team_on && self.team.due(SystemTime::now()) {
+            self.team.ask(crate::team::Ask::Read);
+        }
+    }
+
+    /// The team's board's keys, and its move picker's and dialog's while a move is asked.
+    fn on_team_key(&mut self, code: KeyCode) {
+        let order = self.jira.statuses.clone();
+        if let Some(m) = self.team.moving.as_mut() {
+            if m.confirm {
+                // The dialog: `y` sends the move, anything else keeps the ticket where it is.
+                let send = matches!(code, KeyCode::Char('y' | 'Y'));
+                let chosen = m.current().cloned();
+                let (key, from) = (m.key.clone(), m.from.clone());
+                self.team.moving = None;
+                match (send, chosen) {
+                    (true, Some(t)) => {
+                        self.shell.toast(format!("moving {key} → {} …", t.to), false, SystemTime::now());
+                        self.team.ask(crate::team::Ask::Move { key, id: t.id, from, to: t.to });
+                    }
+                    _ => self.shell.toast("kept · nothing was sent", false, SystemTime::now()),
+                }
+                return;
+            }
+            let n = m.offered().len();
+            match code {
+                KeyCode::Up | KeyCode::Char('k') => m.chosen = m.chosen.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => m.chosen = (m.chosen + 1).min(n.saturating_sub(1)),
+                KeyCode::Enter => match m.current() {
+                    Some(t) if t.needs_fields => {
+                        let to = t.to.clone();
+                        self.shell.toast(format!("{to} asks for fields only Jira's screen has — o opens it in Jira"), false, SystemTime::now());
+                    }
+                    Some(_) => m.confirm = true,
+                    None => {}
+                },
+                KeyCode::Char('o') => {
+                    self.team.moving = None;
+                    self.open_team_ticket();
+                }
+                _ => self.team.moving = None,
+            }
+            return;
+        }
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.team.step(&order, -1),
+            KeyCode::Down | KeyCode::Char('j') => self.team.step(&order, 1),
+            KeyCode::Left | KeyCode::Char('h') => self.team.cross(&order, -1),
+            KeyCode::Right | KeyCode::Char('l') => self.team.cross(&order, 1),
+            KeyCode::PageUp => self.team.step(&order, -10),
+            KeyCode::PageDown => self.team.step(&order, 10),
+            KeyCode::Char('f') => {
+                self.team.filter = match self.team.filter {
+                    crate::team::Filter::Untaken => crate::team::Filter::Everyone,
+                    crate::team::Filter::Everyone => crate::team::Filter::Untaken,
+                };
+                self.team.settle(&order);
+            }
+            KeyCode::Char('m') if self.team.current().is_some() => self.team.start_move(),
+            KeyCode::Enter => {
+                if let Some(key) = self.team.selected.clone() {
+                    self.open_page(crate::detail::Ask::Issue(key));
+                }
+            }
+            KeyCode::Char('o') => self.open_team_ticket(),
+            KeyCode::Char('r') => self.team.ask(crate::team::Ask::Read),
+            _ => {}
+        }
+    }
+
+    fn open_team_ticket(&mut self) {
+        if let (Some(key), Some(base)) = (self.team.selected.clone(), self.jira.base_url.clone()) {
+            self.opens.push(format!("{base}/browse/{key}"));
+        }
+    }
+
+    pub fn take_team_asks(&mut self) -> Vec<crate::team::Ask> {
+        self.team.take_asks()
     }
 
     /// Keep views 5's and 6's cursors on what they were on, or at the same place when it is gone.
@@ -1095,6 +1200,10 @@ impl App {
             Event::Tick => {
                 self.on_tick();
                 self.peek_tasks();
+                // The team's board is read while it is on screen: when it opens, then every minute.
+                if self.team_on && self.shell.zoom == Some(crate::ui2::PanelId::Jira) && self.team.due(SystemTime::now()) {
+                    self.team.ask(crate::team::Ask::Read);
+                }
             }
             Event::Zone(zone, place) => {
                 self.time.zone = zone;
@@ -1144,6 +1253,18 @@ impl App {
                 }
             }
             Event::Stopped(stop, result) => self.on_stopped(*stop, result),
+            Event::Team(result) => {
+                let order = self.jira.statuses.clone();
+                self.team.on_read(result, SystemTime::now(), &order);
+            }
+            Event::Transitions(key, result) => self.team.on_transitions(&key, result),
+            Event::Moved(key, to, result) => {
+                match &result {
+                    Ok(()) => self.shell.toast(format!("✔ {key} → {to}"), false, SystemTime::now()),
+                    Err(e) => self.shell.toast(format!("✖ {key} not moved: {e}"), true, SystemTime::now()),
+                }
+                self.team.on_moved(&key, &to, result.is_ok());
+            }
             Event::Detail(ask, result) => self.on_detail(ask, result),
             Event::Notice(message) => {
                 let now = SystemTime::now();

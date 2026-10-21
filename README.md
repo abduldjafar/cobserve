@@ -192,6 +192,13 @@ every minute, GET only.
   the chart's own columns, so a day reads straight down — with its month's sum; then the day
   chosen, its tickets and each one's share of it. `← →` choose the day (its column lit all the
   way down), `↑ ↓` a ticket, `⏎` opens that ticket in full, `esc` goes back.
+- **The team's board** (`d`): the open tickets of a Jira Structure (`JIRA_STRUCTURE`) whose summary
+  starts with the team's word (`JIRA_TEAM_PREFIX`, `DE`), in lanes of the workflow — Backlog,
+  Selected for Development, In Progress, On Hold, In Review — what nobody has taken by default,
+  everyone's with `f`. `m` moves the ticket under the cursor: the moves Jira allows for it now,
+  then a dialog that says what will be sent; `y` sends it (the one write cobserve makes to Jira).
+  A move whose screen asks for fields (Done's resolution) is left to Jira: `o` opens it. Read
+  only while it is on screen, once a minute.
 
 
 Set `JIRA_URL` and `JIRA_TOKEN` (in Jira: Profile → Personal Access Tokens), or a `jira:` section
@@ -444,6 +451,7 @@ have a user the other one does not know.
 | `AIRFLOW_URL` / `AIRFLOW_USER` / `AIRFLOW_PASSWORD` | Airflow 2 for panel 5, and the login of its web UI | optional — panel 5 says how to set it |
 | `JIRA_URL` / `JIRA_TOKEN` | Jira Server or Data Center for panel 6, and a personal access token | optional — panel 6 says how to set it |
 | `JIRA_STATUSES` | the board's columns, left to right, comma-separated; the last is where finished tickets go | `In progress,In Review,Feedback,Done` |
+| `JIRA_STRUCTURE` / `JIRA_TEAM_PREFIX` | the team's board (`d` in panel 6): a Jira Structure's number, and the first word of the team's summaries | unset (off) / `DE` |
 | `JIRA_DONE_DAYS` | how many days of finished tickets the last column shows | `7` |
 | `CLAUDE_CMD` | what a Claude session runs, with its arguments | `claude` |
 | `OPENCODE_CMD` | what an OpenCode session runs | `opencode` |

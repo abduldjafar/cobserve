@@ -840,6 +840,56 @@ fn theme_and_prayer_from_the_palette() {
     assert!(app.prayers.place.is_some());
 }
 
+#[test]
+fn the_team_board_shows_what_nobody_took_and_moves_a_ticket_after_y() {
+    let mut app = app_after(30);
+    app.team = crate::team::Team::new(Some(216), "DE");
+    app.update(ch('6'));
+    app.update(key(KeyCode::Enter));
+    app.update(ch('d'));
+    assert!(app.team_on);
+    answer_team(&mut app);
+    let screen = render(&app, 120, 36).join("\n");
+    assert!(screen.contains("TEAM · structure 216 · DE · 6 not taken of 9 open · showing not taken"), "{screen}");
+    assert!(screen.contains("BACKLOG 3 of 4") && screen.contains("SELECTED FOR DEVELOP"), "{screen}");
+    assert!(!screen.contains("DATA-13158"), "taken tickets wait for f: {screen}");
+    app.update(ch('f'));
+    assert!(render(&app, 120, 36).join("\n").contains("DATA-13158"));
+    app.update(ch('f'));
+    // m asks Jira what it allows; ⏎ on a move asks to confirm; anything but y keeps it.
+    app.update(ch('m'));
+    answer_team(&mut app);
+    assert!(render(&app, 120, 36).join("\n").contains("Move DATA-13301 from Backlog"));
+    app.update(key(KeyCode::Enter));
+    assert!(render(&app, 120, 36).join("\n").contains("Move DATA-13301 · Backlog → Selected for Development?"));
+    app.update(ch('n'));
+    assert!(app.team.moving.is_none() && app.take_team_asks().is_empty(), "kept");
+    app.update(ch('m'));
+    answer_team(&mut app);
+    app.update(key(KeyCode::Enter));
+    app.update(ch('y'));
+    let asks = app.take_team_asks();
+    assert_eq!(asks, [crate::team::Ask::Move { key: "DATA-13301".into(), id: "21".into(), from: "Backlog".into(), to: "Selected for Development".into() }]);
+    app.update(Event::Moved("DATA-13301".into(), "Selected for Development".into(), Ok(())));
+    assert!(render(&app, 120, 36).join("\n").contains("SELECTED FOR DEVELOP"));
+    assert_eq!(app.team.tickets.iter().find(|t| t.key == "DATA-13301").unwrap().status, "Selected for Development");
+    // A move whose screen asks for fields is not sent from here.
+    app.update(ch('m'));
+    answer_team(&mut app);
+    for _ in 0..9 {
+        app.update(key(KeyCode::Down));
+    }
+    app.update(key(KeyCode::Enter));
+    assert!(app.team.moving.as_ref().is_some_and(|m| !m.confirm), "Done needs Jira's screen");
+    for (w, h) in [(40, 12), (80, 24), (160, 48)] {
+        render(&app, w, h);
+    }
+    // d again: your own board.
+    app.update(key(KeyCode::Esc));
+    app.update(ch('d'));
+    assert!(!app.team_on);
+}
+
 /// `cargo test ui2::tests::dump -- --ignored --nocapture`: the screen at a size, to look at.
 #[test]
 #[ignore]
@@ -849,12 +899,14 @@ fn dump() {
     app.shell.last_size.set((w, h));
     app.update(Event::Local(Box::new(crate::fake::local(1, MOMENT as f64 - 2.0))));
     app.update(Event::Local(Box::new(crate::fake::local(2, MOMENT as f64))));
+    app.team = crate::team::Team::new(Some(216), "DE");
     match std::env::var("SESSIONS").ok().and_then(|n| n.parse::<usize>().ok()) {
         Some(4) => with_running_sessions(&mut app),
         Some(n) => with_many_sessions(&mut app, n),
         None => {}
     }
     for c in std::env::var("KEYS").unwrap_or_default().chars() {
+        answer_team(&mut app);
         app.update(match c {
             '⏎' => key(KeyCode::Enter),
             '⎋' => key(KeyCode::Esc),
@@ -867,11 +919,23 @@ fn dump() {
         });
     }
     answer_asks(&mut app);
+    answer_team(&mut app);
     // The tabs a browser opened from this machine asks for, as the fake answers them.
     if let Some((program, _)) = app.wants_tabs(MOMENT as f64) {
         app.update(Event::Tabs(Box::new(crate::browser::TabsRead::new(program, MOMENT as f64 - 12.0, Ok(crate::fake::tabs())))));
     }
     println!("{}", render(&app, w, h).join("\n"));
+}
+
+/// What the team's board asked of Jira, answered by the fake.
+fn answer_team(app: &mut App) {
+    for ask in app.take_team_asks() {
+        app.update(match ask {
+            crate::team::Ask::Read => Event::Team(Ok(crate::fake::team())),
+            crate::team::Ask::Transitions(key) => Event::Transitions(key, Ok(crate::fake::transitions())),
+            crate::team::Ask::Move { key, to, .. } => Event::Moved(key, to, Ok(())),
+        });
+    }
 }
 
 /// What the screen asked to read — a run's tasks for the Gantt, a page — answered by the fake,

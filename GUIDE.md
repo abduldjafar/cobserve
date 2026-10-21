@@ -627,6 +627,7 @@ over what it keeps.
 | `JIRA_URL` / `JIRA_TOKEN` | Jira Server or Data Center for panel 6, and a personal access token | unset: panel 6 says how |
 | `JIRA_STATUSES` | the board's columns, left to right, comma-separated | `In progress,In Review,Feedback,Done` |
 | `JIRA_DONE_DAYS` | how many days of finished tickets the last column shows | `7` |
+| `JIRA_STRUCTURE` / `JIRA_TEAM_PREFIX` | the team's board (`d` in panel 6): a Jira Structure's number, and the first word of the team's summaries; `m` moves a ticket after `y` | unset (off) / `DE` |
 
 **Sessions**
 
